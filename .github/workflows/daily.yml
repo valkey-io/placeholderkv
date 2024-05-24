@@ -695,9 +695,7 @@ jobs:
         echo "skiptests: ${{github.event.inputs.skiptests}}"
         echo "test_args: ${{github.event.inputs.test_args}}"
         echo "cluster_test_args: ${{github.event.inputs.cluster_test_args}}"
-    # On centos7 actions/checkout@v4 does not work, so we use v3
-    # ref. https://github.com/actions/checkout/issues/1487
-    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         repository: ${{ env.GITHUB_REPOSITORY }}
         ref: ${{ env.GITHUB_HEAD_REF }}
@@ -761,9 +759,7 @@ jobs:
         echo "skiptests: ${{github.event.inputs.skiptests}}"
         echo "test_args: ${{github.event.inputs.test_args}}"
         echo "cluster_test_args: ${{github.event.inputs.cluster_test_args}}"
-    # On centos7 actions/checkout@v4 does not work, so we use v3
-    # ref. https://github.com/actions/checkout/issues/1487
-    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         repository: ${{ env.GITHUB_REPOSITORY }}
         ref: ${{ env.GITHUB_HEAD_REF }}
@@ -833,9 +829,7 @@ jobs:
         echo "skiptests: ${{github.event.inputs.skiptests}}"
         echo "test_args: ${{github.event.inputs.test_args}}"
         echo "cluster_test_args: ${{github.event.inputs.cluster_test_args}}"
-    # On centos7 actions/checkout@v4 does not work, so we use v3
-    # ref. https://github.com/actions/checkout/issues/1487
-    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         repository: ${{ env.GITHUB_REPOSITORY }}
         ref: ${{ env.GITHUB_HEAD_REF }}
@@ -1129,7 +1123,7 @@ jobs:
   notify-about-job-results:
     runs-on: ubuntu-latest
     if: always() && github.event_name != 'workflow_dispatch' && github.repository == 'valkey-io/valkey'
-    needs: [test-ubuntu-jemalloc, test-ubuntu-jemalloc-fortify, test-ubuntu-libc-malloc, test-ubuntu-no-malloc-usable-size, test-ubuntu-32bit, test-ubuntu-tls, test-ubuntu-tls-no-tls, test-ubuntu-io-threads, test-ubuntu-reclaim-cache, test-valgrind-test, test-valgrind-misc, test-valgrind-no-malloc-usable-size-test, test-valgrind-no-malloc-usable-size-misc, test-sanitizer-address, test-sanitizer-undefined, test-centos7-jemalloc, test-centos7-tls-module, test-centos7-tls-module-no-tls, test-macos-latest, test-macos-latest-sentinel, test-macos-latest-cluster, build-macos, test-freebsd, test-alpine-jemalloc, test-alpine-libc-malloc, reply-schemas-validator]
+    needs: [test-ubuntu-jemalloc, test-ubuntu-jemalloc-fortify, test-ubuntu-libc-malloc, test-ubuntu-no-malloc-usable-size, test-ubuntu-32bit, test-ubuntu-tls, test-ubuntu-tls-no-tls, test-ubuntu-io-threads, test-ubuntu-reclaim-cache, test-valgrind-test, test-valgrind-misc, test-valgrind-no-malloc-usable-size-test, test-valgrind-no-malloc-usable-size-misc, test-sanitizer-address, test-sanitizer-undefined, test-rpm-distros-jemalloc, test-rpm-distros-tls-module, test-rpm-distros-tls-module-no-tls, test-macos-latest, test-macos-latest-sentinel, test-macos-latest-cluster, build-macos, test-freebsd, test-alpine-jemalloc, test-alpine-libc-malloc, reply-schemas-validator]
     steps:
       - name: Collect job status
         run: |
