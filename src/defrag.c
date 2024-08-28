@@ -237,7 +237,7 @@ void zslUpdateNode(zskiplist *zsl, zskiplistNode *oldnode, zskiplistNode *newnod
  * only need to defrag the skiplist, but not update the obj pointer.
  * When return value is non-NULL, it is the score reference that must be updated
  * in the dict record. */
-double *zslDefrag(zskiplist *zsl, double score, sds oldele, sds newele) {
+void zslDefrag(zskiplist *zsl, double score, sds oldele, sds newele) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x, *newx;
     int i;
     sds ele = newele ? newele : oldele;
@@ -264,22 +264,16 @@ double *zslDefrag(zskiplist *zsl, double score, sds oldele, sds newele) {
     newx = activeDefragAlloc(x);
     if (newx) {
         zslUpdateNode(zsl, x, newx, update);
-        return &newx->score;
     }
-    return NULL;
 }
 
 /* Defrag helper for sorted set.
  * Defrag a single dict entry key name, and corresponding skiplist struct */
 void activeDefragZsetEntry(zset *zs, dictEntry *de) {
     sds newsds;
-    double *newscore;
     sds sdsele = dictGetKey(de);
     if ((newsds = activeDefragSds(sdsele))) dictSetKey(zs->dict, de, newsds);
-    newscore = zslDefrag(zs->zsl, *(double *)dictGetVal(de), sdsele, newsds);
-    if (newscore) {
-        dictSetVal(zs->dict, de, newscore);
-    }
+    zslDefrag(zs->zsl, dictGetDoubleVal(de), sdsele, newsds);
 }
 
 #define DEFRAG_SDS_DICT_NO_VAL 0
