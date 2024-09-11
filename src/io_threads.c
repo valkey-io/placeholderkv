@@ -493,6 +493,8 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
 
     if (obj->refcount > 1) return C_ERR;
 
+    if (obj->encoding != OBJ_ENCODING_RAW || obj->type != OBJ_STRING) return C_ERR;
+
     /* We select the thread ID in a round-robin fashion. */
     size_t tid = (server.stat_io_freed_objects % (server.active_io_threads_num - 1)) + 1;
 
@@ -501,7 +503,12 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
         return C_ERR;
     }
 
-    IOJobQueue_push(jq, decrRefCountVoid, obj);
+    /* We offload only the free of the ptr that may be allocated by the I/O thread.
+     * The object itself was allocated by the main thread and will be freed by the main thread. */
+    IOJobQueue_push(jq, sdsfreeVoid, obj->ptr);
+    obj->ptr = NULL;
+    decrRefCount(obj);
+
     server.stat_io_freed_objects++;
     return C_OK;
 }

@@ -210,9 +210,6 @@ struct hdr_histogram;
 
 extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 
-/* Hash table parameters */
-#define HASHTABLE_MAX_LOAD_FACTOR 1.618 /* Maximum hash table load factor. */
-
 /* Command flags. Please check the definition of struct serverCommand in this file
  * for more information about the meaning of every flag. */
 #define CMD_WRITE (1ULL << 0)
@@ -881,8 +878,9 @@ struct ValkeyModuleDigest {
 #define LRU_CLOCK_MAX ((1 << LRU_BITS) - 1) /* Max value of obj->lru */
 #define LRU_CLOCK_RESOLUTION 1000           /* LRU clock resolution in ms */
 
-#define OBJ_SHARED_REFCOUNT INT_MAX       /* Global object never destroyed. */
-#define OBJ_STATIC_REFCOUNT (INT_MAX - 1) /* Object allocated in the stack. */
+#define OBJ_REFCOUNT_BITS 30
+#define OBJ_SHARED_REFCOUNT ((1 << OBJ_REFCOUNT_BITS) - 1) /* Global object never destroyed. */
+#define OBJ_STATIC_REFCOUNT ((1 << OBJ_REFCOUNT_BITS) - 2) /* Object allocated in the stack. */
 #define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
 struct serverObject {
     unsigned type : 4;
@@ -890,7 +888,9 @@ struct serverObject {
     unsigned lru : LRU_BITS; /* LRU time (relative to global lru_clock) or
                               * LFU data (least significant 8 bits frequency
                               * and most significant 16 bits access time). */
-    int refcount;
+    unsigned hasexpire : 1;
+    unsigned hasembkey : 1;
+    unsigned refcount : OBJ_REFCOUNT_BITS;
     void *ptr;
 };
 
@@ -908,6 +908,8 @@ char *getObjectTypeName(robj *);
         _var.refcount = OBJ_STATIC_REFCOUNT; \
         _var.type = OBJ_STRING;              \
         _var.encoding = OBJ_ENCODING_RAW;    \
+        _var.hasexpire = 0;                  \
+        _var.hasembkey = 0;                  \
         _var.ptr = _ptr;                     \
     } while (0)
 
@@ -2667,8 +2669,8 @@ extern dictType objectKeyHeapPointerValueDictType;
 extern dictType setDictType;
 extern dictType BenchmarkDictType;
 extern dictType zsetDictType;
-extern dictType kvstoreKeysDictType;
-extern dictType kvstoreExpiresDictType;
+extern hashtableType kvstoreKeysHashtableType;
+extern hashtableType kvstoreExpiresHashtableType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
 extern dictType stringSetDictType;
@@ -2676,7 +2678,7 @@ extern dictType externalStringType;
 extern dictType sdsHashDictType;
 extern dictType clientDictType;
 extern dictType objToDictDictType;
-extern dictType kvstoreChannelDictType;
+extern hashtableType kvstoreChannelHashtableType;
 extern dictType modulesDictType;
 extern dictType sdsReplyDictType;
 extern dictType keylistDictType;
@@ -3000,7 +3002,6 @@ void execCommandAbort(client *c, sds error);
 
 /* Object implementation */
 void decrRefCount(robj *o);
-void decrRefCountVoid(void *o);
 void incrRefCount(robj *o);
 robj *makeObjectShared(robj *o);
 void freeStringObject(robj *o);
@@ -3013,7 +3014,6 @@ robj *createObject(int type, void *ptr);
 void initObjectLRUOrLFU(robj *o);
 robj *createStringObject(const char *ptr, size_t len);
 robj *createRawStringObject(const char *ptr, size_t len);
-robj *createEmbeddedStringObject(const char *ptr, size_t len);
 robj *tryCreateRawStringObject(const char *ptr, size_t len);
 robj *tryCreateStringObject(const char *ptr, size_t len);
 robj *dupStringObject(const robj *o);
@@ -3054,10 +3054,14 @@ int collateStringObjects(const robj *a, const robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long long estimateObjectIdleTime(robj *o);
 void trimStringObjectIfNeeded(robj *o, int trim_small_values);
-static inline int canUseSharedObject(void) {
-    return server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS);
-}
 #define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
+
+/* Objects with key attached, AKA valkey (val+key) objects */
+robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long expire);
+robj *objectSetKeyAndExpire(robj *val, sds key, long long expire);
+robj *objectSetExpire(robj *val, long long expire);
+sds objectGetKey(const robj *val);
+long long objectGetExpire(const robj *val);
 
 /* Synchronous I/O with timeout */
 ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout);
@@ -3384,10 +3388,10 @@ int calculateKeySlot(sds key);
 /* kvstore wrappers */
 int dbExpand(serverDb *db, uint64_t db_size, int try_expand);
 int dbExpandExpires(serverDb *db, uint64_t db_size, int try_expand);
-dictEntry *dbFind(serverDb *db, void *key);
-dictEntry *dbFindExpires(serverDb *db, void *key);
+robj *dbFind(serverDb *db, sds key);
+robj *dbFindExpires(serverDb *db, sds key);
 unsigned long long dbSize(serverDb *db);
-unsigned long long dbScan(serverDb *db, unsigned long long cursor, dictScanFunction *scan_cb, void *privdata);
+unsigned long long dbScan(serverDb *db, unsigned long long cursor, hashtableScanFunction scan_cb, void *privdata);
 
 /* Set data type */
 robj *setTypeCreate(sds value, size_t size_hint);
@@ -3546,7 +3550,7 @@ void deleteExpiredKeyFromOverwriteAndPropagate(client *c, robj *keyobj);
 void propagateDeletion(serverDb *db, robj *key, int lazy);
 int keyIsExpired(serverDb *db, robj *key);
 long long getExpire(serverDb *db, robj *key);
-void setExpire(client *c, serverDb *db, robj *key, long long when);
+robj *setExpire(client *c, serverDb *db, robj *key, long long when);
 int checkAlreadyExpired(long long when);
 robj *lookupKeyRead(serverDb *db, robj *key);
 robj *lookupKeyWrite(serverDb *db, robj *key);
@@ -3566,16 +3570,16 @@ int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle, long lo
 #define LOOKUP_NOEFFECTS \
     (LOOKUP_NONOTIFY | LOOKUP_NOSTATS | LOOKUP_NOTOUCH | LOOKUP_NOEXPIRE) /* Avoid any effects from fetching the key */
 
-void dbAdd(serverDb *db, robj *key, robj *val);
-int dbAddRDBLoad(serverDb *db, sds key, robj *val);
-void dbReplaceValue(serverDb *db, robj *key, robj *val);
+void dbAdd(serverDb *db, robj *key, robj **valref);
+int dbAddRDBLoad(serverDb *db, sds key, robj **valref);
+void dbReplaceValue(serverDb *db, robj *key, robj **valref);
 
 #define SETKEY_KEEPTTL 1
 #define SETKEY_NO_SIGNAL 2
 #define SETKEY_ALREADY_EXIST 4
 #define SETKEY_DOESNT_EXIST 8
 #define SETKEY_ADD_OR_UPDATE 16 /* Key most likely doesn't exists */
-void setKey(client *c, serverDb *db, robj *key, robj *val, int flags);
+void setKey(client *c, serverDb *db, robj *key, robj **valref, int flags);
 robj *dbRandomKey(serverDb *db);
 int dbGenericDelete(serverDb *db, robj *key, int async, int flags);
 int dbSyncDelete(serverDb *db, robj *key);
@@ -3585,14 +3589,12 @@ robj *dbUnshareStringValue(serverDb *db, robj *key, robj *o);
 #define EMPTYDB_NO_FLAGS 0           /* No flags. */
 #define EMPTYDB_ASYNC (1 << 0)       /* Reclaim memory in another thread. */
 #define EMPTYDB_NOFUNCTIONS (1 << 1) /* Indicate not to flush the functions. */
-long long emptyData(int dbnum, int flags, void(callback)(dict *));
-long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callback)(dict *));
+long long emptyData(int dbnum, int flags, void(callback)(hashtable *));
+long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callback)(hashtable *));
 void flushAllDataAndResetRDB(int flags);
 long long dbTotalServerKeyCount(void);
 serverDb *initTempDb(void);
 void discardTempDb(serverDb *tempDb);
-
-
 int selectDb(client *c, int id);
 void signalModifiedKey(client *c, serverDb *db, robj *key);
 void signalFlushedDb(int dbid, int async);
