@@ -2938,6 +2938,22 @@ void initListeners(void) {
         listener->port = server.rdma_ctx_config.port;
         listener->ct = connectionByType(CONN_TYPE_RDMA);
         listener->priv = &server.rdma_ctx_config;
+
+    if (server.admin_port != 0) {
+        conn_index = connectionIndexByType(CONN_TYPE_SOCKET);
+        if (conn_index < 0) serverPanic("Failed finding connection listener of %s", CONN_TYPE_SOCKET);
+        // Check if the current index is already occupied
+        while (server.listeners[conn_index].ct != NULL) {
+            conn_index++;
+            if (conn_index >= CONN_TYPE_MAX) {
+                serverPanic("No available index for additional TCP listener.");
+            }
+        }
+        listener = &server.listeners[conn_index];
+        listener->bindaddr = server.bindaddr;
+        listener->bindaddr_count = server.bindaddr_count;
+        listener->port = server.admin_port;
+        listener->ct = connectionByType(CONN_TYPE_SOCKET);
     }
 
     /* create all the configured listener, and add handler to start to accept */
