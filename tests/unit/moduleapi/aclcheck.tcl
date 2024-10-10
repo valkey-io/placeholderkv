@@ -131,7 +131,19 @@ start_server {tags {"modules acl"}} {
         assert_equal {User j7 has no permissions to run the 'aclcheck.module.command.aclcategories.write.function.read.category' command} $e
     }
 
-    test "Unload the module - aclcheck" {
+    test {test if foocategory acl categories is added} {
+        r acl SETUSER j8 on >password -@all +@foocategory
+        assert_equal [r acl DRYRUN j8 aclcheck.module.command.test.add.new.aclcategories] OK
+    }
+
+    test {test if ACL CAT output for the new category is correct} {
+        assert_equal [r ACL CAT foocategory] aclcheck.module.command.test.add.new.aclcategories
+    }
+
+    test {test permission compaction and simplification for categories added by a module} {
+        r acl SETUSER j9 on >password -@all +@foocategory -@foocategory
+        catch {r ACL GETUSER j9} res
+        assert_equal {-@all -@foocategory} [lindex $res 5]
         assert_equal {OK} [r module unload aclcheck]
     }
 }
