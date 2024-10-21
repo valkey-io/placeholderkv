@@ -27,27 +27,27 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __SLOWLOG_H__
-#define __SLOWLOG_H__
+#ifndef __COMMANDLOG_H__
+#define __COMMANDLOG_H__
 
 #include "server.h"
 
-#define SLOWLOG_ENTRY_MAX_ARGC 32
-#define SLOWLOG_ENTRY_MAX_STRING 128
+#define COMMANDLOG_ENTRY_MAX_ARGC 32
+#define COMMANDLOG_ENTRY_MAX_STRING 128
 
-/* This structure defines an entry inside the slow log list */
-typedef struct slowlogEntry {
+/* This structure defines an entry inside the command log list */
+typedef struct commandlogEntry {
     robj **argv;
     int argc;
     long long id;       /* Unique entry identifier. */
-    long long duration; /* Time spent by the query, in microseconds. */
+    long long value;    /* The meaning is determined by the type of command log. */
     time_t time;        /* Unix time at which the query was executed. */
     sds cname;          /* Client name. */
     sds peerid;         /* Client network address. */
-} slowlogEntry;
+} commandlogEntry;
 
 /* Exported API */
-void slowlogInit(void);
-void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration);
+void commandlogInit(void);
+void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long value, int type);
 
-#endif /* __SLOWLOG_H__ */
+#endif /* __COMMANDLOG_H__ */

@@ -61,7 +61,7 @@
  */
 
 #include "server.h"
-#include "slowlog.h"
+#include "commandlog.h"
 #include "latency.h"
 #include "monotonic.h"
 #include "cluster_slot_stats.h"
@@ -107,17 +107,17 @@ void blockClient(client *c, int btype) {
  * the command will not be reprocessed and we need to make stats update.
  * This function will make updates to the commandstats, slot-stats, slowlog and monitors.*/
 void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int had_errors) {
-    const ustime_t total_cmd_duration = c->duration + blocked_us + reply_us;
-    c->lastcmd->microseconds += total_cmd_duration;
-    clusterSlotStatsAddCpuDuration(c, total_cmd_duration);
+    c->duration += blocked_us + reply_us;
+    c->lastcmd->microseconds += c->duration;
+    clusterSlotStatsAddCpuDuration(c, c->duration);
     c->lastcmd->calls++;
     c->commands_processed++;
     server.stat_numcommands++;
     if (had_errors) c->lastcmd->failed_calls++;
     if (server.latency_tracking_enabled)
-        updateCommandLatencyHistogram(&(c->lastcmd->latency_histogram), total_cmd_duration * 1000);
-    /* Log the command into the Slow log if needed. */
-    slowlogPushCurrentCommand(c, c->lastcmd, total_cmd_duration);
+        updateCommandLatencyHistogram(&(c->lastcmd->latency_histogram), c->duration * 1000);
+    /* Log the command into the commandlog if needed. */
+    commandlogPushCurrentCommand(c, c->lastcmd);
     c->duration = 0;
     /* Log the reply duration event. */
     latencyAddSampleIfNeeded("command-unblocking", reply_us / 1000);

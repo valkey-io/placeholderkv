@@ -374,6 +374,19 @@ typedef enum blocking_type {
                                     buffer configuration. Just the first  \
                                     three: normal, replica, pubsub. */
 
+#define COMMANDLOG_TYPE_SLOW 0
+#define COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT 1
+#define COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT 2
+#define COMMANDLOG_TYPE_MAX 3
+
+/* Configuration and entry list of different types of command logs */
+typedef struct commandlog {
+    list *entries;
+    long long entry_id;
+    long long threshold;
+    unsigned long max_len;
+} commandlog;
+
 /* Replica replication state. Used in server.repl_state for replicas to remember
  * what to do next. */
 typedef enum {
@@ -1796,10 +1809,7 @@ struct valkeyServer {
     long long stat_sync_full;                      /* Number of full resyncs with replicas. */
     long long stat_sync_partial_ok;                /* Number of accepted PSYNC requests. */
     long long stat_sync_partial_err;               /* Number of unaccepted PSYNC requests. */
-    list *slowlog;                                 /* SLOWLOG list of commands */
-    long long slowlog_entry_id;                    /* SLOWLOG current entry ID */
-    long long slowlog_log_slower_than;             /* SLOWLOG time limit (to get logged) */
-    unsigned long slowlog_max_len;                 /* SLOWLOG max number of items logged */
+    commandlog commandlog[COMMANDLOG_TYPE_MAX];    /* Logs of commands. */
     struct malloc_stats cron_malloc_stats;         /* sampled in serverCron(). */
     long long stat_net_input_bytes;                /* Bytes read from network. */
     long long stat_net_output_bytes;               /* Bytes written to network. */
@@ -3285,7 +3295,7 @@ void forceCommandPropagation(client *c, int flags);
 void preventCommandPropagation(client *c);
 void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
-void slowlogPushCurrentCommand(client *c, struct serverCommand *cmd, ustime_t duration);
+void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd);
 void updateCommandLatencyHistogram(struct hdr_histogram **latency_histogram, int64_t duration_hist);
 int prepareForShutdown(client *c, int flags);
 void replyToClientsBlockedOnShutdown(void);

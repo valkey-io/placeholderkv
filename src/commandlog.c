@@ -1,12 +1,17 @@
-/* Slowlog implements a system that is able to remember the latest N
- * queries that took more than M microseconds to execute.
+/* Commandlog implements a system that is able to remember the latest N
+ * queries that took more than M microseconds to execute, or consumed
+ * too much network bandwidth and memory for input/output buffers.
  *
  * The execution time to reach to be logged in the slow log is set
  * using the 'slowlog-log-slower-than' config directive, that is also
  * readable and writable using the CONFIG SET/GET command.
  *
- * The slow queries log is actually not "logged" in the server log file
- * but is accessible thanks to the SLOWLOG command.
+ * Other configurations such as `heavytraffic-input-larger-than` and
+ * `heavytraffic-output-larger-than` can be found with more detailed
+ * explanations in the config file.
+ *
+ * The command log is actually not "logged" in the server log file
+ * but is accessible thanks to the COMMANDLOG command.
  *
  * ----------------------------------------------------------------------------
  *
@@ -38,36 +43,36 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "slowlog.h"
+#include "commandlog.h"
 
-/* Create a new slowlog entry.
+/* Create a new commandlog entry.
  * Incrementing the ref count of all the objects retained is up to
  * this function. */
-slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long duration) {
-    slowlogEntry *se = zmalloc(sizeof(*se));
+commandlogEntry *commandlogCreateEntry(client *c, robj **argv, int argc, long long value, int type) {
+    commandlogEntry *ce = zmalloc(sizeof(*ce));
     int j, slargc = argc;
 
-    if (slargc > SLOWLOG_ENTRY_MAX_ARGC) slargc = SLOWLOG_ENTRY_MAX_ARGC;
-    se->argc = slargc;
-    se->argv = zmalloc(sizeof(robj *) * slargc);
+    if (slargc > COMMANDLOG_ENTRY_MAX_ARGC) slargc = COMMANDLOG_ENTRY_MAX_ARGC;
+    ce->argc = slargc;
+    ce->argv = zmalloc(sizeof(robj *) * slargc);
     for (j = 0; j < slargc; j++) {
         /* Logging too many arguments is a useless memory waste, so we stop
-         * at SLOWLOG_ENTRY_MAX_ARGC, but use the last argument to specify
+         * at COMMANDLOG_ENTRY_MAX_ARGC, but use the last argument to specify
          * how many remaining arguments there were in the original command. */
         if (slargc != argc && j == slargc - 1) {
-            se->argv[j] =
+            ce->argv[j] =
                 createObject(OBJ_STRING, sdscatprintf(sdsempty(), "... (%d more arguments)", argc - slargc + 1));
         } else {
             /* Trim too long strings as well... */
             if (argv[j]->type == OBJ_STRING && sdsEncodedObject(argv[j]) &&
-                sdslen(argv[j]->ptr) > SLOWLOG_ENTRY_MAX_STRING) {
-                sds s = sdsnewlen(argv[j]->ptr, SLOWLOG_ENTRY_MAX_STRING);
+                sdslen(argv[j]->ptr) > COMMANDLOG_ENTRY_MAX_STRING) {
+                sds s = sdsnewlen(argv[j]->ptr, COMMANDLOG_ENTRY_MAX_STRING);
 
                 s = sdscatprintf(s, "... (%lu more bytes)",
-                                 (unsigned long)sdslen(argv[j]->ptr) - SLOWLOG_ENTRY_MAX_STRING);
-                se->argv[j] = createObject(OBJ_STRING, s);
+                                 (unsigned long)sdslen(argv[j]->ptr) - COMMANDLOG_ENTRY_MAX_STRING);
+                ce->argv[j] = createObject(OBJ_STRING, s);
             } else if (argv[j]->refcount == OBJ_SHARED_REFCOUNT) {
-                se->argv[j] = argv[j];
+                ce->argv[j] = argv[j];
             } else {
                 /* Here we need to duplicate the string objects composing the
                  * argument vector of the command, because those may otherwise
@@ -75,56 +80,58 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
                  * shared objects between any part of the server, and the data
                  * structure holding the data, is a problem: FLUSHALL ASYNC
                  * may release the shared string object and create a race. */
-                se->argv[j] = dupStringObject(argv[j]);
+                ce->argv[j] = dupStringObject(argv[j]);
             }
         }
     }
-    se->time = time(NULL);
-    se->duration = duration;
-    se->id = server.slowlog_entry_id++;
-    se->peerid = sdsnew(getClientPeerId(c));
-    se->cname = c->name ? sdsnew(c->name->ptr) : sdsempty();
-    return se;
+    ce->time = time(NULL);
+    ce->value = value;
+    ce->id = server.commandlog[type].entry_id++;
+    ce->peerid = sdsnew(getClientPeerId(c));
+    ce->cname = c->name ? sdsnew(c->name->ptr) : sdsempty();
+    return ce;
 }
 
-/* Free a slow log entry. The argument is void so that the prototype of this
+/* Free a command log entry. The argument is void so that the prototype of this
  * function matches the one of the 'free' method of adlist.c.
  *
  * This function will take care to release all the retained object. */
-void slowlogFreeEntry(void *septr) {
-    slowlogEntry *se = septr;
+void commandlogFreeEntry(void *ceptr) {
+    commandlogEntry *ce = ceptr;
     int j;
 
-    for (j = 0; j < se->argc; j++) decrRefCount(se->argv[j]);
-    zfree(se->argv);
-    sdsfree(se->peerid);
-    sdsfree(se->cname);
-    zfree(se);
+    for (j = 0; j < ce->argc; j++) decrRefCount(ce->argv[j]);
+    zfree(ce->argv);
+    sdsfree(ce->peerid);
+    sdsfree(ce->cname);
+    zfree(ce);
 }
 
-/* Initialize the slow log. This function should be called a single time
+/* Initialize the command log. This function should be called a single time
  * at server startup. */
-void slowlogInit(void) {
-    server.slowlog = listCreate();
-    server.slowlog_entry_id = 0;
-    listSetFreeMethod(server.slowlog, slowlogFreeEntry);
+void commandlogInit(void) {
+    for (int i = 0; i < COMMANDLOG_TYPE_MAX; i++) {
+        server.commandlog[i].entries = listCreate();
+        server.commandlog[i].entry_id = 0;
+        listSetFreeMethod(server.commandlog[i].entries, commandlogFreeEntry);
+    }
 }
 
-/* Push a new entry into the slow log.
- * This function will make sure to trim the slow log accordingly to the
+/* Push a new entry into the command log.
+ * This function will make sure to trim the command log accordingly to the
  * configured max length. */
-void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
-    if (server.slowlog_log_slower_than < 0 || server.slowlog_max_len == 0) return; /* Slowlog disabled */
-    if (duration >= server.slowlog_log_slower_than)
-        listAddNodeHead(server.slowlog, slowlogCreateEntry(c, argv, argc, duration));
+void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long value, int type) {
+    if (server.commandlog[type].threshold < 0 || server.commandlog[type].max_len == 0) return; /* The corresponding commandlog disabled */
+    if (value >= server.commandlog[type].threshold)
+        listAddNodeHead(server.commandlog[type].entries, commandlogCreateEntry(c, argv, argc, value, type));
 
     /* Remove old entries if needed. */
-    while (listLength(server.slowlog) > server.slowlog_max_len) listDelNode(server.slowlog, listLast(server.slowlog));
+    while (listLength(server.commandlog[type].entries) > server.commandlog[type].max_len) listDelNode(server.commandlog[type].entries, listLast(server.commandlog[type].entries));
 }
 
-/* Remove all the entries from the current slow log. */
-void slowlogReset(void) {
-    while (listLength(server.slowlog) > 0) listDelNode(server.slowlog, listLast(server.slowlog));
+/* Remove all the entries from the current command log of the specified type. */
+void commandlogReset(int type) {
+    while (listLength(server.commandlog[type].entries) > 0) listDelNode(server.commandlog[type].entries, listLast(server.commandlog[type].entries));
 }
 
 /* The SLOWLOG command. Implements all the subcommands needed to handle the
@@ -145,15 +152,15 @@ void slowlogCommand(client *c) {
         };
         addReplyHelp(c, help);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "reset")) {
-        slowlogReset();
+        commandlogReset(COMMANDLOG_TYPE_SLOW);
         addReply(c, shared.ok);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "len")) {
-        addReplyLongLong(c, listLength(server.slowlog));
+        addReplyLongLong(c, listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries));
     } else if ((c->argc == 2 || c->argc == 3) && !strcasecmp(c->argv[1]->ptr, "get")) {
         long count = 10;
         listIter li;
         listNode *ln;
-        slowlogEntry *se;
+        commandlogEntry *ce;
 
         if (c->argc == 3) {
             /* Consume count arg. */
@@ -163,29 +170,29 @@ void slowlogCommand(client *c) {
 
             if (count == -1) {
                 /* We treat -1 as a special value, which means to get all slow logs.
-                 * Simply set count to the length of server.slowlog.*/
-                count = listLength(server.slowlog);
+                 * Simply set count to the length of server.commandlog. */
+                count = listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries);
             }
         }
 
-        if (count > (long)listLength(server.slowlog)) {
-            count = listLength(server.slowlog);
+        if (count > (long)listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries)) {
+            count = listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries);
         }
         addReplyArrayLen(c, count);
-        listRewind(server.slowlog, &li);
+        listRewind(server.commandlog[COMMANDLOG_TYPE_SLOW].entries, &li);
         while (count--) {
             int j;
 
             ln = listNext(&li);
-            se = ln->value;
+            ce = ln->value;
             addReplyArrayLen(c, 6);
-            addReplyLongLong(c, se->id);
-            addReplyLongLong(c, se->time);
-            addReplyLongLong(c, se->duration);
-            addReplyArrayLen(c, se->argc);
-            for (j = 0; j < se->argc; j++) addReplyBulk(c, se->argv[j]);
-            addReplyBulkCBuffer(c, se->peerid, sdslen(se->peerid));
-            addReplyBulkCBuffer(c, se->cname, sdslen(se->cname));
+            addReplyLongLong(c, ce->id);
+            addReplyLongLong(c, ce->time);
+            addReplyLongLong(c, ce->value);
+            addReplyArrayLen(c, ce->argc);
+            for (j = 0; j < ce->argc; j++) addReplyBulk(c, ce->argv[j]);
+            addReplyBulkCBuffer(c, ce->peerid, sdslen(ce->peerid));
+            addReplyBulkCBuffer(c, ce->cname, sdslen(ce->cname));
         }
     } else {
         addReplySubcommandSyntaxError(c);

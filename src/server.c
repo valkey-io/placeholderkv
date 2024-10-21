@@ -31,7 +31,7 @@
 #include "monotonic.h"
 #include "cluster.h"
 #include "cluster_slot_stats.h"
-#include "slowlog.h"
+#include "commandlog.h"
 #include "bio.h"
 #include "latency.h"
 #include "mt19937-64.h"
@@ -2764,7 +2764,7 @@ void initServer(void) {
         serverPanic("Functions initialization failed, check the server logs.");
         exit(1);
     }
-    slowlogInit();
+    commandlogInit();
     latencyMonitorInit();
     initSharedQueryBuf();
 
@@ -3299,9 +3299,10 @@ void preventCommandReplication(client *c) {
     c->flag.prevent_repl_prop = 1;
 }
 
-/* Log the last command a client executed into the slowlog. */
-void slowlogPushCurrentCommand(client *c, struct serverCommand *cmd, ustime_t duration) {
-    /* Some commands may contain sensitive data that should not be available in the slowlog. */
+/* Log the last command a client executed into the commandlog. */
+void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
+    /* Some commands may contain sensitive data that should not be available in the commandlog.
+*/
     if (cmd->flags & CMD_SKIP_SLOWLOG) return;
 
     /* If command argument vector was rewritten, use the original
@@ -3315,7 +3316,9 @@ void slowlogPushCurrentCommand(client *c, struct serverCommand *cmd, ustime_t du
      * use the original client to get the client information. */
     c = scriptIsRunning() ? scriptGetCaller() : c;
 
-    slowlogPushEntryIfNeeded(c, argv, argc, duration);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->duration, COMMANDLOG_TYPE_SLOW);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_input_bytes_curr_cmd, COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_output_bytes_curr_cmd, COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT);
 }
 
 /* This function is called in order to update the total command histogram duration.
@@ -3471,7 +3474,7 @@ void call(client *c, int flags) {
     server.executing_client = c;
 
     /* When call() is issued during loading the AOF we don't want commands called
-     * from module, exec or LUA to go into the slowlog or to populate statistics. */
+     * from module, exec or LUA to go into the commandlog or to populate statistics. */
     int update_command_stats = !isAOFLoadingContext();
 
     /* We want to be aware of a client which is making a first time attempt to execute this command
@@ -3568,9 +3571,9 @@ void call(client *c, int flags) {
         if (server.execution_nesting == 0) durationAddSample(EL_DURATION_TYPE_CMD, duration);
     }
 
-    /* Log the command into the Slow log if needed.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
-    if (update_command_stats && !c->flag.blocked) slowlogPushCurrentCommand(c, real_cmd, c->duration);
+    /* Log the command into the commandlog if needed.
+     * If the client is blocked we will handle commandlog when it is unblocked. */
+    if (update_command_stats && !c->flag.blocked) commandlogPushCurrentCommand(c, real_cmd);
 
     /* Send the command to clients in MONITOR mode if applicable,
      * since some administrative commands are considered too dangerous to be shown.
@@ -3583,7 +3586,7 @@ void call(client *c, int flags) {
     }
 
     /* Clear the original argv.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
+     * If the client is blocked we will handle commandlog when it is unblocked. */
     if (!c->flag.blocked) freeClientOriginalArgv(c);
 
     /* Populate the per-command and per-slot statistics that we show in INFO commandstats and CLUSTER SLOT-STATS,
