@@ -522,16 +522,20 @@ int test_sdssplitargs_benchmark(int argc, char **argv, int flags) {
     UNUSED(argv);
 
     /* Seed the random number generator */
-    unsigned int seed = time(NULL);
+    unsigned int seed = timeInMicroseconds();
     srand(seed);
     TEST_PRINT_INFO("Using random seed: %d", seed);
 
-    for (int j = 0; j < 1000; j++) {
+    const int iterations = 10000;
+    const int test_strings = 1000;
+    const int test_string_length = 100;
+
+    for (int j = 0; j < test_strings; j++) {
         long i = 0;
         sds random = sdsnew("");
         char bytes[] = "X";
         long long start, elapsed_new, elapsed_old;
-        for (int j = 0; j < 100; j++){
+        for (int j = 0; j < test_string_length; j++){
             bytes[0] = get_random_printable_char();
             random = sdscatlen(random, bytes, 1);
         }
@@ -554,7 +558,6 @@ int test_sdssplitargs_benchmark(int argc, char **argv, int flags) {
         /* Only benchmark valid strings */
         if (!valid_result) continue;
 
-        const int iterations = 10000;
         start = timeInMicroseconds();
         for (; i < iterations; i++) {
             int len;
@@ -571,7 +574,7 @@ int test_sdssplitargs_benchmark(int argc, char **argv, int flags) {
         }
         elapsed_old = timeInMicroseconds() - start;
         TEST_PRINT_INFO("Improvement: %.2f%%, new:%lldus, old:%lldus",
-                        (1.0 - (float)elapsed_new/elapsed_old) * 100,
+                        (1.0 - (float)elapsed_new / elapsed_old) * 100,
                         elapsed_new,
                         elapsed_old);
         sdsfree(random);
