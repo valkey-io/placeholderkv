@@ -1045,7 +1045,7 @@ static int sdsparsearg(const char *arg, unsigned int *len, char *dst) {
     int done = 0;
 
     while (!done) {
-        char new_char = 0;
+        int new_char = -1;
         if (inq) {
             if (*p == '\\' && *(p + 1) == 'x' && is_hex_digit(*(p + 2)) && is_hex_digit(*(p + 3))) {
                 new_char = (hex_digit_to_int(*(p + 2)) * 16) + hex_digit_to_int(*(p + 3));
@@ -1098,10 +1098,10 @@ static int sdsparsearg(const char *arg, unsigned int *len, char *dst) {
             default: new_char = *p; break;
             }
         }
-        if (new_char) {
+        if (new_char != -1) {
             if (len) (*len)++;
             if (dst) {
-                *dst = new_char;
+                *dst = (char) new_char;
                 dst++;
             }
         }
