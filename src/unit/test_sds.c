@@ -367,6 +367,7 @@ int test_sdssplitargs(int argc, char **argv, int flags) {
     sargv = sdssplitargs(binary_string, &len);
     TEST_ASSERT(1 == len);
     TEST_ASSERT(22 == sdslen(sargv[0]));
+    sdsfreesplitres(sargv, len);
 
     return 0;
 }
