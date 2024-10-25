@@ -83,7 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
-        run: make -j3 SERVER_CFLAGS='-Werror'
+        run: make all-with-unit-tests -j3 SERVER_CFLAGS='-Werror'
 
   build-32bit:
     runs-on: ubuntu-latest
