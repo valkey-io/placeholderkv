@@ -149,6 +149,8 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 #if SIZE_MAX == UINT64_MAX /* 64-bit version */
 
 #define ELEMENTS_PER_BUCKET 7
+#define BUCKET_BITS_TYPE uint8_t
+#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 3
 
 /* Selecting the number of buckets.
  *
@@ -183,6 +185,8 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 #elif SIZE_MAX == UINT32_MAX /* 32-bit version */
 
 #define ELEMENTS_PER_BUCKET 12
+#define BUCKET_BITS_TYPE uint16_t
+#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 4
 #define BUCKET_FACTOR 7
 #define BUCKET_DIVISOR 64
 /* When resizing, we get a fill of at most 76.19% (64 / 7 / 12). */
@@ -239,16 +243,6 @@ static_assert(MAX_FILL_PERCENT_HARD < 100, "Hard fill factor must be below 100%"
  *     1 bit     12 bits   3 bits  [1 byte] x 12  2 bytes  [4 bytes] x 12
  *     everfull  presence  unused  hashes         unused   elements
  */
-
-#if ELEMENTS_PER_BUCKET < 8
-#define BUCKET_BITS_TYPE uint8_t
-#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 3
-#elif ELEMENTS_PER_BUCKET < 16
-#define BUCKET_BITS_TYPE uint16_t
-#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 4
-#else
-#error "Unexpected value of ELEMENTS_PER_BUCKET"
-#endif
 
 typedef struct {
     BUCKET_BITS_TYPE everfull : 1;
@@ -652,6 +646,7 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
     assert(s->tables[table]);
     size_t mask = expToMask(s->bucket_exp[table]);
     size_t bucket_idx = hash & mask;
+    size_t start_bucket_idx = bucket_idx;
     while (1) {
         bucket *b = &s->tables[table][bucket_idx];
         for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
@@ -662,6 +657,7 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
             return b;
         }
         bucket_idx = nextCursor(bucket_idx, mask);
+        assert(bucket_idx != start_bucket_idx); /* Detect infinite loop. */
     }
 }
 
