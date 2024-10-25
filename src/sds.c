@@ -1101,7 +1101,7 @@ static int sdsparsearg(const char *arg, unsigned int *len, char *dst) {
         if (new_char != -1) {
             if (len) (*len)++;
             if (dst) {
-                *dst = (char) new_char;
+                *dst = (char)new_char;
                 dst++;
             }
         }

@@ -331,9 +331,6 @@ int test_sdsHeaderSizes(int argc, char **argv, int flags) {
     return 0;
 }
 
-    static sds *sdssplitargs_legacy(const char *line, int *argc);
-
-
 int test_sdssplitargs(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
@@ -367,7 +364,7 @@ int test_sdssplitargs(int argc, char **argv, int flags) {
     sdsfreesplitres(sargv, len);
 
     char *binary_string = "\"\\x73\\x75\\x70\\x65\\x72\\x20\\x00\\x73\\x65\\x63\\x72\\x65\\x74\\x20\\x70\\x61\\x73\\x73\\x77\\x6f\\x72\\x64\"";
-    sargv = sdssplitargs_legacy(binary_string, &len);
+    sargv = sdssplitargs(binary_string, &len);
     TEST_ASSERT(1 == len);
     TEST_ASSERT(22 == sdslen(sargv[0]));
 
