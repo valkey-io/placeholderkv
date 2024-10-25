@@ -3828,13 +3828,6 @@ int processCommand(client *c) {
         reqresAppendRequest(c);
     }
 
-    /* Handle possible security attacks. */
-    if (c->io_checked == IO_CHECKED_NOT_SECURITY ||
-        (!c->io_checked && (!strcasecmp(c->argv[0]->ptr, "host:") || !strcasecmp(c->argv[0]->ptr, "post")))) {
-        securityWarningCommand(c);
-        return C_ERR;
-    }
-
     /* If we're inside a module blocked context yielding that wants to avoid
      * processing clients, postpone the command. */
     if (server.busy_module_yield_flags != BUSY_MODULE_YIELD_NONE &&
@@ -3849,6 +3842,13 @@ int processCommand(client *c) {
      * we do not have to repeat the same checks */
     if (!client_reprocessing_command) {
         struct serverCommand *cmd = c->io_parsed_cmd ? c->io_parsed_cmd : lookupCommand(c->argv, c->argc);
+        if (!cmd) {
+            /* Handle possible security attacks. */
+            if (!strcasecmp(c->argv[0]->ptr, "host:") || !strcasecmp(c->argv[0]->ptr, "post")) {
+                securityWarningCommand(c);
+                return C_ERR;
+            }
+        }
         c->cmd = c->lastcmd = c->realcmd = cmd;
         sds err;
         if (!commandCheckExistence(c, &err)) {
