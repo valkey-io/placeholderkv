@@ -1032,7 +1032,7 @@ int hex_digit_to_int(char c) {
     }
 }
 
-/* Helper function for sdssplitargs that parses a single argument. It 
+/* Helper function for sdssplitargs that parses a single argument. It
  * populates either the number characters needed to store the parsed argument
  * in len, if provided, or will copy the parsed string into dst, if provided.
  * If the string is able to be parsed, this function returns the number of
