@@ -535,12 +535,12 @@ int test_sdssplitargs_benchmark(int argc, char **argv, int flags) {
         sds random = sdsnew("");
         char bytes[] = "X";
         long long start, elapsed_new, elapsed_old;
-        for (int j = 0; j < test_string_length; j++){
+        for (int j = 0; j < test_string_length; j++) {
             bytes[0] = get_random_printable_char();
             random = sdscatlen(random, bytes, 1);
         }
 
-        /* Validate the new and legacy implementation return logically the 
+        /* Validate the new and legacy implementation return logically the
          * same value. */
         int len1, len2;
         sds *argv1 = sdssplitargs(random, &len1);

@@ -1130,7 +1130,7 @@ static int sdsparsearg(const char *arg, unsigned int *len, char *dst) {
  * input string is empty, or NULL if the input contains unbalanced
  * quotes or closed quotes followed by non space characters
  * as in: "foo"bar or "foo'.
- * 
+ *
  * The sds strings returned by this function are not initialized with
  * extra space.
  */
