@@ -126,17 +126,22 @@ proc wait_replica_online r {
     }
 }
 
-proc get_replica_acked_offset {primary replica_ip replica_port} {
+proc check_replica_acked_ofs {primary replica_ip replica_port} {
     set infostr [$primary info replication]
-    if {[regexp -lineanchor "^slave\\d:ip=$replica_ip,port=$replica_port,.*,offset=(\\d+).*\r\n" $infostr _ value]} {
-        return $value
+    set master_repl_offset [getInfoProperty $infostr master_repl_offset]
+    if {[regexp -lineanchor "^slave\\d:ip=$replica_ip,port=$replica_port,.*,offset=(\\d+).*\r\n" $infostr _ offset]} {
+        if {$master_repl_offset == $offset} {
+            return 1
+        }
+        return 0
     }
+    return 0
 }
 
 proc wait_replica_acked_ofs {primary replica_ip replica_port} {
     $primary config set repl-ping-replica-period 3600
-    wait_for_condition 500 100 {
-        [status $primary master_repl_offset] eq [get_replica_acked_offset $primary $replica_ip $replica_port]
+    wait_for_condition 50 100 {
+        [check_replica_acked_ofs $primary $replica_ip $replica_port] eq 1
     } else {
         puts "INFO REPLICATION: [$primary info replication]"
         fail "replica acked offset didn't match in time"

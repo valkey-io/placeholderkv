@@ -27,6 +27,7 @@ proc test_main {how} {
         }
 
         # Wait the replica2 catch up with the offset
+        wait_for_ofs_sync $primary $replica2
         wait_replica_acked_ofs $primary $replica2_ip $replica2_port
 
         # Shutdown the primary.
