@@ -314,8 +314,10 @@ int prepareClientToWrite(client *c) {
      * is set. */
     if (c->flag.primary && !c->flag.primary_force_reply) return C_ERR;
 
-    /* Skip the fake client, such as the fake client for AOF loading. */
-    if (c->flag.fake) return C_ERR;
+    /* Skip the fake client, such as the fake client for AOF loading.
+     * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
+     * but has a connection to cache the response. */
+    if (c->flag.fake && c->id != CLIENT_ID_CACHED_RESPONSE) return C_ERR;
     serverAssert(c->conn);
 
     /* Schedule the client to write the output buffers to the socket, unless
@@ -350,6 +352,9 @@ sds aggregateClientOutputBuffer(client *c) {
  * It needs be paired with `deleteCachedResponseClient` function to stop caching. */
 client *createCachedResponseClient(int resp) {
     struct client *recording_client = createClient(NULL);
+    /* It is a fake client but with a connection, setting a special client id,
+     * so we can identify it's a fake cached response client. */
+    recording_client->id = CLIENT_ID_CACHED_RESPONSE;
     recording_client->resp = resp;
     /* Allocating the `conn` allows to prepare the caching client before adding
      * data to the clients output buffer by `prepareClientToWrite`. */
