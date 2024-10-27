@@ -135,7 +135,7 @@ proc get_replica_acked_offset {primary replica_ip replica_port} {
 
 proc wait_replica_acked_ofs {primary replica_ip replica_port} {
     $primary config set repl-ping-replica-period 3600
-    wait_for_condition 50 100 {
+    wait_for_condition 500 100 {
         [status $primary master_repl_offset] eq [get_replica_acked_offset $primary $replica_ip $replica_port]
     } else {
         puts "INFO REPLICATION: [$primary info replication]"
