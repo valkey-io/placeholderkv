@@ -1200,10 +1200,13 @@ void clusterHandleServerShutdown(void) {
         listRewind(server.replicas, &replicas_iter);
         while ((replicas_list_node = listNext(&replicas_iter)) != NULL) {
             client *replica = listNodeValue(replicas_list_node);
-            if (replica->repl_state != REPLICA_STATE_ONLINE) continue;
-            if (best_replica == NULL || replica->repl_ack_off > best_replica->repl_ack_off) best_replica = replica;
-            if (best_replica->repl_ack_off == server.primary_repl_offset) break;
+            /* This is done only when the replica offset is caught up, to avoid data loss */
+            if (replica->repl_state == REPLICA_STATE_ONLINE && replica->repl_ack_off == server.primary_repl_offset) {
+                best_replica = replica;
+                break;
+            }
         }
+
         if (best_replica) {
             /* Send a CLUSTER FAILOVER FORCE to the best replica. */
             const char *buf = "*3\r\n$7\r\nCLUSTER\r\n$8\r\nFAILOVER\r\n$5\r\nFORCE\r\n";

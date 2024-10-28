@@ -141,7 +141,7 @@ proc check_replica_acked_ofs {primary replica_ip replica_port} {
 proc wait_replica_acked_ofs {primary replica replica_ip replica_port} {
     $primary config set repl-ping-replica-period 3600
     $replica config set hz 500
-    wait_for_condition 50 100 {
+    wait_for_condition 100 100 {
         [check_replica_acked_ofs $primary $replica_ip $replica_port] eq 1
     } else {
         puts "INFO REPLICATION: [$primary info replication]"

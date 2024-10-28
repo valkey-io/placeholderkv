@@ -20,6 +20,10 @@ proc test_main {how shutdown_timeout} {
 
         $primary config set auto-failover-on-shutdown yes
         $primary config set shutdown-timeout $shutdown_timeout
+        $primary config set repl-ping-replica-period 3600
+
+        # To avoid failover kick in.
+        $replica2 config set cluster-replica-no-failover yes
 
         # Pause a replica so it has no chance to catch up with the offset.
         pause_process $replica1_pid
@@ -29,7 +33,7 @@ proc test_main {how shutdown_timeout} {
             $primary incr key_991803
         }
 
-        if {$shutdown_timeout != 0} {
+        if {$shutdown_timeout == 0} {
             # Wait the replica2 catch up with the offset
             wait_for_ofs_sync $primary $replica2
             wait_replica_acked_ofs $primary $replica2 $replica2_ip $replica2_port
@@ -63,6 +67,7 @@ proc test_main {how shutdown_timeout} {
 
         pause_process $replica1_pid
 
+        $primary config set auto-failover-on-shutdown yes
         $primary client kill type replica
         shutdown_how 6 $how
         wait_for_log_messages -6 {"*Unable to find a replica to perform an auto failover on shutdown*"} 0 1000 10
