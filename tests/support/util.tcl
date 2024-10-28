@@ -138,8 +138,9 @@ proc check_replica_acked_ofs {primary replica_ip replica_port} {
     return 0
 }
 
-proc wait_replica_acked_ofs {primary replica_ip replica_port} {
+proc wait_replica_acked_ofs {primary replica replica_ip replica_port} {
     $primary config set repl-ping-replica-period 3600
+    $replica config set hz 500
     wait_for_condition 50 100 {
         [check_replica_acked_ofs $primary $replica_ip $replica_port] eq 1
     } else {
@@ -147,6 +148,7 @@ proc wait_replica_acked_ofs {primary replica_ip replica_port} {
         fail "replica acked offset didn't match in time"
     }
     $primary config set repl-ping-replica-period 10
+    $replica config set hz 10
 }
 
 proc wait_for_ofs_sync {r1 r2} {

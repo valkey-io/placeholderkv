@@ -1,4 +1,4 @@
-proc shutdown_on_how {srv_id how} {
+proc shutdown_how {srv_id how} {
     if {$how == "shutdown"} {
         catch {R $srv_id shutdown nosave}
     } elseif {$how == "sigterm"} {
@@ -9,14 +9,17 @@ proc shutdown_on_how {srv_id how} {
 # We will start a cluster with 3 primary nodes and 4 replicas, the primary 1 will have 2 replicas.
 # We will pause the replica 1, and then shutdown the primary 1, and making replica 2 to become
 # the new primary.
-proc test_main {how} {
-    test "auto-failover-on-shutdown will always pick a best replica and send CLUSTER FAILOVER - $how" {
+proc test_main {how shutdown_timeout} {
+    test "auto-failover-on-shutdown will always pick a best replica and send CLUSTER FAILOVER - $how - shutdown-timeout: $shutdown_timeout" {
         set primary [srv 0 client]
         set replica1 [srv -3 client]
         set replica1_pid [s -3 process_id]
         set replica2 [srv -6 client]
         set replica2_ip [srv -6 host]
         set replica2_port [srv -6 port]
+
+        $primary config set auto-failover-on-shutdown yes
+        $primary config set shutdown-timeout $shutdown_timeout
 
         # Pause a replica so it has no chance to catch up with the offset.
         pause_process $replica1_pid
@@ -26,12 +29,17 @@ proc test_main {how} {
             $primary incr key_991803
         }
 
-        # Wait the replica2 catch up with the offset
-        wait_for_ofs_sync $primary $replica2
-        wait_replica_acked_ofs $primary $replica2_ip $replica2_port
+        if {$shutdown_timeout != 0} {
+            # Wait the replica2 catch up with the offset
+            wait_for_ofs_sync $primary $replica2
+            wait_replica_acked_ofs $primary $replica2 $replica2_ip $replica2_port
+        } else {
+            # If shutdown-timeout is enable, we expect the primary to pause writing
+            # and wait for the replica to catch up with the offset.
+        }
 
         # Shutdown the primary.
-        shutdown_on_how 0 $how
+        shutdown_how 0 $how
 
         # Wait for the replica2 to become a primary.
         wait_for_condition 1000 50 {
@@ -56,17 +64,25 @@ proc test_main {how} {
         pause_process $replica1_pid
 
         $primary client kill type replica
-        shutdown_on_how 6 $how
+        shutdown_how 6 $how
         wait_for_log_messages -6 {"*Unable to find a replica to perform an auto failover on shutdown*"} 0 1000 10
 
         resume_process $replica1_pid
     }
 }
 
-start_cluster 3 4 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 5000 shutdown-timeout 0 auto-failover-on-shutdown yes}} {
-    test_main "shutdown"
+start_cluster 3 4 {tags {external:skip cluster}} {
+    test_main "shutdown" 0
 }
 
-start_cluster 3 4 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 5000 shutdown-timeout 0 auto-failover-on-shutdown yes}} {
-    test_main "sigterm"
+start_cluster 3 4 {tags {external:skip cluster}} {
+    test_main "sigterm" 0
+}
+
+start_cluster 3 4 {tags {external:skip cluster}} {
+    test_main "shutdown" 10
+}
+
+start_cluster 3 4 {tags {external:skip cluster}} {
+    test_main "sigterm" 10
 }
