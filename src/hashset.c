@@ -438,61 +438,77 @@ static inline int cursorIsLessThan(size_t a, size_t b) {
     return rev(a) < rev(b);
 }
 
+/* Rehashes one bucket */
+static void rehashBucket(hashset *s, bucket *b, int elements_displaced) {
+    assert(hashsetIsRehashing(s));
+    if (!b->presence) return;
+
+    /* If we're not growing it's possible to avoid computing the hash. We can
+     * just use idx has the hash, but only if we know that probing didn't
+     * push this element away from its primary bucket, so only if the
+     * bucket before the current one hasn't ever been full. */
+    const int idx_reusable = s->bucket_exp[1] <= s->bucket_exp[0] && !elements_displaced;
+
+    for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+        if (!isPositionFilled(b, pos)) continue; /* empty */
+        void *element = b->elements[pos];
+        uint8_t h2 = b->hashes[pos];
+        /* Insert into table 1. */
+        uint64_t hash;
+        if (idx_reusable) {
+            hash = (size_t)s->rehash_idx;
+        } else {
+            hash = hashElement(s, element);
+        }
+        int pos_in_dst_bucket;
+        bucket *dst = findBucketForInsert(s, hash, &pos_in_dst_bucket, NULL);
+        dst->elements[pos_in_dst_bucket] = element;
+        dst->hashes[pos_in_dst_bucket] = h2;
+        dst->presence |= (1 << pos_in_dst_bucket);
+        if (!dst->everfull && bucketIsFull(dst)) {
+            dst->everfull = 1;
+            s->everfulls[1]++;
+        }
+        s->used[0]--;
+        s->used[1]++;
+    }
+
+    /* Mark the source bucket as empty. */
+    b->presence = 0;
+}
+
 /* Rehashes buckets, following potential probe chains. This means that between
  * rehash steps, any element that hashes to an already-rehashed bucket has been
  * rehashed, even if it was moved to a different bucket due to open addressing.
  * Knowing this allows scan to skip already-rehashed buckets. */
 static void rehashStep(hashset *s) {
     assert(hashsetIsRehashing(s));
-    size_t idx = s->rehash_idx;
-    uint8_t prev_bucket_everfull = s->tables[0][prevCursor(idx, expToMask(s->bucket_exp[0]))].everfull;
-    while (1) {
-        bucket *b = &s->tables[0][idx];
-        if (b->presence) {
-            for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-                if (!isPositionFilled(b, pos)) continue; /* empty */
-                void *element = b->elements[pos];
-                uint8_t h2 = b->hashes[pos];
-                /* Insert into table 1. */
-                uint64_t hash;
-                /* When shrinking, it's possible to avoid computing the hash. We can
-                 * just use idx has the hash, but only if we know that probing didn't
-                 * push this element away from its primary bucket, so only if the
-                 * bucket before the current one hasn't ever been full. */
-                if (s->bucket_exp[1] <= s->bucket_exp[0] && !prev_bucket_everfull) {
-                    hash = idx;
-                } else {
-                    hash = hashElement(s, element);
-                }
-                int pos_in_dst_bucket;
-                bucket *dst = findBucketForInsert(s, hash, &pos_in_dst_bucket, NULL);
-                dst->elements[pos_in_dst_bucket] = element;
-                dst->hashes[pos_in_dst_bucket] = h2;
-                dst->presence |= (1 << pos_in_dst_bucket);
-                if (!dst->everfull && bucketIsFull(dst)) {
-                    dst->everfull = 1;
-                    s->everfulls[1]++;
-                }
-                s->used[0]--;
-                s->used[1]++;
-            }
-        }
-        /* Mark the source bucket as empty. */
-        b->presence = 0;
-        /* Bucket done. Advance to the next bucket in probing order. We rehash in
-         * this order to be able to skip already rehashed buckets in scan. */
-        idx = nextCursor(idx, expToMask(s->bucket_exp[0]));
-        if (idx == 0) {
-            rehashingCompleted(s);
-            return;
-        }
+    const size_t mask = expToMask(s->bucket_exp[0]);
 
-        /* exit loop if not in probe sequence */
-        if (!b->everfull) break;
-        prev_bucket_everfull = 1;
+    /* Rehash only pauses when the previous bucket did not have everfull set, so
+     * we can set this to zero.
+     * The exception is when we start a new rehash on bucket zero, which may
+     * have probe chained elements that wrapped around from the end. In that
+     * case we have to actually check. */
+    uint8_t elements_displaced = 0;
+    if (s->rehash_idx == 0) {
+        size_t previous_idx = prevCursor(s->rehash_idx, mask);
+        elements_displaced = s->tables[0][previous_idx].everfull;
     }
 
-    s->rehash_idx = idx;
+    /* We rehash in probing order and follow possible probe chains so scan can
+     * skip already rehashed buckets. */
+    do {
+        bucket *b = &s->tables[0][s->rehash_idx];
+        rehashBucket(s, b, elements_displaced);
+
+        elements_displaced = b->everfull;
+        s->rehash_idx = nextCursor(s->rehash_idx, mask);
+    } while (elements_displaced && s->rehash_idx != 0);
+
+    if (s->rehash_idx == 0) {
+        rehashingCompleted(s);
+    }
 }
 
 /* Called internally on lookup and other reads to the table. */
@@ -1276,11 +1292,10 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
     /* Mask the start cursor to the smaller of the tables, so we can detect if we
      * come back to the start cursor and break the loop. It can happen if enough
      * tombstones (in both tables while rehashing) make us continue scanning. */
-    cursor &= expToMask(s->bucket_exp[0]);
+    size_t start_cursor = cursor & expToMask(s->bucket_exp[0]);
     if (hashsetIsRehashing(s)) {
-        cursor &= expToMask(s->bucket_exp[1]);
+        start_cursor &= expToMask(s->bucket_exp[1]);
     }
-    size_t start_cursor = cursor;
     do {
         in_probe_sequence = 0; /* Set to 1 if an ever-full bucket is scanned. */
         if (!hashsetIsRehashing(s)) {
@@ -1313,8 +1328,8 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
             size_t mask_small = expToMask(s->bucket_exp[table_small]);
             size_t mask_large = expToMask(s->bucket_exp[table_large]);
 
-            /* Emit elements in the smaller table if it's the new table or if
-             * this bucket hasn't been rehashed yet. */
+            /* Emit elements in the smaller table. Skip it if it's the old table
+             * and these buckets have already been rehashed. */
             if (table_small == 1 || !cursorIsLessThan(cursor, s->rehash_idx)) {
                 bucket *b = &s->tables[table_small][cursor & mask_small];
                 if (b->presence) {
@@ -1328,8 +1343,8 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
                 in_probe_sequence |= b->everfull;
             }
 
-            /* Emit elements in the larger table if it's the new table or if
-             * these buckets haven't been rehashed yet. */
+            /* Emit elements in the larger table. Skip it if it's the old table
+             * and these buckets have already been rehashed. */
             if (table_large == 1 || !cursorIsLessThan(cursor, s->rehash_idx)) {
                 /* Iterate over indices in larger table that are the expansion
                  * of the index pointed to by the cursor in the smaller table. */
@@ -1353,6 +1368,7 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
                     /* Continue while bits covered by mask difference is non-zero */
                 } while (large_cursor & (mask_small ^ mask_large));
             }
+
             cursor = nextCursor(cursor, mask_small);
         }
         if (cursor == 0) {
