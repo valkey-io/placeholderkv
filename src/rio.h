@@ -157,6 +157,10 @@ static inline int rioFlush(rio *r) {
     return r->flush(r);
 }
 
+static inline void rioCloseASAP(rio *r) {
+    r->flags |= RIO_FLAG_CLOSE_ASAP;
+}
+
 /* This function allows to know if there was a read error in any past
  * operation, since the rio stream was created or since the last call
  * to rioClearError(). */
