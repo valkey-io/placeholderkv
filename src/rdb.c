@@ -2930,10 +2930,6 @@ void rdbLoadProgressCallback(rio *r, const void *buf, size_t len) {
         loadingAbsProgress(r->processed_bytes);
         processEventsWhileBlocked();
         processModuleLoadingProgressEvent(0);
-        if (server.repl_provisional_primary.close_asap == 1) {
-            serverLog(LL_WARNING, "Primary main connection dropped during RDB load callback");
-            return -1;
-        }
     }
     if (server.repl_state == REPL_STATE_TRANSFER && rioCheckType(r) == RIO_TYPE_CONN) {
         server.stat_net_repl_input_bytes += len;
@@ -2984,6 +2980,11 @@ done:
     return res;
 }
 
+/* Cleanup function to restore the original loading_rio value. */
+static void _restore_loading_rio(rio **old_rio_ptr) {
+    server.loading_rio = *old_rio_ptr;
+}
+
 /* Load an RDB file from the rio stream 'rdb'. On success C_OK is returned,
  * otherwise C_ERR is returned and 'errno' is set accordingly. */
 int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
@@ -3007,6 +3008,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
     char buf[1024];
     int error;
     long long empty_keys_skipped = 0;
+    RDB_SCOPED_LOADING_RIO(rdb);
 
     rdb->update_cksum = rdbLoadProgressCallback;
     rdb->max_processing_chunk = server.loading_process_events_interval_bytes;

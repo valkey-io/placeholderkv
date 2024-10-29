@@ -2833,6 +2833,7 @@ int readIntoReplDataBlock(connection *conn, replDataBufBlock *data_block, size_t
     }
     if (nread == 0) {
         serverLog(LL_VERBOSE, "Provisional primary closed connection");
+        if (server.loading_rio) server.loading_rio->flags |= RIO_FLAG_CLOSE_ASAP;
         cancelReplicationHandshake(1);
         return C_ERR;
     }

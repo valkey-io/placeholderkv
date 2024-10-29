@@ -1249,7 +1249,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             } else {
                 fail "Primary did not free repl buf block after sync failure"
             }
-            wait_for_log_messages 0 {"*Primary main connection dropped during RDB load callback*"} $loglines 1000 10
+            wait_for_log_messages 0 {"*Failed trying to load the PRIMARY synchronization DB from socket*"} $loglines 1000 10
             # Replica should retry
             wait_for_condition 500 1000 {
                 [string match "*slave*,state=wait_bgsave*,type=rdb-channel*" [$primary info replication]] &&

@@ -139,6 +139,12 @@
 #define RDB_LOAD_ERR_EMPTY_KEY 1 /* Error of empty key */
 #define RDB_LOAD_ERR_OTHER 2     /* Any other errors */
 
+
+/* Macro to temporarily set server.loading_rio within a scope. */
+#define RDB_SCOPED_LOADING_RIO(new_rio)                                                                        \
+    __attribute__((cleanup(_restore_loading_rio))) rio *_old_rio __attribute__((unused)) = server.loading_rio; \
+    server.loading_rio = new_rio;
+
 ssize_t rdbWriteRaw(rio *rdb, void *p, size_t len);
 int rdbSaveType(rio *rdb, unsigned char type);
 int rdbLoadType(rio *rdb);
