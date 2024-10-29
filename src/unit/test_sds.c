@@ -1,8 +1,6 @@
-#include <ctype.h>
 #include <stdio.h>
 #include <limits.h>
 #include <string.h>
-#include <sys/time.h>
 #include "test_help.h"
 
 #include "../sds.h"
