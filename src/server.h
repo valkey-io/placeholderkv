@@ -2058,7 +2058,7 @@ struct valkeyServer {
         int dbid;
     } repl_provisional_primary;
     client *cached_primary;             /* Cached primary to be reused for PSYNC. */
-    rio *loading_rio;                   /* Pointer to the Rio object currently used for loading data. */
+    rio *loading_rio;                   /* Pointer to the rio object currently used for loading data. */
     int repl_syncio_timeout;            /* Timeout for synchronous I/O calls */
     int repl_state;                     /* Replication status if the instance is a replica */
     int repl_rdb_channel_state;         /* State of the replica's rdb channel during dual-channel-replication */
