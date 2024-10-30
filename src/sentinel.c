@@ -77,7 +77,6 @@ typedef struct sentinelAddr {
 #define SRI_FORCE_FAILOVER (1 << 11)      /* Force failover with primary up. */
 #define SRI_SCRIPT_KILL_SENT (1 << 12)    /* SCRIPT KILL already sent on -BUSY */
 #define SRI_PRIMARY_REBOOT (1 << 13)      /* Primary was detected as rebooting */
-#define SRI_SUPPORT_FAILOVER (1 << 14)    /* Primary and replica support FAILOVER command. */
 /* Note: when adding new flags, please check the flags section in addReplySentinelValkeyInstance. */
 
 /* Note: times are in milliseconds. */
@@ -111,11 +110,11 @@ static mstime_t sentinel_default_failover_timeout = 60 * 3 * 1000;
 #define SENTINEL_FAILOVER_STATE_NONE 0                 /* No failover in progress. */
 #define SENTINEL_FAILOVER_STATE_WAIT_START 1           /* Wait for failover_start_time*/
 #define SENTINEL_FAILOVER_STATE_SELECT_REPLICA 2       /* Select replica to promote */
+#define SENTINEL_FAILOVER_STATE_SEND_FAILOVER 7        /* Send FAILOVER Command to primary. */
 #define SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE 3 /* Replica -> Primary */
 #define SENTINEL_FAILOVER_STATE_WAIT_PROMOTION 4       /* Wait replica to change role */
 #define SENTINEL_FAILOVER_STATE_RECONF_REPLICAS 5      /* REPLICAOF newprimary */
 #define SENTINEL_FAILOVER_STATE_UPDATE_CONFIG 6        /* Monitor promoted replica. */
-#define SENTINEL_FAILOVER_STATE_SEND_FAILOVER 7        /* Send FAILOVER Command to primary. */
 
 #define SENTINEL_PRIMARY_LINK_STATUS_UP 0
 #define SENTINEL_PRIMARY_LINK_STATUS_DOWN 1
@@ -3223,6 +3222,7 @@ const char *sentinelFailoverStateStr(int state) {
     case SENTINEL_FAILOVER_STATE_NONE: return "none";
     case SENTINEL_FAILOVER_STATE_WAIT_START: return "wait_start";
     case SENTINEL_FAILOVER_STATE_SELECT_REPLICA: return "select_slave";
+    case SENTINEL_FAILOVER_STATE_SEND_FAILOVER: return "send_failover";
     case SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE: return "send_slaveof_noone";
     case SENTINEL_FAILOVER_STATE_WAIT_PROMOTION: return "wait_promotion";
     case SENTINEL_FAILOVER_STATE_RECONF_REPLICAS: return "reconf_slaves";
@@ -3271,7 +3271,6 @@ void addReplySentinelValkeyInstance(client *c, sentinelValkeyInstance *ri) {
     if (ri->flags & SRI_FORCE_FAILOVER) flags = sdscat(flags, "force_failover,");
     if (ri->flags & SRI_SCRIPT_KILL_SENT) flags = sdscat(flags, "script_kill_sent,");
     if (ri->flags & SRI_PRIMARY_REBOOT) flags = sdscat(flags, "master_reboot,");
-    if (ri->flags & SRI_SUPPORT_FAILOVER) flags = sdscat(flags, "support_failover,");
 
     if (sdslen(flags) != 0) sdsrange(flags, 0, -2); /* remove last "," */
     addReplyBulkCString(c, flags);
@@ -3840,31 +3839,11 @@ void sentinelCommand(client *c) {
             addReplyBulkLongLong(c, addr->port);
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "failover")) {
-        /* SENTINEL FAILOVER <primary-name> [type <legacy | pause>] */
+        /* SENTINEL FAILOVER <primary-name> */
         sentinelValkeyInstance *ri;
-        /* 0: No parameters passed default is legacy. 1: legacy. 2: pause. */
-        int failover_type = 0;
 
-        if (c->argc != 3 && c->argc != 5) goto numargserr;
+        if (c->argc != 3) goto numargserr;
         if ((ri = sentinelGetPrimaryByNameOrReplyError(c, c->argv[2])) == NULL) return;
-        for (int i = 3; i < c->argc; i++) {
-            int moreargs = c->argc > i + 1;
-            if (!strcasecmp(c->argv[i]->ptr, "type") && moreargs && failover_type == 0) {
-                if (!strcasecmp(c->argv[i + 1]->ptr, "legacy")) {
-                    failover_type = 1;
-                } else if (!strcasecmp(c->argv[i + 1]->ptr, "pause")) {
-                    failover_type = 2;
-                } else {
-                    addReplyErrorFormat(c, "Unknown failover type '%s'", (char *)c->argv[i + 1]->ptr);
-                    return;
-                }
-                i++;
-            } else {
-                addReplyErrorObject(c, shared.syntaxerr);
-                return;
-            }
-        }
-
         if (ri->flags & SRI_FAILOVER_IN_PROGRESS) {
             addReplyError(c, "-INPROG Failover already in progress");
             return;
@@ -3876,7 +3855,6 @@ void sentinelCommand(client *c) {
         serverLog(LL_NOTICE, "Executing user requested FAILOVER of '%s'", ri->name);
         sentinelStartFailover(ri);
         ri->flags |= SRI_FORCE_FAILOVER;
-        if (failover_type == 2) ri->flags |= SRI_SUPPORT_FAILOVER;
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "pending-scripts")) {
         /* SENTINEL PENDING-SCRIPTS */
@@ -4668,7 +4646,7 @@ void sentinelFailoverReplyCallback(redisAsyncContext *c, void *reply, void *priv
     link->pending_commands--;
     r = reply;
 
-    /* Primary does not support FAILOVER, fallback to legacy type. */
+    /* Primary does not support FAILOVER, fallback to REPLICAOF NO ONE. */
     if (r->type == REDIS_REPLY_ERROR) {
         sentinelEvent(LL_NOTICE, "+failover-state-send-slaveof-noone", ri->promoted_replica, "%@");
         ri->failover_state = SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE;
@@ -4960,14 +4938,9 @@ void sentinelFailoverSelectReplica(sentinelValkeyInstance *ri) {
         sentinelEvent(LL_WARNING, "+selected-slave", replica, "%@");
         replica->flags |= SRI_PROMOTED;
         ri->promoted_replica = replica;
-        if (ri->flags & SRI_SUPPORT_FAILOVER) {
-            sentinelEvent(LL_NOTICE, "+failover-state-send-failover", replica, "%@");
-            ri->failover_state = SENTINEL_FAILOVER_STATE_SEND_FAILOVER;
-        } else {
-            sentinelEvent(LL_NOTICE, "+failover-state-send-slaveof-noone", replica, "%@");
-            ri->failover_state = SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE;
-        }
+        ri->failover_state = SENTINEL_FAILOVER_STATE_SEND_FAILOVER;
         ri->failover_state_change_time = mstime();
+        sentinelEvent(LL_NOTICE, "+failover-state-send-failover", replica, "%@");
     }
 }
 
@@ -4984,7 +4957,7 @@ void sentinelFailoverSendFailover(sentinelValkeyInstance *ri) {
     }
 
     /* We will first try to use SHUTDOWN to coordinate a failover between the primary
-     * and promoted replica to avoid data loss.  */
+     * and the promoted replica to avoid data loss.  */
     if ((ri->flags & (SRI_S_DOWN | SRI_O_DOWN)) == 0 && !ri->link->disconnected) {
         if (sentinelSendFailover(ri, ri->promoted_replica->addr) == C_OK) {
             sentinelEvent(LL_NOTICE, "+failover-state-wait-promotion", ri->promoted_replica, "%@");
@@ -4994,7 +4967,7 @@ void sentinelFailoverSendFailover(sentinelValkeyInstance *ri) {
         }
     }
 
-    /* Fallback to legacy type. */
+    /* Fallback to REPLICAOF NO ONE. */
     sentinelEvent(LL_NOTICE, "+failover-state-send-slaveof-noone", ri->promoted_replica, "%@");
     ri->failover_state = SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE;
     ri->failover_state_change_time = mstime();
@@ -5187,7 +5160,7 @@ void sentinelAbortFailover(sentinelValkeyInstance *ri) {
     serverAssert(ri->flags & SRI_FAILOVER_IN_PROGRESS);
     serverAssert(ri->failover_state <= SENTINEL_FAILOVER_STATE_WAIT_PROMOTION);
 
-    ri->flags &= ~(SRI_FAILOVER_IN_PROGRESS | SRI_FORCE_FAILOVER | SRI_SUPPORT_FAILOVER);
+    ri->flags &= ~(SRI_FAILOVER_IN_PROGRESS | SRI_FORCE_FAILOVER);
     ri->failover_state = SENTINEL_FAILOVER_STATE_NONE;
     ri->failover_state_change_time = mstime();
     if (ri->promoted_replica) {

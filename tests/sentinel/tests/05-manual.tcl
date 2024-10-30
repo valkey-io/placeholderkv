@@ -16,18 +16,23 @@ test "Manual failover works - $type" {
     set addr [S 0 SENTINEL GET-PRIMARY-ADDR-BY-NAME mymaster]
     assert {[lindex $addr 1] == $old_port}
 
+    # Rename the FAILOVER command so that we can fallback to REPLICAOF NO ONE.
+    if {$type == "legacy"} {
+        S 0 SENTINEL SET mymaster rename-command FAILOVER FAILOVER_ERR
+    }
+
     # Since we reduced the info-period (default 10000) above immediately,
     # sentinel - replica may not have enough time to exchange INFO and update
     # the replica's info-period, so the test may get a NOGOODSLAVE.
     wait_for_condition 300 50 {
-        [catch {S 0 SENTINEL FAILOVER mymaster type $type}] == 0
+        [catch {S 0 SENTINEL FAILOVER mymaster}] == 0
     } else {
-        catch {S 0 SENTINEL FAILOVER mymaster type $type} reply
+        catch {S 0 SENTINEL FAILOVER mymaster} reply
         puts [S 0 SENTINEL REPLICAS mymaster]
         fail "Sentinel manual failover did not work, got: $reply"
     }
 
-    catch {S 0 SENTINEL FAILOVER mymaster type $type} reply
+    catch {S 0 SENTINEL FAILOVER mymaster} reply
     assert_match {*INPROG*} $reply ;# Failover already in progress
 
     # After sending sentinel failover, continue writing to the primary

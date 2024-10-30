@@ -3,7 +3,7 @@
         "summary": "Forces a Sentinel failover.",
         "group": "sentinel",
         "since": "2.8.4",
-        "arity": -3,
+        "arity": 3,
         "container": "SENTINEL",
         "function": "sentinelCommand",
         "command_flags": [
@@ -19,25 +19,6 @@
             {
                 "name": "primary-name",
                 "type": "string"
-            },
-            {
-                "token": "TYPE",
-                "name": "failover-type",
-                "type": "oneof",
-                "optional": true,
-                "since": "8.1.0",
-                "arguments": [
-                    {
-                        "name": "legacy",
-                        "type": "pure-token",
-                        "token": "legacy"
-                    },
-                    {
-                        "name": "pause",
-                        "type": "pure-token",
-                        "token": "pause"
-                    }
-                ]
             }
         ]
     }
