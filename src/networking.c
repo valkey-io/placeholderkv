@@ -50,7 +50,11 @@ char *getClientSockname(client *c);
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_shared_qb = NULL;
 
-typedef enum { PARSE_OK = 0, PARSE_ERR = -1, PARSE_NEEDMORE = -2 } parseResult;
+typedef enum {
+    PARSE_OK = 0,
+    PARSE_ERR = -1,
+    PARSE_NEEDMORE = -2,
+} parseResult;
 
 /* Return the amount of memory used by the sds string at object->ptr
  * for a string object. This includes internal fragmentation. */
@@ -228,6 +232,8 @@ client *createClient(connection *conn) {
     c->net_output_bytes = 0;
     c->net_output_bytes_curr_cmd = 0;
     c->commands_processed = 0;
+    c->io_last_reply_block = NULL;
+    c->io_last_bufpos = 0;
     return c;
 }
 
@@ -346,6 +352,7 @@ client *createCachedResponseClient(int resp) {
     /* Allocating the `conn` allows to prepare the caching client before adding
      * data to the clients output buffer by `prepareClientToWrite`. */
     recording_client->conn = zcalloc(sizeof(connection));
+    recording_client->flag.fake = 1;
     return recording_client;
 }
 
@@ -1036,7 +1043,8 @@ void addReplyArrayLen(client *c, long length) {
     addReplyAggregateLen(c, length, '*');
 }
 
-void addWritePreparedReplyArrayLen(writePreparedClient *c, long length) {
+void addWritePreparedReplyArrayLen(writePreparedClient *wpc, long length) {
+    client *c = (client *)wpc;
     serverAssert(length >= 0);
     _addReplyLongLongWithPrefix(c, length, '*');
 }
@@ -1045,6 +1053,13 @@ void addReplyMapLen(client *c, long length) {
     int prefix = c->resp == 2 ? '*' : '%';
     if (c->resp == 2) length *= 2;
     addReplyAggregateLen(c, length, prefix);
+}
+
+void addWritePreparedReplyMapLen(writePreparedClient *wpc, long length) {
+    client *c = (client *)wpc;
+    int prefix = c->resp == 2 ? '*' : '%';
+    if (c->resp == 2) length *= 2;
+    _addReplyLongLongWithPrefix(c, length, prefix);
 }
 
 void addReplySetLen(client *c, long length) {
@@ -1113,7 +1128,8 @@ void addReplyBulkCBuffer(client *c, const void *p, size_t len) {
     _addReplyToBufferOrList(c, "\r\n", 2);
 }
 
-void addWritePreparedReplyBulkCBuffer(writePreparedClient *c, const void *p, size_t len) {
+void addWritePreparedReplyBulkCBuffer(writePreparedClient *wpc, const void *p, size_t len) {
+    client *c = (client *)wpc;
     _addReplyLongLongWithPrefix(c, len, '$');
     _addReplyToBufferOrList(c, p, len);
     _addReplyToBufferOrList(c, "\r\n", 2);
@@ -1125,6 +1141,14 @@ void addReplyBulkSds(client *c, sds s) {
         sdsfree(s);
         return;
     }
+    _addReplyLongLongWithPrefix(c, sdslen(s), '$');
+    _addReplyToBufferOrList(c, s, sdslen(s));
+    sdsfree(s);
+    _addReplyToBufferOrList(c, "\r\n", 2);
+}
+
+void addWritePreparedReplyBulkSds(writePreparedClient *wpc, sds s) {
+    client *c = (client *)wpc;
     _addReplyLongLongWithPrefix(c, sdslen(s), '$');
     _addReplyToBufferOrList(c, s, sdslen(s));
     sdsfree(s);
@@ -1157,12 +1181,12 @@ void addReplyBulkLongLong(client *c, long long ll) {
     addReplyBulkCBuffer(c, buf, len);
 }
 
-void addWritePreparedReplyBulkLongLong(writePreparedClient *c, long long ll) {
+void addWritePreparedReplyBulkLongLong(writePreparedClient *wpc, long long ll) {
     char buf[64];
     int len;
 
     len = ll2string(buf, 64, ll);
-    addWritePreparedReplyBulkCBuffer(c, buf, len);
+    addWritePreparedReplyBulkCBuffer(wpc, buf, len);
 }
 
 /* Reply with a verbatim type having the specified extension.
@@ -1253,7 +1277,7 @@ void AddReplyFromClient(client *dst, client *src) {
      * for some reason the output limits don't reach the same decision (maybe
      * they changed) */
     if (src->flag.close_asap) {
-        sds client = catClientInfoString(sdsempty(), dst);
+        sds client = catClientInfoString(sdsempty(), dst, server.hide_user_data_from_log);
         freeClientAsync(dst);
         serverLog(LL_WARNING, "Client %s scheduled to be closed ASAP for overcoming of output buffer limits.", client);
         sdsfree(client);
@@ -1671,7 +1695,7 @@ void freeClient(client *c) {
      * some unexpected state, by checking its flags. */
     if (server.primary && c->flag.primary) {
         serverLog(LL_NOTICE, "Connection with primary lost.");
-        if (!(c->flag.protocol_error || c->flag.blocked)) {
+        if (!c->flag.dont_cache_primary && !(c->flag.protocol_error || c->flag.blocked)) {
             c->flag.close_asap = 0;
             c->flag.close_after_reply = 0;
             replicationCachePrimary(c);
@@ -1810,7 +1834,7 @@ void logInvalidUseAndFreeClientAsync(client *c, const char *fmt, ...) {
     sds info = sdscatvprintf(sdsempty(), fmt, ap);
     va_end(ap);
 
-    sds client = catClientInfoString(sdsempty(), c);
+    sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
     serverLog(LL_WARNING, "%s, disconnecting it: %s", info, client);
 
     sdsfree(info);
@@ -2129,11 +2153,6 @@ int _writeToClient(client *c) {
     return tot_written > 0 ? C_OK : C_ERR;
 }
 
-static void postWriteToReplica(client *c) {
-    serverAssert(inMainThread());
-    if (c->nwritten > 0) c->net_output_bytes += c->nwritten;
-}
-
 static void _postWriteToClient(client *c) {
     if (c->nwritten <= 0) return;
 
@@ -2180,9 +2199,7 @@ int postWriteToClient(client *c) {
     c->io_last_bufpos = 0;
     /* Update total number of writes on server */
     server.stat_total_writes_processed++;
-    if (getClientType(c) == CLIENT_TYPE_REPLICA) {
-        postWriteToReplica(c);
-    } else {
+    if (getClientType(c) != CLIENT_TYPE_REPLICA) {
         _postWriteToClient(c);
     }
 
@@ -2246,7 +2263,7 @@ void sendReplyToClient(connection *conn) {
 }
 
 void handleQbLimitReached(client *c) {
-    sds ci = catClientInfoString(sdsempty(), c), bytes = sdsempty();
+    sds ci = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log), bytes = sdsempty();
     bytes = sdscatrepr(bytes, c->querybuf, 64);
     serverLog(LL_WARNING, "Closing client that reached max query buffer length: %s (qbuf initial bytes: %s)", ci,
               bytes);
@@ -2276,7 +2293,7 @@ int handleReadResult(client *c) {
             }
         } else if (c->nread == 0) {
             if (server.verbosity <= LL_VERBOSE) {
-                sds info = catClientInfoString(sdsempty(), c);
+                sds info = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
                 serverLog(LL_VERBOSE, "Client closed connection %s", info);
                 sdsfree(info);
             }
@@ -2384,8 +2401,9 @@ parseResult handleParseResults(client *c) {
 
 /* Process the completion of an IO write operation for a client.
  * This function handles various post-write tasks, including updating client state,
+ * allow_async_writes - A flag indicating whether I/O threads can handle pending writes for this client.
  * returns 1 if processing completed successfully, 0 if processing is skipped. */
-int processClientIOWriteDone(client *c) {
+int processClientIOWriteDone(client *c, int allow_async_writes) {
     /* memory barrier acquire to get the latest client state */
     atomic_thread_fence(memory_order_acquire);
     /* If a client is protected, don't proceed to check the write results as it may trigger conn close. */
@@ -2414,7 +2432,7 @@ int processClientIOWriteDone(client *c) {
             installClientWriteHandler(c);
         } else {
             /* If we can send the client to the I/O thread, let it handle the write. */
-            if (trySendWriteToIOThreads(c) == C_OK) return 1;
+            if (allow_async_writes && trySendWriteToIOThreads(c) == C_OK) return 1;
             /* Try again in the next eventloop */
             putClientInPendingWriteQueue(c);
         }
@@ -2442,7 +2460,7 @@ int processIOThreadsWriteDone(void) {
         /* Client is still waiting for a pending I/O - skip it */
         if (c->io_write_state == CLIENT_PENDING_IO || c->io_read_state == CLIENT_PENDING_IO) continue;
 
-        processed += processClientIOWriteDone(c);
+        processed += processClientIOWriteDone(c, 1);
     }
 
     return processed;
@@ -2559,6 +2577,7 @@ void freeSharedQueryBuf(void) {
  *
  * * DEBUG RELOAD and similar.
  * * When a Lua script is in -BUSY state.
+ * * A cluster replica executing CLUSTER SETSLOT during slot migration.
  *
  * So the function will protect the client by doing two things:
  *
@@ -2650,6 +2669,8 @@ void processInlineBuffer(client *c) {
 
     /* Create an Object for all arguments. */
     for (c->argc = 0, j = 0; j < argc; j++) {
+        /* Strings returned from sdssplitargs() may have unused capacity that we can trim. */
+        argv[j] = sdsRemoveFreeSpace(argv[j], 1);
         c->argv[c->argc] = createObject(OBJ_STRING, argv[j]);
         c->argc++;
         c->argv_len_sum += sdslen(argv[j]);
@@ -2679,7 +2700,7 @@ void processInlineBuffer(client *c) {
 #define PROTO_DUMP_LEN 128
 static void setProtocolError(const char *errstr, client *c) {
     if (server.verbosity <= LL_VERBOSE || c->flag.primary) {
-        sds client = catClientInfoString(sdsempty(), c);
+        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
 
         /* Sample some protocol to given an idea about what was inside. */
         char buf[256];
@@ -3251,8 +3272,10 @@ char *getClientSockname(client *c) {
 int isClientConnIpV6(client *c) {
     /* The cached client peer id is on the form "[IPv6]:port" for IPv6
      * addresses, so we just check for '[' here. */
-    if (c->conn->type == NULL && server.current_client) {
-        /* Fake client? Use current client instead. */
+    if (c->flag.fake && server.current_client) {
+        /* Fake client? Use current client instead.
+         * Noted that in here we are assuming server.current_client is set
+         * and real (aof has already violated this in loadSingleAppendOnlyFil). */
         c = server.current_client;
     }
     return getClientPeerId(c)[0] == '[';
@@ -3260,7 +3283,7 @@ int isClientConnIpV6(client *c) {
 
 /* Concatenate a string representing the state of a client in a human
  * readable format, into the sds string 's'. */
-sds catClientInfoString(sds s, client *client) {
+sds catClientInfoString(sds s, client *client, int hide_user_data) {
     if (!server.crashed) waitForClientIO(client);
     char flags[17], events[3], conninfo[CONN_INFO_LEN], *p;
 
@@ -3272,7 +3295,6 @@ sds catClientInfoString(sds s, client *client) {
             *p++ = 'S';
     }
 
-    /* clang-format off */
     if (client->flag.primary) *p++ = 'M';
     if (client->flag.pubsub) *p++ = 'P';
     if (client->flag.multi) *p++ = 'x';
@@ -3307,48 +3329,47 @@ sds catClientInfoString(sds s, client *client) {
         replBufBlock *cur = listNodeValue(client->ref_repl_buf_node);
         used_blocks_of_repl_buf = last->id - cur->id + 1;
     }
-
-    /* clang-format off */
-    sds ret = sdscatfmt(s, FMTARGS(
-        "id=%U", (unsigned long long) client->id,
-        " addr=%s", getClientPeerId(client),
-        " laddr=%s", getClientSockname(client),
-        " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
-        " name=%s", client->name ? (char*)client->name->ptr : "",
-        " age=%I", (long long)(commandTimeSnapshot() / 1000 - client->ctime),
-        " idle=%I", (long long)(server.unixtime - client->last_interaction),
-        " flags=%s", flags,
-        " db=%i", client->db->id,
-        " sub=%i", (int) dictSize(client->pubsub_channels),
-        " psub=%i", (int) dictSize(client->pubsub_patterns),
-        " ssub=%i", (int) dictSize(client->pubsubshard_channels),
-        " multi=%i", (client->flag.multi) ? client->mstate.count : -1,
-        " watch=%i", (int) listLength(client->watched_keys),
-        " qbuf=%U", client->querybuf ? (unsigned long long) sdslen(client->querybuf) : 0,
-        " qbuf-free=%U", client->querybuf ? (unsigned long long) sdsavail(client->querybuf) : 0,
-        " argv-mem=%U", (unsigned long long) client->argv_len_sum,
-        " multi-mem=%U", (unsigned long long) client->mstate.argv_len_sums,
-        " rbs=%U", (unsigned long long) client->buf_usable_size,
-        " rbp=%U", (unsigned long long) client->buf_peak,
-        " obl=%U", (unsigned long long) client->bufpos,
-        " oll=%U", (unsigned long long) listLength(client->reply) + used_blocks_of_repl_buf,
-        " omem=%U", (unsigned long long) obufmem, /* should not include client->buf since we want to see 0 for static clients. */
-        " tot-mem=%U", (unsigned long long) total_mem,
-        " events=%s", events,
-        " cmd=%s", client->lastcmd ? client->lastcmd->fullname : "NULL",
-        " user=%s", client->user ? client->user->name : "(superuser)",
-        " redir=%I", (client->flag.tracking) ? (long long) client->client_tracking_redirection : -1,
-        " resp=%i", client->resp,
-        " lib-name=%s", client->lib_name ? (char*)client->lib_name->ptr : "",
-        " lib-ver=%s", client->lib_ver ? (char*)client->lib_ver->ptr : "",
-        " tot-net-in=%U", client->net_input_bytes,
-        " tot-net-out=%U", client->net_output_bytes,
-        " tot-cmds=%U", client->commands_processed));
-    /* clang-format on */
+    sds ret = sdscatfmt(
+        s,
+        FMTARGS(
+            "id=%U", (unsigned long long)client->id,
+            " addr=%s", getClientPeerId(client),
+            " laddr=%s", getClientSockname(client),
+            " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
+            " name=%s", hide_user_data ? "*redacted*" : (client->name ? (char *)client->name->ptr : ""),
+            " age=%I", (long long)(commandTimeSnapshot() / 1000 - client->ctime),
+            " idle=%I", (long long)(server.unixtime - client->last_interaction),
+            " flags=%s", flags,
+            " db=%i", client->db->id,
+            " sub=%i", (int)dictSize(client->pubsub_channels),
+            " psub=%i", (int)dictSize(client->pubsub_patterns),
+            " ssub=%i", (int)dictSize(client->pubsubshard_channels),
+            " multi=%i", (client->flag.multi) ? client->mstate.count : -1,
+            " watch=%i", (int)listLength(client->watched_keys),
+            " qbuf=%U", client->querybuf ? (unsigned long long)sdslen(client->querybuf) : 0,
+            " qbuf-free=%U", client->querybuf ? (unsigned long long)sdsavail(client->querybuf) : 0,
+            " argv-mem=%U", (unsigned long long)client->argv_len_sum,
+            " multi-mem=%U", (unsigned long long)client->mstate.argv_len_sums,
+            " rbs=%U", (unsigned long long)client->buf_usable_size,
+            " rbp=%U", (unsigned long long)client->buf_peak,
+            " obl=%U", (unsigned long long)client->bufpos,
+            " oll=%U", (unsigned long long)listLength(client->reply) + used_blocks_of_repl_buf,
+            " omem=%U", (unsigned long long)obufmem, /* should not include client->buf since we want to see 0 for static clients. */
+            " tot-mem=%U", (unsigned long long)total_mem,
+            " events=%s", events,
+            " cmd=%s", client->lastcmd ? client->lastcmd->fullname : "NULL",
+            " user=%s", hide_user_data ? "*redacted*" : (client->user ? client->user->name : "(superuser)"),
+            " redir=%I", (client->flag.tracking) ? (long long)client->client_tracking_redirection : -1,
+            " resp=%i", client->resp,
+            " lib-name=%s", client->lib_name ? (char *)client->lib_name->ptr : "",
+            " lib-ver=%s", client->lib_ver ? (char *)client->lib_ver->ptr : "",
+            " tot-net-in=%U", client->net_input_bytes,
+            " tot-net-out=%U", client->net_output_bytes,
+            " tot-cmds=%U", client->commands_processed));
     return ret;
 }
 
-sds getAllClientsInfoString(int type) {
+sds getAllClientsInfoString(int type, int hide_user_data) {
     listNode *ln;
     listIter li;
     client *client;
@@ -3358,7 +3379,7 @@ sds getAllClientsInfoString(int type) {
     while ((ln = listNext(&li)) != NULL) {
         client = listNodeValue(ln);
         if (type != -1 && getClientType(client) != type) continue;
-        o = catClientInfoString(o, client);
+        o = catClientInfoString(o, client, hide_user_data);
         o = sdscatlen(o, "\n", 1);
     }
     return o;
@@ -3488,73 +3509,74 @@ void clientCommand(client *c) {
     listIter li;
 
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
-        /* clang-format off */
         const char *help[] = {
-"CACHING (YES|NO)",
-"    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
-"GETREDIR",
-"    Return the client ID we are redirecting to when tracking is enabled.",
-"GETNAME",
-"    Return the name of the current connection.",
-"ID",
-"    Return the ID of the current connection.",
-"INFO",
-"    Return information about the current client connection.",
-"KILL <ip:port>",
-"    Kill connection made from <ip:port>.",
-"KILL <option> <value> [<option> <value> [...]]",
-"    Kill connections. Options are:",
-"    * ADDR (<ip:port>|<unixsocket>:0)",
-"      Kill connections made from the specified address",
-"    * LADDR (<ip:port>|<unixsocket>:0)",
-"      Kill connections made to specified local address",
-"    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
-"      Kill connections by type.",
-"    * USER <username>",
-"      Kill connections authenticated by <username>.",
-"    * SKIPME (YES|NO)",
-"      Skip killing current connection (default: yes).",
-"    * ID <client-id>",
-"      Kill connections by client id.",
-"    * MAXAGE <maxage>",
-"      Kill connections older than the specified age.",
-"LIST [options ...]",
-"    Return information about client connections. Options:",
-"    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
-"      Return clients of specified type.",
-"UNPAUSE",
-"    Stop the current client pause, resuming traffic.",
-"PAUSE <timeout> [WRITE|ALL]",
-"    Suspend all, or just write, clients for <timeout> milliseconds.",
-"REPLY (ON|OFF|SKIP)",
-"    Control the replies sent to the current connection.",
-"SETNAME <name>",
-"    Assign the name <name> to the current connection.",
-"SETINFO <option> <value>",
-"    Set client meta attr. Options are:",
-"    * LIB-NAME: the client lib name.",
-"    * LIB-VER: the client lib version.",
-"UNBLOCK <clientid> [TIMEOUT|ERROR]",
-"    Unblock the specified blocked client.",
-"TRACKING (ON|OFF) [REDIRECT <id>] [BCAST] [PREFIX <prefix> [...]]",
-"         [OPTIN] [OPTOUT] [NOLOOP]",
-"    Control server assisted client side caching.",
-"TRACKINGINFO",
-"    Report tracking status for the current connection.",
-"NO-EVICT (ON|OFF)",
-"    Protect current client connection from eviction.",
-"NO-TOUCH (ON|OFF)",
-"    Will not touch LRU/LFU stats when this mode is on.",
-NULL
-        };
-        /* clang-format on */
+            "CACHING (YES|NO)",
+            "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
+            "CAPA <option> [options...]",
+            "    The client claims its some capability options. Options are:",
+            "    * REDIRECT",
+            "      The client can handle redirection during primary and replica failover in standalone mode.",
+            "GETREDIR",
+            "    Return the client ID we are redirecting to when tracking is enabled.",
+            "GETNAME",
+            "    Return the name of the current connection.",
+            "ID",
+            "    Return the ID of the current connection.",
+            "INFO",
+            "    Return information about the current client connection.",
+            "KILL <ip:port>",
+            "    Kill connection made from <ip:port>.",
+            "KILL <option> <value> [<option> <value> [...]]",
+            "    Kill connections. Options are:",
+            "    * ADDR (<ip:port>|<unixsocket>:0)",
+            "      Kill connections made from the specified address",
+            "    * LADDR (<ip:port>|<unixsocket>:0)",
+            "      Kill connections made to specified local address",
+            "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
+            "      Kill connections by type.",
+            "    * USER <username>",
+            "      Kill connections authenticated by <username>.",
+            "    * SKIPME (YES|NO)",
+            "      Skip killing current connection (default: yes).",
+            "    * ID <client-id>",
+            "      Kill connections by client id.",
+            "    * MAXAGE <maxage>",
+            "      Kill connections older than the specified age.",
+            "LIST [options ...]",
+            "    Return information about client connections. Options:",
+            "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
+            "      Return clients of specified type.",
+            "UNPAUSE",
+            "    Stop the current client pause, resuming traffic.",
+            "PAUSE <timeout> [WRITE|ALL]",
+            "    Suspend all, or just write, clients for <timeout> milliseconds.",
+            "REPLY (ON|OFF|SKIP)",
+            "    Control the replies sent to the current connection.",
+            "SETNAME <name>",
+            "    Assign the name <name> to the current connection.",
+            "SETINFO <option> <value>",
+            "    Set client meta attr. Options are:",
+            "    * LIB-NAME: the client lib name.",
+            "    * LIB-VER: the client lib version.",
+            "UNBLOCK <clientid> [TIMEOUT|ERROR]",
+            "    Unblock the specified blocked client.",
+            "TRACKING (ON|OFF) [REDIRECT <id>] [BCAST] [PREFIX <prefix> [...]]",
+            "         [OPTIN] [OPTOUT] [NOLOOP]",
+            "    Control server assisted client side caching.",
+            "TRACKINGINFO",
+            "    Report tracking status for the current connection.",
+            "NO-EVICT (ON|OFF)",
+            "    Protect current client connection from eviction.",
+            "NO-TOUCH (ON|OFF)",
+            "    Will not touch LRU/LFU stats when this mode is on.",
+            NULL};
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
         /* CLIENT ID */
         addReplyLongLong(c, c->id);
     } else if (!strcasecmp(c->argv[1]->ptr, "info") && c->argc == 2) {
         /* CLIENT INFO */
-        sds o = catClientInfoString(sdsempty(), c);
+        sds o = catClientInfoString(sdsempty(), c, 0);
         o = sdscatlen(o, "\n", 1);
         addReplyVerbatim(c, o, sdslen(o), "txt");
         sdsfree(o);
@@ -3579,7 +3601,7 @@ NULL
                 }
                 client *cl = lookupClientByID(cid);
                 if (cl) {
-                    o = catClientInfoString(o, cl);
+                    o = catClientInfoString(o, cl, 0);
                     o = sdscatlen(o, "\n", 1);
                 }
             }
@@ -3588,7 +3610,7 @@ NULL
             return;
         }
 
-        if (!o) o = getAllClientsInfoString(type);
+        if (!o) o = getAllClientsInfoString(type, 0);
         addReplyVerbatim(c, o, sdslen(o), "txt");
         sdsfree(o);
     } else if (!strcasecmp(c->argv[1]->ptr, "reply") && c->argc == 3) {
@@ -4425,7 +4447,7 @@ int closeClientOnOutputBufferLimitReached(client *c, int async) {
         (c->flag.close_asap && !(c->flag.protected_rdb_channel)))
         return 0;
     if (checkClientOutputBufferLimits(c)) {
-        sds client = catClientInfoString(sdsempty(), c);
+        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
         /* Remove RDB connection protection on COB overrun */
 
         if (async || c->flag.protected_rdb_channel) {
@@ -4664,7 +4686,8 @@ int processIOThreadsReadDone(void) {
         if (c->io_write_state == CLIENT_PENDING_IO || c->io_read_state == CLIENT_PENDING_IO) continue;
         /* If the write job is done, process it ASAP to free the buffer and handle connection errors */
         if (c->io_write_state == CLIENT_COMPLETED_IO) {
-            processClientIOWriteDone(c);
+            int allow_async_writes = 0; /* Don't send writes for the client to IO threads before processing the reads */
+            processClientIOWriteDone(c, allow_async_writes);
         }
         /* memory barrier acquire to get the updated client state */
         atomic_thread_fence(memory_order_acquire);
@@ -4759,7 +4782,7 @@ void evictClients(void) {
         listNode *ln = listNext(&bucket_iter);
         if (ln) {
             client *c = ln->value;
-            sds ci = catClientInfoString(sdsempty(), c);
+            sds ci = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
             serverLog(LL_NOTICE, "Evicting client: %s", ci);
             freeClient(c);
             sdsfree(ci);
@@ -4826,7 +4849,7 @@ void ioThreadReadQueryFromClient(void *data) {
         int numkeys = getKeysFromCommand(c->io_parsed_cmd, c->argv, c->argc, &result);
         if (numkeys) {
             robj *first_key = c->argv[result.keys[0].pos];
-            c->slot = calculateKeySlot(first_key->ptr);
+            c->slot = keyHashSlot(first_key->ptr, sdslen(first_key->ptr));
         }
         getKeysFreeResult(&result);
     }

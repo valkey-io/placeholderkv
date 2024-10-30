@@ -127,6 +127,8 @@ typedef struct rdma_listener {
  * handler into pending list */
 static list *pending_list;
 
+static rdma_listener *rdma_listeners;
+
 static ConnectionType CT_RDMA;
 
 static int valkey_rdma_rx_size = VALKEY_RDMA_DEFAULT_RX_SIZE;
@@ -672,7 +674,7 @@ static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientDat
     }
 }
 
-static int rdmaKeepaliveTimeProc(struct aeEventLoop *el, long long id, void *clientData) {
+static long long rdmaKeepaliveTimeProc(struct aeEventLoop *el, long long id, void *clientData) {
     struct rdma_cm_id *cm_id = clientData;
     RdmaContext *ctx = cm_id->context;
     connection *conn = ctx->conn;
@@ -748,7 +750,7 @@ static rdma_listener *rdmaFdToListener(connListener *listener, int fd) {
     for (int i = 0; i < listener->count; i++) {
         if (listener->fd[i] != fd) continue;
 
-        return (rdma_listener *)listener->priv1 + i;
+        return &rdma_listeners[i];
     }
 
     return NULL;
@@ -1501,6 +1503,26 @@ end:
     return ret;
 }
 
+static int connRdmaIsLocal(connection *conn) {
+    rdma_connection *rdma_conn = (rdma_connection *)conn;
+    struct sockaddr *laddr = rdma_get_local_addr(rdma_conn->cm_id);
+    struct sockaddr *raddr = rdma_get_peer_addr(rdma_conn->cm_id);
+    struct sockaddr_in *lsa4, *rsa4;
+    struct sockaddr_in6 *lsa6, *rsa6;
+
+    if (laddr->sa_family == AF_INET) {
+        lsa4 = (struct sockaddr_in *)laddr;
+        rsa4 = (struct sockaddr_in *)raddr;
+        return !memcmp(&lsa4->sin_addr, &rsa4->sin_addr, sizeof(lsa4->sin_addr));
+    } else if (laddr->sa_family == AF_INET6) {
+        lsa6 = (struct sockaddr_in6 *)laddr;
+        rsa6 = (struct sockaddr_in6 *)raddr;
+        return !memcmp(&lsa6->sin6_addr, &rsa6->sin6_addr, sizeof(lsa6->sin6_addr));
+    }
+
+    return -1;
+}
+
 int connRdmaListen(connListener *listener) {
     int j, ret;
     char **bindaddr = listener->bindaddr;
@@ -1517,7 +1539,7 @@ int connRdmaListen(connListener *listener) {
         bindaddr = default_bindaddr;
     }
 
-    listener->priv1 = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
+    rdma_listeners = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
     for (j = 0; j < bindaddr_count; j++) {
         char *addr = bindaddr[j];
         int optional = *addr == '-';
@@ -1673,6 +1695,7 @@ static ConnectionType CT_RDMA = {
     .ae_handler = connRdmaEventHandler,
     .accept_handler = connRdmaAcceptHandler,
     //.cluster_accept_handler = NULL,
+    .is_local = connRdmaIsLocal,
     .listen = connRdmaListen,
     .addr = connRdmaAddr,
 
@@ -1736,13 +1759,14 @@ static int rdmaChangeListener(void) {
 
         aeDeleteFileEvent(server.el, listener->fd[i], AE_READABLE);
         listener->fd[i] = -1;
-        struct rdma_listener *rdma_listener = (struct rdma_listener *)listener->priv1 + i;
+        struct rdma_listener *rdma_listener = &rdma_listeners[i];
         rdma_destroy_id(rdma_listener->cm_id);
         rdma_destroy_event_channel(rdma_listener->cm_channel);
     }
 
     listener->count = 0;
-    zfree(listener->priv1);
+    zfree(rdma_listeners);
+    rdma_listeners = NULL;
 
     closeListener(listener);
 
