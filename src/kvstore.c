@@ -739,7 +739,7 @@ unsigned long kvstoreDictScanDefrag(kvstore *kvs,
                                     int didx,
                                     unsigned long v,
                                     dictScanFunction *fn,
-                                    dictDefragFunctions *defragfns,
+                                    const dictDefragFunctions *defragfns,
                                     void *privdata) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (!d) return 0;
@@ -750,14 +750,27 @@ unsigned long kvstoreDictScanDefrag(kvstore *kvs,
  * within dict, it only reallocates the memory used by the dict structure itself using
  * the provided allocation function. This feature was added for the active defrag feature.
  *
- * The 'defragfn' callback is called with a reference to the dict
- * that callback can reallocate. */
-void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn) {
-    for (int didx = 0; didx < kvs->num_dicts; didx++) {
+ * With 16k dictionaries for cluster mode with 1 shard, this operation may require substantial time
+ * to execute.  A "cursor" is used to perform the operation iteratively.  When first called, a
+ * cursor value of 0 should be provided.  The return value is an updated cursor which should be
+ * provided on the next iteration.  The operation is complete when 0 is returned.
+ *
+ * The 'defragfn' callback is called with a reference to the dict that callback can reallocate. */
+unsigned long kvstoreDictLUTDefrag(kvstore *kvs, unsigned long cursor, kvstoreDictLUTDefragFunction *defragfn) {
+    for (int didx = cursor; didx < kvs->num_dicts; didx++) {
         dict **d = kvstoreGetDictRef(kvs, didx), *newd;
         if (!*d) continue;
+
+        listNode *rehashing_node = NULL;
+        if (listLength(kvs->rehashing) > 0) {
+            rehashing_node = ((kvstoreDictMetadata *)dictMetadata(*d))->rehashing_node;
+        }
+
         if ((newd = defragfn(*d))) *d = newd;
+        if (rehashing_node) listNodeValue(rehashing_node) = *d;
+        return (didx + 1);
     }
+    return 0;
 }
 
 uint64_t kvstoreGetHash(kvstore *kvs, const void *key) {
