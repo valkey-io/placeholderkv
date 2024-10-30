@@ -187,6 +187,10 @@ if (BUILD_TLS)
         add_valkey_server_compiler_options("-DUSE_OPENSSL=2")
         set(BUILD_TLS_MODULE 1)
     endif ()
+else ()
+    # By default, TLS is disabled
+    message(STATUS "TLS is disabled")
+    set(USE_TLS 0)
 endif ()
 
 if (BUILD_RDMA)

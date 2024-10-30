@@ -8,13 +8,15 @@ get_valkey_server_linker_option(VALKEY_SERVER_LDFLAGS)
 # Build unit tests only
 message(STATUS "Building unit tests")
 list(APPEND COMPILE_DEFINITIONS "SERVER_TEST=1")
-if (BUILD_TLS_MODULE)
-    # TLS as a module
-    list(APPEND COMPILE_DEFINITIONS "USE_OPENSSL=2")
-else (USE_TLS)
-    # Built-in TLS support
-    list(APPEND COMPILE_DEFINITIONS "USE_OPENSSL=1")
-    list(APPEND COMPILE_DEFINITIONS "BUILD_TLS_MODULE=0")
+if (USE_TLS)
+    if (BUILD_TLS_MODULE)
+        # TLS as a module
+        list(APPEND COMPILE_DEFINITIONS "USE_OPENSSL=2")
+    else (BUILD_TLS_MODULE)
+        # Built-in TLS support
+        list(APPEND COMPILE_DEFINITIONS "USE_OPENSSL=1")
+        list(APPEND COMPILE_DEFINITIONS "BUILD_TLS_MODULE=0")
+    endif ()
 endif ()
 
 # Build Valkey sources as a static library for the test
