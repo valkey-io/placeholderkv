@@ -6720,8 +6720,8 @@ serverTestProc *getTestProcByName(const char *name) {
 }
 #endif
 
-/* Make main a weak symbol so it can be overridden during link time, e.g. test_main.c overrides it */
-int __attribute__((weak)) main(int argc, char **argv) {
+/* Main is marked as weak so that unit tests can use their own main function. */
+__attribute__((weak)) int main(int argc, char **argv) {
     struct timeval tv;
     int j;
     char config_from_stdin = 0;
