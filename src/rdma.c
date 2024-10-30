@@ -451,13 +451,22 @@ static int rdmaHandleEstablished(struct rdma_cm_event *ev) {
     return C_OK;
 }
 
+static inline void rdmaDelKeepalive(aeEventLoop *el, RdmaContext *ctx) {
+    if (ctx->keepalive_te == AE_ERR) {
+        return;
+    }
+
+    aeDeleteTimeEvent(el, ctx->keepalive_te);
+    ctx->keepalive_te = AE_ERR;
+}
+
 static int rdmaHandleDisconnect(aeEventLoop *el, struct rdma_cm_event *ev) {
     struct rdma_cm_id *cm_id = ev->id;
     RdmaContext *ctx = cm_id->context;
     connection *conn = ctx->conn;
     rdma_connection *rdma_conn = (rdma_connection *)conn;
 
-    aeDeleteTimeEvent(el, ctx->keepalive_te);
+    rdmaDelKeepalive(el, ctx);
     conn->state = CONN_STATE_CLOSED;
 
     /* we can't close connection now, let's mark this connection as closed state */
@@ -1173,6 +1182,7 @@ static void connRdmaClose(connection *conn) {
     }
 
     ctx = cm_id->context;
+    rdmaDelKeepalive(server.el, ctx);
     rdma_disconnect(cm_id);
 
     /* poll all CQ before close */
