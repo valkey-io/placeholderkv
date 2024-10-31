@@ -8,11 +8,7 @@ int GET_HELLO(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
     VALKEYMODULE_NOT_USED(argv);
     VALKEYMODULE_NOT_USED(argc);
 
-    ValkeyModuleRunTimeArgs *ret = ValkeyModule_GetRunTimeArgs(ctx);
-    ValkeyModule_Log(ctx, "warning", "dbsize command arg number is %d",
-                     ret->argc);
-    ValkeyModule_Log(ctx, "warning", "dbsize command arg 0 is %s",
-                     ret->argv[0]);
+    ValkeyModule_UpdateRunTimeArgs(ctx, 0, "99");
     return ValkeyModule_ReplyWithSimpleString(ctx, "Module runtime args test");
 }
 

@@ -334,7 +334,6 @@
 #define RedisModuleCommandInfo ValkeyModuleCommandInfo
 #define RedisModuleCommandKeySpec ValkeyModuleCommandKeySpec
 #define RedisModuleCommandHistoryEntry ValkeyModuleCommandHistoryEntry
-#define RedisModuleRunTimeArgs ValkeyModuleRunTimeArgs
 
 /* RedisModule APIs */
 #define RedisModule_OnLoad ValkeyModule_OnLoad
@@ -358,7 +357,7 @@
 #define RedisModule_SetModuleAttribs ValkeyModule_SetModuleAttribs
 #define RedisModule_IsModuleNameBusy ValkeyModule_IsModuleNameBusy
 #define RedisModule_WrongArity ValkeyModule_WrongArity
-#define RedisModule_GetRunTimeArgs ValkeyModule_GetRunTimeArgs
+#define RedisModule_UpdateRunTimeArgs ValkeyModule_UpdateRunTimeArgs
 #define RedisModule_ReplyWithLongLong ValkeyModule_ReplyWithLongLong
 #define RedisModule_GetSelectedDb ValkeyModule_GetSelectedDb
 #define RedisModule_SelectDb ValkeyModule_SelectDb
