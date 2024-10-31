@@ -1242,7 +1242,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             $primary debug log "killing replica main connection $replica_main_conn_id"
             assert {$replica_main_conn_id != ""}
             set loglines [count_log_lines 0]
-            $primary config set rdb-key-save-delay 0; # disable delay to allow next sync to succeeed
+            $primary config set rdb-key-save-delay 0; # disable delay to allow next sync to succeed
             $primary client kill id $replica_main_conn_id
             # Wait for primary to abort the sync
             wait_for_condition 50 1000 {
