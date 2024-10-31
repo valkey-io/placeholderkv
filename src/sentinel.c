@@ -110,11 +110,11 @@ static mstime_t sentinel_default_failover_timeout = 60 * 3 * 1000;
 #define SENTINEL_FAILOVER_STATE_NONE 0                 /* No failover in progress. */
 #define SENTINEL_FAILOVER_STATE_WAIT_START 1           /* Wait for failover_start_time*/
 #define SENTINEL_FAILOVER_STATE_SELECT_REPLICA 2       /* Select replica to promote */
-#define SENTINEL_FAILOVER_STATE_SEND_FAILOVER 7        /* Send FAILOVER Command to primary. */
-#define SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE 3 /* Replica -> Primary */
-#define SENTINEL_FAILOVER_STATE_WAIT_PROMOTION 4       /* Wait replica to change role */
-#define SENTINEL_FAILOVER_STATE_RECONF_REPLICAS 5      /* REPLICAOF newprimary */
-#define SENTINEL_FAILOVER_STATE_UPDATE_CONFIG 6        /* Monitor promoted replica. */
+#define SENTINEL_FAILOVER_STATE_SEND_FAILOVER 3        /* Send FAILOVER Command to primary. */
+#define SENTINEL_FAILOVER_STATE_SEND_REPLICAOF_NOONE 4 /* Replica -> Primary */
+#define SENTINEL_FAILOVER_STATE_WAIT_PROMOTION 5       /* Wait replica to change role */
+#define SENTINEL_FAILOVER_STATE_RECONF_REPLICAS 6      /* REPLICAOF newprimary */
+#define SENTINEL_FAILOVER_STATE_UPDATE_CONFIG 7        /* Monitor promoted replica. */
 
 #define SENTINEL_PRIMARY_LINK_STATUS_UP 0
 #define SENTINEL_PRIMARY_LINK_STATUS_DOWN 1

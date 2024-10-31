@@ -18,7 +18,7 @@ test "Manual failover works - $type" {
 
     # Rename the FAILOVER command so that we can fallback to REPLICAOF NO ONE.
     if {$type == "legacy"} {
-        S 0 SENTINEL SET mymaster rename-command FAILOVER FAILOVER_ERR
+        S 0 SENTINEL SET mymaster rename-command FAILOVER NON-EXISTENT
     }
 
     # Since we reduced the info-period (default 10000) above immediately,

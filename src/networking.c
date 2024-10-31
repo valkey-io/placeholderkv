@@ -2387,7 +2387,7 @@ parseResult handleParseResults(client *c) {
     }
 
     if (c->read_flags & READ_FLAGS_PARSING_NEGATIVE_MBULK_LEN) {
-        /* Multibulk rocessing could see a <= 0 length. */
+        /* Multibulk processing could see a <= 0 length. */
         resetClient(c);
         return PARSE_OK;
     }
