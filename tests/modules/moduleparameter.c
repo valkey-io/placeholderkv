@@ -5,11 +5,8 @@
 #include <string.h>
 
 int GET_HELLO(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
-    VALKEYMODULE_NOT_USED(argv);
-    VALKEYMODULE_NOT_USED(argc);
-
-    ValkeyModule_UpdateRunTimeArgs(ctx, 0, "99");
-    return ValkeyModule_ReplyWithSimpleString(ctx, "Module runtime args test");
+  ValkeyModule_UpdateRunTimeArgs(ctx, argc, argv);
+  return ValkeyModule_ReplyWithSimpleString(ctx, "Module runtime args test");
 }
 
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {

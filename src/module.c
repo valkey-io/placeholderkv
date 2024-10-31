@@ -3043,12 +3043,20 @@ client *moduleGetReplyClient(ValkeyModuleCtx *ctx) {
     }
 }
 
-int VM_UpdateRunTimeArgs(ValkeyModuleCtx *ctx, int index, char *value) {
+int VM_UpdateRunTimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
     client *c = moduleGetReplyClient(ctx);
     if (c == NULL) return VALKEYMODULE_OK;
-
-    ValkeyModuleString *o = createStringObject(value, strlen(value));
-    ctx->module->loadmod->argv[index] = o;
+    struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
+    for (int i = 0; i < loadmod->argc; i++) {
+        decrRefCount(loadmod->argv[i]);
+    }
+    zfree(loadmod->argv);
+    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
+    loadmod->argc = argc;
+    for (int i = 0; i < argc; i++) {
+        loadmod->argv[i] = argv[i];
+        incrRefCount(loadmod->argv[i]);
+    }
     return VALKEYMODULE_OK;
 }
 
