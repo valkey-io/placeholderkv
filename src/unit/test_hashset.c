@@ -394,11 +394,12 @@ int test_iterator(int argc, char **argv, int flags) {
     size_t num_returned = 0;
     hashsetIterator iter;
     hashsetInitIterator(&iter, s);
-    uint8_t *item;
-    while (hashsetNext(&iter, (void **)&item)) {
+    uint8_t *element;
+    while (hashsetNext(&iter, (void **)&element)) {
         num_returned++;
-        assert(item >= element_array && item < element_array + count);
-        (*item)++;
+        assert(element >= element_array && element < element_array + count);
+        /* increment element at this position as a counter */
+        (*element)++;
     }
     hashsetResetIterator(&iter);
 
@@ -437,25 +438,19 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     size_t num_returned = 0;
     hashsetIterator iter;
     hashsetInitSafeIterator(&iter, s);
-    uint8_t *item;
-    while (hashsetNext(&iter, (void **)&item)) {
-        size_t index = item - element_counts;
+    uint8_t *element;
+    while (hashsetNext(&iter, (void **)&element)) {
+        size_t index = element - element_counts;
         num_returned++;
-        if (item < element_counts || item >= element_counts + count * 2) {
-            printf("Element %zu returned, max == %zu. Num returned: %zu\n", index, count * 2 - 1, num_returned);
-            printf("Safe %d, table %d, index %lu, pos in bucket %d, rehashing? %d\n", iter.safe, iter.table, iter.index,
-                   iter.pos_in_bucket, !hashsetIsRehashing(s));
-            hashsetHistogram(s);
-            exit(1);
-        }
-        assert(item >= element_counts && item < element_counts + count * 2);
-        (*item)++;
+        assert(element >= element_counts && element < element_counts + count * 2);
+        /* increment element at this position as a counter */
+        (*element)++;
         if (index % 4 == 0) {
-            assert(hashsetDelete(s, item));
+            assert(hashsetDelete(s, element));
         }
         /* Add new item each time we see one of the original items */
         if (index < count) {
-            assert(hashsetAdd(s, item + count));
+            assert(hashsetAdd(s, element + count));
         }
     }
     hashsetResetIterator(&iter);
@@ -509,6 +504,7 @@ int test_random_element(int argc, char **argv, int flags) {
         assert(hashsetFairRandomElement(s, (void **)&element));
 
         assert(element >= times_picked && element < times_picked + count);
+        /* increment element at this position as a counter */
         (*element)++;
     }
     hashsetRelease(s);
