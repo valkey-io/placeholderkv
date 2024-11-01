@@ -17,6 +17,7 @@ test "Manual failover works - $type" {
     assert {[lindex $addr 1] == $old_port}
 
     # Rename the FAILOVER command so that we can fallback to REPLICAOF NO ONE.
+    # We simulate a server that doesn't have the FAILOVER (NON-EXISTENT) command.
     if {$type == "replicaof"} {
         S 0 SENTINEL SET mymaster rename-command FAILOVER NON-EXISTENT
     }
