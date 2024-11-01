@@ -4872,6 +4872,8 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
     /* A Node in HANDSHAKE state has a limited lifespan equal to the
      * configured node timeout. */
     if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
+        serverLog(LL_WARNING, "Clusterbus handshake timeout [%s]:%d after a timeout of %lld", node->ip,
+                  node->cport, handshake_timeout);
         clusterDelNode(node);
         return 1;
     }
