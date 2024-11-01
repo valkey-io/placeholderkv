@@ -3043,7 +3043,7 @@ client *moduleGetReplyClient(ValkeyModuleCtx *ctx) {
     }
 }
 
-int VM_UpdateRunTimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
+int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
     client *c = moduleGetReplyClient(ctx);
     if (c == NULL) return VALKEYMODULE_OK;
     struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
@@ -13577,7 +13577,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(SetModuleAttribs);
     REGISTER_API(IsModuleNameBusy);
     REGISTER_API(WrongArity);
-    REGISTER_API(UpdateRunTimeArgs);
+    REGISTER_API(UpdateRuntimeArgs);
     REGISTER_API(ReplyWithLongLong);
     REGISTER_API(ReplyWithError);
     REGISTER_API(ReplyWithErrorFormat);
