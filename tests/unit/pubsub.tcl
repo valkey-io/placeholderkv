@@ -473,7 +473,7 @@ start_server {tags {"pubsub network"}} {
         assert_equal $res {bla}
         assert_equal [r read] {message foo bar}
         assert_equal [r read] {message foo vaz}
-    } {} {resp3}
+    } {} {resp3 scripting}
 
     test "unsubscribe inside multi, and publish to self" {
         r hello 3

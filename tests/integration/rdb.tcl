@@ -423,7 +423,7 @@ start_server [list overrides [list "dir" $server_path "dbfilename" "scriptbackup
     # its sha1   is: a0c38691e9fffe4563723c32ba77a34398e090e6
     test {script won't load anymore if it's in rdb} {
         assert_equal [r script exists a0c38691e9fffe4563723c32ba77a34398e090e6] 0
-    }
+    } {OK} {scripting}
 }
 
 start_server {} {
@@ -471,7 +471,7 @@ start_server {} {
 
         # server is writable again
         r set x y
-    } {OK}
+    } {OK} {scripting}
 }
 
 } ;# tags

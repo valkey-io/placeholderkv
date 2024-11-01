@@ -168,7 +168,7 @@ tags {"needs:debug"} {
 
         r config set latency-monitor-threshold 200
         r config set lazyfree-lazy-expire yes
-    }
+    } {OK} {scripting}
 
     test {LATENCY HISTORY / RESET with wrong event name is fine} {
         assert {[llength [r latency history blabla]] == 0}

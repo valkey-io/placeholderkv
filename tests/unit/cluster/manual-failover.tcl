@@ -1,5 +1,5 @@
 # Check the manual failover
-start_cluster 5 5 {tags {external:skip cluster}} {
+start_cluster 5 5 {tags {external:skip cluster scripting}} {
 
 test "Cluster is up" {
     wait_for_cluster_state ok
@@ -52,7 +52,7 @@ test "Send CLUSTER FAILOVER to #5, during load" {
 
         if {$j == $numops/2} {R 5 cluster failover}
     }
-}
+} {OK} {scripting}
 
 test "Wait for failover" {
     wait_for_condition 1000 50 {

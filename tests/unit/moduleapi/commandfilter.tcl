@@ -42,13 +42,13 @@ start_server {tags {"modules"}} {
         r del log-key
         r eval "redis.call('ping', '@log')" 0
         r lrange log-key 0 -1
-    } "{ping @log}"
+    } "{ping @log}" {scripting}
 
     test {Command Filter applies on Lua redis.call() that calls a module} {
         r del log-key
         r eval "redis.call('commandfilter.ping')" 0
         r lrange log-key 0 -1
-    } "{ping @log}"
+    } "{ping @log}" {scripting}
 
     test {Command Filter strings can be retained} {
         r commandfilter.retained
@@ -90,7 +90,7 @@ start_server {tags {"modules"}} {
 
         r eval "redis.call('commandfilter.ping')" 0
         assert_equal {} [r lrange log-key 0 -1]
-    }
+    } {OK} {scripting}
 
     test "Unload the module - commandfilter" {
         assert_equal {OK} [r module unload commandfilter]
@@ -114,7 +114,7 @@ test {RM_CommandFilterArgInsert and script argv caching} {
         r eval {redis.call('rpush', KEYS[1], 'elem1', 'elem2', 'elem3', 'elem4')} 1 mylist
         assert_equal [r lrange mylist 0 -1] {elem1 elem2 elem3 elem4 @insertafter --inserted-after-- elem1 elem2 elem3 elem4}
     }
-}
+} {OK} {scripting}
 
 # previously, there was a bug that command filters would be rerun (which would cause args to swap back)
 # this test is meant to protect against that bug

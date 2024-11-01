@@ -66,7 +66,7 @@ tags "modules" {
             assert_equal {} [r get multi]
             assert_equal {1} [r get lua]
             r get x
-        } {3}
+        } {3} {scripting}
 
         test {Test module key space event} {
             r keyspace.notify x

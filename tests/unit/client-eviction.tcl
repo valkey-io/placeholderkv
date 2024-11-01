@@ -242,7 +242,7 @@ start_server {} {
         r debug pause-cron 0
         $rr close
         $redirected_c close
-    } {0} {needs:debug}
+    } {0} {needs:debug scripting}
 
     test "client evicted due to client tracking prefixes" {
         r flushdb

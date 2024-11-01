@@ -205,7 +205,7 @@ start_server {tags {"aofrw external:skip"} overrides {aof-use-rdb-preamble no}} 
         r debug loadaof
         assert_equal [r fcall test 0] 1
         r FUNCTION LIST
-    } {{library_name test engine LUA functions {{name test description {} flags {}}}}}
+    } {{library_name test engine LUA functions {{name test description {} flags {}}}}} {scripting}
 
     test {BGREWRITEAOF is delayed if BGSAVE is in progress} {
         r flushall

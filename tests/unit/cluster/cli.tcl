@@ -245,7 +245,7 @@ start_multiple_servers 5 [list overrides $base_conf] {
                         127.0.0.1:[srv 0 port]
         } e
         assert_match {*node already contains functions*} $e
-    }
+    } {OK} {scripting}
 } ;# stop servers
 
 # Test valkey-cli --cluster create, add-node.

@@ -220,7 +220,7 @@ start_server {tags {"tracking network logreqres:skip"}} {
         $rd_sg eval "return redis.call('set', 'key1', '2')" 1 key1
         assert_equal "2" [$rd_sg GET key1]
         $rd_sg CLIENT TRACKING off
-    }
+    } {OK} {scripting}
 
     test {Tracking only occurs for scripts when a command calls a read-only command} {
         r CLIENT TRACKING off
@@ -250,7 +250,7 @@ start_server {tags {"tracking network logreqres:skip"}} {
         $rd_sg MSET key2{t} 2 key3{t} 2
         assert_equal {invalidate key2{t}} [r read]
         assert_equal "PONG" [r ping]
-    }
+    } {OK} {scripting}
 
     test {RESP3 Client gets tracking-redir-broken push message after cached key changed when rediretion client is terminated} {
         r CLIENT TRACKING on REDIRECT $redir_id

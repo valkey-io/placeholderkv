@@ -38,6 +38,10 @@ ifneq ($(USE_LUA),no)
 	LUA_LIBS=../deps/lua/src/liblua.a
 	LUA_CFLAGS=-I../deps/lua/src -DUSE_LUA
 	LUA_TARGET=lua
+	LUA_TEST_FLAGS=
+else
+	# Do not run tests that require Lua scripting
+	LUA_TEST_FLAGS=--tags -scripting
 endif
 
 DEPENDENCY_TARGETS=hiredis linenoise ${LUA_TARGET} hdr_histogram fpconv
@@ -570,13 +574,13 @@ distclean: clean
 .PHONY: distclean
 
 test: $(SERVER_NAME) $(ENGINE_CHECK_AOF_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME)
-	@(cd ..; ./runtest)
+	@(cd ..; ./runtest ${LUA_TEST_FLAGS})
 
 test-unit: $(ENGINE_UNIT_TESTS)
 	./$(ENGINE_UNIT_TESTS)
 
 test-modules: $(SERVER_NAME)
-	@(cd ..; ./runtest-moduleapi)
+	@(cd ..; ./runtest-moduleapi ${LUA_TEST_FLAGS})
 
 test-sentinel: $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME)
 	@(cd ..; ./runtest-sentinel)
