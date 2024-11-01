@@ -764,6 +764,10 @@ dict *evalScriptsDict(void) {
     return lctx.lua_scripts;
 }
 
+unsigned long evalScriptsDictSize(void) {
+    return dictSize(evalScriptsDict());
+}
+
 unsigned long evalScriptsMemory(void) {
     return lctx.lua_scripts_mem + dictMemUsage(lctx.lua_scripts) + dictSize(lctx.lua_scripts) * sizeof(luaScript) +
            listLength(lctx.lua_scripts_lru_list) * sizeof(listNode);
