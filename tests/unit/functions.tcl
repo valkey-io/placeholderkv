@@ -281,7 +281,7 @@ start_server {tags {"scripting"}} {
         assert_equal [r ping] "PONG"
         assert_error {ERR Script killed by user with SCRIPT KILL*} {$rd read}
         $rd close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test {FUNCTION - test function flush} {
         r function load REPLACE [get_function_code lua test test {local a = 1 while true do a = a + 1 end}]

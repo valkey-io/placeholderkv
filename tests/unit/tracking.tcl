@@ -250,7 +250,7 @@ start_server {tags {"tracking network logreqres:skip"}} {
         $rd_sg MSET key2{t} 2 key3{t} 2
         assert_equal {invalidate key2{t}} [r read]
         assert_equal "PONG" [r ping]
-    } {OK} {scripting}
+    } {} {scripting}
 
     test {RESP3 Client gets tracking-redir-broken push message after cached key changed when rediretion client is terminated} {
         r CLIENT TRACKING on REDIRECT $redir_id

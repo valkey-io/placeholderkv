@@ -780,7 +780,7 @@ start_server {tags {"acl external:skip"}} {
         assert {[dict get $entry context] eq {lua}}
         assert {[dict get $entry object] eq {incr}}
         assert_match {*cmd=eval*} [dict get $entry client-info]
-    } {OK} {scripting}
+    } {} {scripting}
 
     test {ACL LOG can accept a numerical argument to show less entries} {
         r AUTH antirez foo

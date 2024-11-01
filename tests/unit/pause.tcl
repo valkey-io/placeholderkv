@@ -127,7 +127,7 @@ start_server {tags {"pause network"}} {
         assert_match "1" [$rd2 read]
         $rd close
         $rd2 close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test "Test RO scripts are not blocked by pause RO" {
         r set x y
@@ -172,7 +172,7 @@ start_server {tags {"pause network"}} {
 
         r client unpause
         $rr close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test "Test read-only scripts in multi-exec are not blocked by pause RO" {
         r SET FOO BAR
@@ -191,7 +191,7 @@ start_server {tags {"pause network"}} {
         assert_equal [s 0 blocked_clients] 0
         r client unpause
         $rr close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test "Test write scripts in multi-exec are blocked by pause RO" {
         set rd [valkey_deferring_client]
@@ -222,7 +222,7 @@ start_server {tags {"pause network"}} {
         assert_match "13" [$rd2 read]
         $rd close
         $rd2 close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test "Test may-replicate commands are rejected in RO scripts" {
         # that's specifically important for CLIENT PAUSE WRITE
@@ -236,7 +236,7 @@ start_server {tags {"pause network"}} {
         }
         # make sure that publish isn't blocked from a non-RO script
         assert_equal [r EVAL "return redis.call('publish','ch','msg')" 0] 0
-    } {OK} {scripting}
+    } {} {scripting}
 
     test "Test multiple clients can be queued up and unblocked" {
         r client PAUSE 60000 WRITE

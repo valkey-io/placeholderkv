@@ -151,7 +151,7 @@ start_server {tags {"info" "external:skip"}} {
             assert_match {*calls=1,*,rejected_calls=1,failed_calls=0} [cmdstat eval]
             assert_match {*count=2*} [errorstat ERR]
             assert_equal [s total_error_replies] 2
-        } {OK} {scripting}
+        } {} {scripting}
 
         test {errorstats: failed call NOSCRIPT error} {
             r config resetstat
@@ -164,7 +164,7 @@ start_server {tags {"info" "external:skip"}} {
             assert_equal [s total_error_replies] 1
             r config resetstat
             assert_match {} [errorstat NOSCRIPT]
-        } {OK} {scripting}
+        } {} {scripting}
 
         test {errorstats: failed call NOGROUP error} {
             r config resetstat
@@ -306,7 +306,7 @@ start_server {tags {"info" "external:skip"}} {
             assert_error "ERR Wrong number of args*" {r fcall invalidgetcmd 0}
             assert_equal "count=975" [errorstat ERRORSTATS_OVERFLOW]
             assert_equal "count=2" [errorstat ERR]
-        } {OK} {scripting}
+        } {} {scripting}
 
         test {stats: eventloop metrics} {
             set info1 [r info stats]

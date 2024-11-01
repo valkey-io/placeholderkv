@@ -280,7 +280,7 @@ start_server {tags {"repl external:skip"}} {
                 {incr x}
             }
             close_replication_stream $repl
-        } {OK} {scripting}
+        } {} {scripting}
 
         test {ROLE in master reports master with a slave} {
             set res [r -1 role]
@@ -437,7 +437,7 @@ start_server {tags {"repl external:skip"} overrides {save {}}} {
             } else {
                 fail "Different datasets between replica and master"
             }
-        } {OK} {scripting}
+        } {} {scripting}
     }
 }
 
@@ -656,7 +656,7 @@ foreach testType {Successful Aborted} {
                         after 200 ; # Give some time to Lua to call the hook again...
                         assert_equal [$replica ping] "PONG"
                         $rd_replica close
-                    } {OK} {scripting}
+                    } {0} {scripting}
 
                     test {Blocked commands and configs during async-loading} {
                         assert_error {LOADING*} {$replica config set appendonly no}

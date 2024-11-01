@@ -125,7 +125,7 @@ start_server {} {
             }
 
             resume_process $slave_pid
-        } {OK} {scripting}
+        } {} {scripting}
     }
 }}
 

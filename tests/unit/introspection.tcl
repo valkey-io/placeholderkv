@@ -102,7 +102,7 @@ start_server {tags {"introspection"}} {
         set info [r client info]
         set cmd7 [get_field_in_client_info $info "tot-cmds"]
         assert_equal [expr $cmd6+3] $cmd7
-    } {OK} {scripting}
+    } {} {scripting}
 
     test {CLIENT KILL with illegal arguments} {
         assert_error "ERR wrong number of arguments for 'client|kill' command" {r client kill}
@@ -307,7 +307,7 @@ start_server {tags {"introspection"}} {
         assert_match {*eval*} [$rd read]
         assert_match {*lua*"set"*"foo"*"bar"*} [$rd read]
         $rd close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test {MONITOR can log commands issued by functions} {
         r function load replace {#!lua name=test
@@ -320,7 +320,7 @@ start_server {tags {"introspection"}} {
         assert_match {*fcall*test*} [$rd read]
         assert_match {*lua*"set"*"foo"*"bar"*} [$rd read]
         $rd close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test {MONITOR supports redacting command arguments} {
         set rd [valkey_deferring_client]
@@ -671,7 +671,7 @@ start_server {tags {"introspection"}} {
 
         # Restore backup
         assert_equal [eval "r config set $backups"] "OK"
-    } {OK} {scripting}
+    } {} {scripting}
 
     test {CONFIG SET rollback on set error} {
         # This test passes an invalid percent value to maxmemory-clients which should cause an
@@ -755,7 +755,7 @@ start_server {tags {"introspection"}} {
         set r1 [valkey_client]
         assert_equal [$r1 ping] "PONG"
         $r1 close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test {CONFIG SET duplicate configs} {
         assert_error "ERR *duplicate*" {r config set maxmemory 10000001 maxmemory 10000002}
