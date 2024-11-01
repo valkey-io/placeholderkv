@@ -17,7 +17,7 @@ test "Manual failover works - $type" {
     assert {[lindex $addr 1] == $old_port}
 
     # Rename the FAILOVER command so that we can fallback to REPLICAOF NO ONE.
-    if {$type == "legacy"} {
+    if {$type == "replicaof"} {
         S 0 SENTINEL SET mymaster rename-command FAILOVER NON-EXISTENT
     }
 
@@ -81,21 +81,21 @@ test "The old primary eventually gets reconfigured as a replica - $type" {
 }
 
 test "Check data consistency - $type" {
-    if {$type == "legacy"} {
-        # In legacy type, there is a good chance that data will be lost eventually.
+    if {$type == "replicaof"} {
+        # In replicaof type, there is a good chance that data will be lost eventually.
         foreach_valkey_id id {
             wait_for_condition 1000 50 {
                 [R $id get foo] != $val
             } else {
-                fail "Data is consistency in legacy type"
+                fail "Data is consistency in replicaof type"
             }
         }
-    } elseif {$type == "pause"} {
+    } elseif {$type == "failover"} {
         foreach_valkey_id id {
             wait_for_condition 1000 50 {
                 [R $id get foo] == $val
             } else {
-                fail "Data is not consistency in pause type"
+                fail "Data is not consistency in failover type"
             }
         }
     }
@@ -104,10 +104,10 @@ test "Check data consistency - $type" {
 } ;# end proc test_sentinel_failover
 
 source "../tests/includes/init-tests.tcl"
-test_sentinel_failover "legacy" $master_id
+test_sentinel_failover "replicaof" $master_id
 
 source "../tests/includes/init-tests.tcl"
-test_sentinel_failover "pause" $master_id
+test_sentinel_failover "failover" $master_id
 
 foreach flag {crash-after-election crash-after-promotion} {
     # Before each SIMULATE-FAILURE test, re-source init-tests to get a clean environment
