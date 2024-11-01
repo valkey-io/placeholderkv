@@ -68,6 +68,24 @@ jobs:
       - name: show-kernel-log
         run: sudo dmesg -c
 
+  test-without-lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: make
+        # Fail build if there are warnings
+        # build with TLS just for compilation coverage
+        run: make -j4 all-with-unit-tests SERVER_CFLAGS='-Werror' BUILD_TLS=yes USE_LUA=no
+      - name: test
+        run: |
+          sudo apt-get install tcl8.6 tclx
+          ./runtest --verbose --tags -slow --tags -scripting --dump-logs
+      - name: module api test
+        run: CFLAGS='-Werror' ./runtest-moduleapi --verbose --dump-logs --tags -scripting
+      - name: unit tests
+        run: |
+          ./src/valkey-unit-tests
+  
   build-debian-old:
     runs-on: ubuntu-latest
     container: debian:buster
