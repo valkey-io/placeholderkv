@@ -48,6 +48,10 @@ as libsystemd-dev on Debian/Ubuntu or systemd-devel on CentOS) and run:
 
     % make USE_SYSTEMD=yes
 
+To build without Lua scripting (it is enabled by default), run:
+
+    % make USE_LUA=no
+
 To append a suffix to Valkey program names, use:
 
     % make PROG_SUFFIX="-alt"

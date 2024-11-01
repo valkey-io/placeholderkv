@@ -35,7 +35,11 @@
  * 2. scriptingInit() - initServer() function from server.c invokes this to initialize LUA at startup.
  *                      It is also invoked between 2 eval invocations to reset Lua.
  */
+
 #include "server.h"
+
+#ifdef USE_LUA
+
 #include "sha1.h"
 #include "rand.h"
 #include "cluster.h"
@@ -1760,3 +1764,64 @@ void luaLdbLineHook(lua_State *lua, lua_Debug *ar) {
         rctx->start_time = getMonotonicUs();
     }
 }
+
+#else /* USE_LUA is no */
+
+/* These stubs are used when Lua is disabled at compile time.
+ * They typically do nothing and report 0. */
+
+void scriptingInit(int setup) {
+    UNUSED(setup);
+}
+
+int ldbPendingChildren(void) {
+    return 0;
+}
+
+int ldbRemoveChild(pid_t pid) {
+    UNUSED(pid);
+    return 0;
+}
+
+unsigned long evalMemory(void) {
+    return 0;
+}
+
+unsigned long evalScriptsMemory(void) {
+    return 0;
+}
+
+uint64_t evalGetCommandFlags(client *c, uint64_t cmd_flags) {
+    UNUSED(c);
+    /* Pass through the cmd_flags */
+    return cmd_flags;
+}
+
+unsigned long evalScriptsDictSize(void) {
+    return 0;
+}
+
+void ldbKillForkedSessions(void) {
+}
+
+void evalCommand(client *c) {
+    addReplyError(c, "Lua scripting disabled");
+}
+
+void evalRoCommand(client *c) {
+    addReplyError(c, "Lua scripting disabled");
+}
+
+void evalShaCommand(client *c) {
+    addReplyError(c, "Lua scripting disabled");
+}
+
+void evalShaRoCommand(client *c) {
+    addReplyError(c, "Lua scripting disabled");
+}
+
+void scriptCommand(client *c) {
+    addReplyError(c, "Lua scripting disabled");
+}
+
+#endif

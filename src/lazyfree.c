@@ -51,6 +51,9 @@ void lazyFreeErrors(void *args[]) {
 
 /* Release the lua_scripts dict. */
 void lazyFreeLuaScripts(void *args[]) {
+#ifndef USE_LUA
+    UNUSED(args);
+#else
     dict *lua_scripts = args[0];
     list *lua_scripts_lru_list = args[1];
     lua_State *lua = args[2];
@@ -58,6 +61,7 @@ void lazyFreeLuaScripts(void *args[]) {
     freeLuaScriptsSync(lua_scripts, lua_scripts_lru_list, lua);
     atomic_fetch_sub_explicit(&lazyfree_objects, len, memory_order_relaxed);
     atomic_fetch_add_explicit(&lazyfreed_objects, len, memory_order_relaxed);
+#endif
 }
 
 /* Release the functions ctx. */
@@ -222,6 +226,7 @@ void freeErrorsRadixTreeAsync(rax *errors) {
     }
 }
 
+#ifdef USE_LUA
 /* Free lua_scripts dict and lru list, if the dict is huge enough, free them in async way.
  * Close lua interpreter, if there are a lot of lua scripts, close it in async way. */
 void freeLuaScriptsAsync(dict *lua_scripts, list *lua_scripts_lru_list, lua_State *lua) {
@@ -232,6 +237,7 @@ void freeLuaScriptsAsync(dict *lua_scripts, list *lua_scripts_lru_list, lua_Stat
         freeLuaScriptsSync(lua_scripts, lua_scripts_lru_list, lua);
     }
 }
+#endif
 
 /* Free functions ctx, if the functions ctx contains enough functions, free it in async way. */
 void freeFunctionsAsync(functionsLibCtx *functions_lib_ctx) {
