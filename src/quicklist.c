@@ -209,7 +209,6 @@ void quicklistRelease(quicklist *quicklist) {
 /* Compress the listpack in 'node' and update encoding details.
  * Returns 1 if listpack compressed successfully.
  * Returns 0 if compression failed or if listpack too small to compress. */
-
 static int __quicklistCompressNode(quicklistNode *node) {
     node->attempted_compress = 1;
     if (node->dont_compress) return 0;
@@ -248,7 +247,6 @@ static int __quicklistCompressNode(quicklistNode *node) {
 
 /* Uncompress the listpack in 'node' and update encoding details.
  * Returns 1 on successful decode, 0 on failure to decode. */
-
 static int __quicklistDecompressNode(quicklistNode *node) {
     node->attempted_compress = 0;
     node->recompress = 0;
