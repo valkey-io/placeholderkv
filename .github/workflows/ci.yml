@@ -85,7 +85,7 @@ jobs:
       - name: unit tests
         run: |
           ./src/valkey-unit-tests
-  
+
   build-debian-old:
     runs-on: ubuntu-latest
     container: debian:buster
