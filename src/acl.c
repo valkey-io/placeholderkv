@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2018, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -506,11 +506,11 @@ void ACLFreeUserAndKillClients(user *u) {
              * more defensive to set the default user and put
              * it in non authenticated mode. */
             c->user = DefaultUser;
-            c->authenticated = 0;
+            c->flag.authenticated = 0;
             /* We will write replies to this client later, so we can't
              * close it directly even if async. */
             if (c == server.current_client) {
-                c->flags |= CLIENT_CLOSE_AFTER_COMMAND;
+                c->flag.close_after_command = 1;
             } else {
                 freeClientAsync(c);
             }
@@ -1079,7 +1079,7 @@ int ACLSetSelector(aclSelector *selector, const char *op, size_t oplen) {
                     flags |= ACL_READ_PERMISSION;
                 } else if (toupper(op[offset]) == 'W' && !(flags & ACL_WRITE_PERMISSION)) {
                     flags |= ACL_WRITE_PERMISSION;
-                } else if (op[offset] == '~') {
+                } else if (op[offset] == '~' && flags) {
                     offset++;
                     break;
                 } else {
@@ -1494,13 +1494,13 @@ void addAuthErrReply(client *c, robj *err) {
  * The return value is AUTH_OK on success (valid username / password pair) & AUTH_ERR otherwise. */
 int checkPasswordBasedAuth(client *c, robj *username, robj *password) {
     if (ACLCheckUserCredentials(username, password) == C_OK) {
-        c->authenticated = 1;
+        c->flag.authenticated = 1;
         c->user = ACLGetUserByName(username->ptr, sdslen(username->ptr));
         moduleNotifyUserChanged(c);
         return AUTH_OK;
     } else {
-        addACLLogEntry(c, ACL_DENIED_AUTH, (c->flags & CLIENT_MULTI) ? ACL_LOG_CTX_MULTI : ACL_LOG_CTX_TOPLEVEL, 0,
-                       username->ptr, NULL);
+        addACLLogEntry(c, ACL_DENIED_AUTH, (c->flag.multi) ? ACL_LOG_CTX_MULTI : ACL_LOG_CTX_TOPLEVEL, 0, username->ptr,
+                       NULL);
         return AUTH_ERR;
     }
 }
@@ -1587,12 +1587,10 @@ static int ACLSelectorCheckKey(aclSelector *selector, const char *key, int keyle
     listRewind(selector->patterns, &li);
 
     int key_flags = 0;
-    /* clang-format off */
     if (keyspec_flags & CMD_KEY_ACCESS) key_flags |= ACL_READ_PERMISSION;
     if (keyspec_flags & CMD_KEY_INSERT) key_flags |= ACL_WRITE_PERMISSION;
     if (keyspec_flags & CMD_KEY_DELETE) key_flags |= ACL_WRITE_PERMISSION;
     if (keyspec_flags & CMD_KEY_UPDATE) key_flags |= ACL_WRITE_PERMISSION;
-    /* clang-format on */
 
     /* Test this key against every pattern. */
     while ((ln = listNext(&li))) {
@@ -1618,12 +1616,10 @@ static int ACLSelectorHasUnrestrictedKeyAccess(aclSelector *selector, int flags)
     listRewind(selector->patterns, &li);
 
     int access_flags = 0;
-    /* clang-format off */
     if (flags & CMD_KEY_ACCESS) access_flags |= ACL_READ_PERMISSION;
     if (flags & CMD_KEY_INSERT) access_flags |= ACL_WRITE_PERMISSION;
     if (flags & CMD_KEY_DELETE) access_flags |= ACL_WRITE_PERMISSION;
     if (flags & CMD_KEY_UPDATE) access_flags |= ACL_WRITE_PERMISSION;
-    /* clang-format on */
 
     /* Test this key against every pattern. */
     while ((ln = listNext(&li))) {
@@ -1717,7 +1713,7 @@ static int ACLSelectorCheckCmd(aclSelector *selector,
      * mentioned in the command arguments. */
     if (!(selector->flags & SELECTOR_FLAG_ALLKEYS) && doesCommandHaveKeys(cmd)) {
         if (!(cache->keys_init)) {
-            cache->keys = (getKeysResult)GETKEYS_RESULT_INIT;
+            initGetKeysResult(&(cache->keys));
             getKeysFromCommandWithSpecs(cmd, argv, argc, GET_KEYSPEC_DEFAULT, &(cache->keys));
             cache->keys_init = 1;
         }
@@ -1737,7 +1733,8 @@ static int ACLSelectorCheckCmd(aclSelector *selector,
      * mentioned in the command arguments */
     const int channel_flags = CMD_CHANNEL_PUBLISH | CMD_CHANNEL_SUBSCRIBE;
     if (!(selector->flags & SELECTOR_FLAG_ALLCHANNELS) && doesCommandHaveChannelsWithFlags(cmd, channel_flags)) {
-        getKeysResult channels = (getKeysResult)GETKEYS_RESULT_INIT;
+        getKeysResult channels;
+        initGetKeysResult(&channels);
         getChannelsFromCommand(cmd, argv, argc, &channels);
         keyReference *channelref = channels.keys;
         for (int j = 0; j < channels.numkeys; j++) {
@@ -2428,20 +2425,21 @@ sds ACLLoadFromFile(const char *filename) {
             client *c = listNodeValue(ln);
             user *original = c->user;
             list *channels = NULL;
-            user *new = ACLGetUserByName(c->user->name, sdslen(c->user->name));
-            if (new && user_channels) {
-                if (!raxFind(user_channels, (unsigned char *)(new->name), sdslen(new->name), (void **)&channels)) {
-                    channels = getUpcomingChannelList(new, original);
-                    raxInsert(user_channels, (unsigned char *)(new->name), sdslen(new->name), channels, NULL);
+            user *new_user = ACLGetUserByName(c->user->name, sdslen(c->user->name));
+            if (new_user && user_channels) {
+                if (!raxFind(user_channels, (unsigned char *)(new_user->name), sdslen(new_user->name),
+                             (void **)&channels)) {
+                    channels = getUpcomingChannelList(new_user, original);
+                    raxInsert(user_channels, (unsigned char *)(new_user->name), sdslen(new_user->name), channels, NULL);
                 }
             }
             /* When the new channel list is NULL, it means the new user's channel list is a superset of the old user's
              * list. */
-            if (!new || (channels && ACLShouldKillPubsubClient(c, channels))) {
+            if (!new_user || (channels && ACLShouldKillPubsubClient(c, channels))) {
                 freeClient(c);
                 continue;
             }
-            c->user = new;
+            c->user = new_user;
         }
 
         if (user_channels) raxFreeWithCallback(user_channels, (void (*)(void *))listRelease);
@@ -2668,21 +2666,19 @@ void addACLLogEntry(client *c, int reason, int context, int argpos, sds username
     if (object) {
         le->object = object;
     } else {
-        /* clang-format off */
-        switch(reason) {
+        switch (reason) {
         case ACL_DENIED_CMD: le->object = sdsdup(c->cmd->fullname); break;
         case ACL_DENIED_KEY: le->object = sdsdup(c->argv[argpos]->ptr); break;
         case ACL_DENIED_CHANNEL: le->object = sdsdup(c->argv[argpos]->ptr); break;
         case ACL_DENIED_AUTH: le->object = sdsdup(c->argv[0]->ptr); break;
         default: le->object = sdsempty();
         }
-        /* clang-format on */
     }
 
     /* if we have a real client from the network, use it (could be missing on module timers) */
     client *realclient = server.current_client ? server.current_client : c;
 
-    le->cinfo = catClientInfoString(sdsempty(), realclient);
+    le->cinfo = catClientInfoString(sdsempty(), realclient, 0);
     le->context = context;
 
     /* Try to match this entry with past ones, to see if we can just
@@ -2764,7 +2760,6 @@ void aclCatWithFlags(client *c, dict *commands, uint64_t cflag, int *arraylen) {
 
     while ((de = dictNext(di)) != NULL) {
         struct serverCommand *cmd = dictGetVal(de);
-        if (cmd->flags & CMD_MODULE) continue;
         if (cmd->acl_categories & cflag) {
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
             (*arraylen)++;
@@ -3057,28 +3052,24 @@ void aclCommand(client *c) {
 
             addReplyBulkCString(c, "reason");
             char *reasonstr;
-            /* clang-format off */
-            switch(le->reason) {
-            case ACL_DENIED_CMD: reasonstr="command"; break;
-            case ACL_DENIED_KEY: reasonstr="key"; break;
-            case ACL_DENIED_CHANNEL: reasonstr="channel"; break;
-            case ACL_DENIED_AUTH: reasonstr="auth"; break;
-            default: reasonstr="unknown";
+            switch (le->reason) {
+            case ACL_DENIED_CMD: reasonstr = "command"; break;
+            case ACL_DENIED_KEY: reasonstr = "key"; break;
+            case ACL_DENIED_CHANNEL: reasonstr = "channel"; break;
+            case ACL_DENIED_AUTH: reasonstr = "auth"; break;
+            default: reasonstr = "unknown";
             }
-            /* clang-format on */
             addReplyBulkCString(c, reasonstr);
 
             addReplyBulkCString(c, "context");
             char *ctxstr;
-            /* clang-format off */
-            switch(le->context) {
-            case ACL_LOG_CTX_TOPLEVEL: ctxstr="toplevel"; break;
-            case ACL_LOG_CTX_MULTI: ctxstr="multi"; break;
-            case ACL_LOG_CTX_LUA: ctxstr="lua"; break;
-            case ACL_LOG_CTX_MODULE: ctxstr="module"; break;
-            default: ctxstr="unknown";
+            switch (le->context) {
+            case ACL_LOG_CTX_TOPLEVEL: ctxstr = "toplevel"; break;
+            case ACL_LOG_CTX_MULTI: ctxstr = "multi"; break;
+            case ACL_LOG_CTX_LUA: ctxstr = "lua"; break;
+            case ACL_LOG_CTX_MODULE: ctxstr = "module"; break;
+            default: ctxstr = "unknown";
             }
-            /* clang-format on */
             addReplyBulkCString(c, ctxstr);
 
             addReplyBulkCString(c, "object");
@@ -3125,37 +3116,35 @@ void aclCommand(client *c) {
 
         addReply(c, shared.ok);
     } else if (c->argc == 2 && !strcasecmp(sub, "help")) {
-        /* clang-format off */
         const char *help[] = {
-"CAT [<category>]",
-"    List all commands that belong to <category>, or all command categories",
-"    when no category is specified.",
-"DELUSER <username> [<username> ...]",
-"    Delete a list of users.",
-"DRYRUN <username> <command> [<arg> ...]",
-"    Returns whether the user can execute the given command without executing the command.",
-"GETUSER <username>",
-"    Get the user's details.",
-"GENPASS [<bits>]",
-"    Generate a secure 256-bit user password. The optional `bits` argument can",
-"    be used to specify a different size.",
-"LIST",
-"    Show users details in config file format.",
-"LOAD",
-"    Reload users from the ACL file.",
-"LOG [<count> | RESET]",
-"    Show the ACL log entries.",
-"SAVE",
-"    Save the current config to the ACL file.",
-"SETUSER <username> <attribute> [<attribute> ...]",
-"    Create or modify a user with the specified attributes.",
-"USERS",
-"    List all the registered usernames.",
-"WHOAMI",
-"    Return the current connection username.",
-NULL
+            "CAT [<category>]",
+            "    List all commands that belong to <category>, or all command categories",
+            "    when no category is specified.",
+            "DELUSER <username> [<username> ...]",
+            "    Delete a list of users.",
+            "DRYRUN <username> <command> [<arg> ...]",
+            "    Returns whether the user can execute the given command without executing the command.",
+            "GETUSER <username>",
+            "    Get the user's details.",
+            "GENPASS [<bits>]",
+            "    Generate a secure 256-bit user password. The optional `bits` argument can",
+            "    be used to specify a different size.",
+            "LIST",
+            "    Show users details in config file format.",
+            "LOAD",
+            "    Reload users from the ACL file.",
+            "LOG [<count> | RESET]",
+            "    Show the ACL log entries.",
+            "SAVE",
+            "    Save the current config to the ACL file.",
+            "SETUSER <username> <attribute> [<attribute> ...]",
+            "    Create or modify a user with the specified attributes.",
+            "USERS",
+            "    List all the registered usernames.",
+            "WHOAMI",
+            "    Return the current connection username.",
+            NULL,
         };
-        /* clang-format on */
         addReplyHelp(c, help);
     } else {
         addReplySubcommandSyntaxError(c);

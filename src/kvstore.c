@@ -48,16 +48,18 @@
 
 #define UNUSED(V) ((void)V)
 
+static dict *kvstoreIteratorNextDict(kvstoreIterator *kvs_it);
+
 struct _kvstore {
     int flags;
-    dictType dtype;
+    dictType *dtype;
     dict **dicts;
-    long long num_dicts;
-    long long num_dicts_bits;
-    list *rehashing;     /* List of dictionaries in this kvstore that are currently rehashing. */
-    int resize_cursor;   /* Cron job uses this cursor to gradually resize dictionaries (only used if num_dicts > 1). */
-    int allocated_dicts; /* The number of allocated dicts. */
-    int non_empty_dicts; /* The number of non-empty dicts. */
+    int num_dicts;
+    int num_dicts_bits;
+    list *rehashing;                     /* List of dictionaries in this kvstore that are currently rehashing. */
+    int resize_cursor;                   /* Cron job uses this cursor to gradually resize dictionaries (only used if num_dicts > 1). */
+    int allocated_dicts;                 /* The number of allocated dicts. */
+    int non_empty_dicts;                 /* The number of non-empty dicts. */
     unsigned long long key_count;        /* Total number of keys in this kvstore. */
     unsigned long long bucket_count;     /* Total number of buckets in this kvstore across dictionaries. */
     unsigned long long *dict_size_index; /* Binary indexed tree (BIT) that describes cumulative key frequencies up until
@@ -84,6 +86,7 @@ struct _kvstoreDictIterator {
 /* Dict metadata for database, used for record the position in rehashing list. */
 typedef struct {
     listNode *rehashing_node; /* list node in rehashing list */
+    kvstore *kvs;
 } kvstoreDictMetadata;
 
 /**********************************/
@@ -91,7 +94,7 @@ typedef struct {
 /**********************************/
 
 /* Get the dictionary pointer based on dict-index. */
-static dict *kvstoreGetDict(kvstore *kvs, int didx) {
+dict *kvstoreGetDict(kvstore *kvs, int didx) {
     return kvs->dicts[didx];
 }
 
@@ -142,7 +145,8 @@ static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
 
     dict *d = kvstoreGetDict(kvs, didx);
     size_t dsize = dictSize(d);
-    int non_empty_dicts_delta = dsize == 1 ? 1 : dsize == 0 ? -1 : 0;
+    int non_empty_dicts_delta = dsize == 1 ? 1 : dsize == 0 ? -1
+                                                            : 0;
     kvs->non_empty_dicts += non_empty_dicts_delta;
 
     /* BIT does not need to be calculated when there's only one dict. */
@@ -164,7 +168,9 @@ static dict *createDictIfNeeded(kvstore *kvs, int didx) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (d) return d;
 
-    kvs->dicts[didx] = dictCreate(&kvs->dtype);
+    kvs->dicts[didx] = dictCreate(kvs->dtype);
+    kvstoreDictMetadata *metadata = (kvstoreDictMetadata *)dictMetadata(kvs->dicts[didx]);
+    metadata->kvs = kvs;
     kvs->allocated_dicts++;
     return kvs->dicts[didx];
 }
@@ -195,9 +201,9 @@ static void freeDictIfNeeded(kvstore *kvs, int didx) {
  * If there are multiple dicts, updates the bucket count for the given dictionary
  * in a DB, bucket count incremented with the new ht size during the rehashing phase.
  * If there's one dict, bucket count can be retrieved directly from single dict bucket. */
-static void kvstoreDictRehashingStarted(dict *d) {
-    kvstore *kvs = d->type->userdata;
+void kvstoreDictRehashingStarted(dict *d) {
     kvstoreDictMetadata *metadata = (kvstoreDictMetadata *)dictMetadata(d);
+    kvstore *kvs = metadata->kvs;
     listAddNodeTail(kvs->rehashing, d);
     metadata->rehashing_node = listLast(kvs->rehashing);
 
@@ -212,9 +218,9 @@ static void kvstoreDictRehashingStarted(dict *d) {
  *
  * Updates the bucket count for the given dictionary in a DB. It removes
  * the old ht size of the dictionary from the total sum of buckets for a DB.  */
-static void kvstoreDictRehashingCompleted(dict *d) {
-    kvstore *kvs = d->type->userdata;
+void kvstoreDictRehashingCompleted(dict *d) {
     kvstoreDictMetadata *metadata = (kvstoreDictMetadata *)dictMetadata(d);
+    kvstore *kvs = metadata->kvs;
     if (metadata->rehashing_node) {
         listDelNode(kvs->rehashing, metadata->rehashing_node);
         metadata->rehashing_node = NULL;
@@ -228,7 +234,7 @@ static void kvstoreDictRehashingCompleted(dict *d) {
 }
 
 /* Returns the size of the DB dict metadata in bytes. */
-static size_t kvstoreDictMetadataSize(dict *d) {
+size_t kvstoreDictMetadataSize(dict *d) {
     UNUSED(d);
     return sizeof(kvstoreDictMetadata);
 }
@@ -239,26 +245,26 @@ static size_t kvstoreDictMetadataSize(dict *d) {
 
 /* Create an array of dictionaries
  * num_dicts_bits is the log2 of the amount of dictionaries needed (e.g. 0 for 1 dict,
- * 3 for 8 dicts, etc.) */
+ * 3 for 8 dicts, etc.)
+ *
+ * The kvstore handles `key` based on `dictType` during initialization:
+ * - If `dictType.embedded-entry` is 1, it clones the `key`.
+ * - Otherwise, it assumes ownership of the `key`.
+ */
 kvstore *kvstoreCreate(dictType *type, int num_dicts_bits, int flags) {
     /* We can't support more than 2^16 dicts because we want to save 48 bits
      * for the dict cursor, see kvstoreScan */
     assert(num_dicts_bits <= 16);
 
-    kvstore *kvs = zcalloc(sizeof(*kvs));
-    memcpy(&kvs->dtype, type, sizeof(kvs->dtype));
-    kvs->flags = flags;
+    /* The dictType of kvstore needs to use the specific callbacks.
+     * If there are any changes in the future, it will need to be modified. */
+    assert(type->rehashingStarted == kvstoreDictRehashingStarted);
+    assert(type->rehashingCompleted == kvstoreDictRehashingCompleted);
+    assert(type->dictMetadataBytes == kvstoreDictMetadataSize);
 
-    /* kvstore must be the one to set these callbacks, so we make sure the
-     * caller didn't do it */
-    assert(!type->userdata);
-    assert(!type->dictMetadataBytes);
-    assert(!type->rehashingStarted);
-    assert(!type->rehashingCompleted);
-    kvs->dtype.userdata = kvs;
-    kvs->dtype.dictMetadataBytes = kvstoreDictMetadataSize;
-    kvs->dtype.rehashingStarted = kvstoreDictRehashingStarted;
-    kvs->dtype.rehashingCompleted = kvstoreDictRehashingCompleted;
+    kvstore *kvs = zcalloc(sizeof(*kvs));
+    kvs->dtype = type;
+    kvs->flags = flags;
 
     kvs->num_dicts_bits = num_dicts_bits;
     kvs->num_dicts = 1 << kvs->num_dicts_bits;
@@ -338,7 +344,7 @@ size_t kvstoreMemUsage(kvstore *kvs) {
     size_t mem = sizeof(*kvs);
 
     unsigned long long keys_count = kvstoreSize(kvs);
-    mem += keys_count * dictEntryMemUsage() + kvstoreBuckets(kvs) * sizeof(dictEntry *) +
+    mem += keys_count * dictEntryMemUsage(NULL) + kvstoreBuckets(kvs) * sizeof(dictEntry *) +
            kvs->allocated_dicts * (sizeof(dict) + kvstoreDictMetadataSize(NULL));
 
     /* Values are dict* shared with kvs->dicts */
@@ -572,7 +578,7 @@ void kvstoreIteratorRelease(kvstoreIterator *kvs_it) {
 }
 
 /* Returns next dictionary from the iterator, or NULL if iteration is complete. */
-dict *kvstoreIteratorNextDict(kvstoreIterator *kvs_it) {
+static dict *kvstoreIteratorNextDict(kvstoreIterator *kvs_it) {
     if (kvs_it->next_didx == -1) return NULL;
 
     /* The dict may be deleted during the iteration process, so here need to check for NULL. */
@@ -600,13 +606,6 @@ dictEntry *kvstoreIteratorNext(kvstoreIterator *kvs_it) {
     if (!de) { /* No current dict or reached the end of the dictionary. */
         dict *d = kvstoreIteratorNextDict(kvs_it);
         if (!d) return NULL;
-        if (kvs_it->di.d) {
-            /* Before we move to the next dict, reset the iter of the previous dict. */
-            dictIterator *iter = &kvs_it->di;
-            dictResetIterator(iter);
-            /* In the safe iterator context, we may delete entries. */
-            freeDictIfNeeded(kvs_it->kvs, kvs_it->didx);
-        }
         dictInitSafeIterator(&kvs_it->di, d);
         de = dictNext(&kvs_it->di);
     }
@@ -722,12 +721,6 @@ dictEntry *kvstoreDictGetFairRandomKey(kvstore *kvs, int didx) {
     return dictGetFairRandomKey(d);
 }
 
-dictEntry *kvstoreDictFindEntryByPtrAndHash(kvstore *kvs, int didx, const void *oldptr, uint64_t hash) {
-    dict *d = kvstoreGetDict(kvs, didx);
-    if (!d) return NULL;
-    return dictFindEntryByPtrAndHash(d, oldptr, hash);
-}
-
 unsigned int kvstoreDictGetSomeKeys(kvstore *kvs, int didx, dictEntry **des, unsigned int count) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (!d) return 0;
@@ -766,7 +759,7 @@ void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn) 
 }
 
 uint64_t kvstoreGetHash(kvstore *kvs, const void *key) {
-    return kvs->dtype.hashFunction(key);
+    return kvs->dtype->hashFunction(key);
 }
 
 void *kvstoreDictFetchValue(kvstore *kvs, int didx, const void *key) {
@@ -781,6 +774,17 @@ dictEntry *kvstoreDictFind(kvstore *kvs, int didx, void *key) {
     return dictFind(d, key);
 }
 
+/*
+ * The kvstore handles `key` based on `dictType` during initialization:
+ * - If `dictType.embedded-entry` is 1, it clones the `key`.
+ * - Otherwise, it assumes ownership of the `key`.
+ * The caller must ensure the `key` is properly freed.
+ *
+ * kvstore current usage:
+ *
+ * 1. keyspace (db.keys) kvstore - creates a copy of the key.
+ * 2. expiry (db.expires), pubsub_channels and pubsubshard_channels kvstore - takes ownership of the key.
+ */
 dictEntry *kvstoreDictAddRaw(kvstore *kvs, int didx, void *key, dictEntry **existing) {
     dict *d = createDictIfNeeded(kvs, didx);
     dictEntry *ret = dictAddRaw(d, key, existing);
@@ -794,8 +798,9 @@ void kvstoreDictSetKey(kvstore *kvs, int didx, dictEntry *de, void *key) {
 }
 
 void kvstoreDictSetVal(kvstore *kvs, int didx, dictEntry *de, void *val) {
-    dict *d = kvstoreGetDict(kvs, didx);
-    dictSetVal(d, de, val);
+    UNUSED(kvs);
+    UNUSED(didx);
+    dictSetVal(NULL, de, val);
 }
 
 dictEntry *

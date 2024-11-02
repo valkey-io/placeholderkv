@@ -7,7 +7,7 @@ start_server {tags {"introspection"}} {
 
     test {CLIENT LIST} {
         r client list
-    } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=26 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|list user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
+    } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|list user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
 
     test {CLIENT LIST with IDs} {
         set myid [r client id]
@@ -17,7 +17,7 @@ start_server {tags {"introspection"}} {
 
     test {CLIENT INFO} {
         r client info
-    } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=26 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|info user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
+    } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|info user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
 
     proc get_field_in_client_info {info field} {
         set info [string trim $info]
@@ -25,7 +25,7 @@ start_server {tags {"introspection"}} {
             set kv [split $item "="]
             set k [lindex $kv 0]
             if {[string match $field $k]} {
-                return [lindex $kv 1]   
+                return [lindex $kv 1]
             }
         }
         return ""
@@ -39,6 +39,14 @@ start_server {tags {"introspection"}} {
             }
         }
         return ""
+    }
+
+    proc get_client_tot_in_out_cmds {id} {
+        set info_list [r client list]
+        set in [get_field_in_client_list $id $info_list "tot-net-in"]
+        set out [get_field_in_client_list $id $info_list "tot-net-out"]
+        set cmds [get_field_in_client_list $id $info_list "tot-cmds"]
+        return [list $in $out $cmds]
     }
 
     test {client input output and command process statistics} {
@@ -63,21 +71,29 @@ start_server {tags {"introspection"}} {
         set output3 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
         set cmd3 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
         $rd blpop mylist 0
-        set info_list [r client list]
-        set input4 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
-        set output4 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
-        set cmd4 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
-        assert_equal [expr $input3+34] $input4
-        assert_equal $output3 $output4
-        assert_equal $cmd3 $cmd4
+        set input4 [expr $input3 + 34]
+        set output4 $output3
+        set cmd4 $cmd3
+        wait_for_condition 5 100 {
+            [list $input4 $output4 $cmd4] eq [get_client_tot_in_out_cmds $rd_id]
+        } else {
+            puts "--------- tot-net-in tot-net-out tot-cmds (4)"
+            puts "Expected: [list $input4 $output4 $cmd4]"
+            puts "Actual:   [get_client_tot_in_out_cmds $rd_id]"
+            fail "Blocked BLPOP didn't increment expected client fields"
+        }
         r lpush mylist a
-        set info_list [r client list]
-        set input5 [get_field_in_client_list $rd_id $info_list "tot-net-in"]
-        set output5 [get_field_in_client_list $rd_id $info_list "tot-net-out"]
-        set cmd5 [get_field_in_client_list $rd_id $info_list "tot-cmds"]
-        assert_equal $input4 $input5
-        assert_equal [expr $output4+23] $output5
-        assert_equal [expr $cmd4+1] $cmd5
+        set input5 $input4
+        set output5 [expr $output4 + 23]
+        set cmd5 [expr $cmd4 + 1]
+        wait_for_condition 5 100 {
+            [list $input5 $output5 $cmd5] eq [get_client_tot_in_out_cmds $rd_id]
+        } else {
+            puts "--------- tot-net-in tot-net-out tot-cmds (5)"
+            puts "Expected: [list $input5 $output5 $cmd5]"
+            puts "Actual:   [get_client_tot_in_out_cmds $rd_id]"
+            fail "Unblocked BLPOP didn't increment expected client fields"
+        }
         $rd close
         # test recursive command
         set info [r client info]
@@ -295,7 +311,7 @@ start_server {tags {"introspection"}} {
 
     test {MONITOR can log commands issued by functions} {
         r function load replace {#!lua name=test
-            redis.register_function('test', function() return redis.call('set', 'foo', 'bar') end)
+            server.register_function('test', function() return redis.call('set', 'foo', 'bar') end)
         }
         set rd [valkey_deferring_client]
         $rd monitor
@@ -316,7 +332,7 @@ start_server {tags {"introspection"}} {
         r migrate [srv 0 host] [srv 0 port] key 9 5000 AUTH2 user password
         catch {r auth not-real} _
         catch {r auth not-real not-a-password} _
-        
+
         assert_match {*"key"*"9"*"5000"*} [$rd read]
         assert_match {*"key"*"9"*"5000"*"(redacted)"*} [$rd read]
         assert_match {*"key"*"9"*"5000"*"(redacted)"*"(redacted)"*} [$rd read]
@@ -359,46 +375,45 @@ start_server {tags {"introspection"}} {
 
         $rd close
     }
-    
+
     test {MONITOR log blocked command only once} {
-        
         # need to reconnect in order to reset the clients state
         reconnect
-        
+
         set rd [valkey_deferring_client]
         set bc [valkey_deferring_client]
         r del mylist
-        
+
         $rd monitor
         $rd read ; # Discard the OK
-        
+
         $bc blpop mylist 0
         wait_for_blocked_clients_count 1
         r lpush mylist 1
         wait_for_blocked_clients_count 0
         r lpush mylist 2
-        
+
         # we expect to see the blpop on the monitor first
         assert_match {*"blpop"*"mylist"*"0"*} [$rd read]
-        
+
         # we scan out all the info commands on the monitor
         set monitor_output [$rd read]
         while { [string match {*"info"*} $monitor_output] } {
             set monitor_output [$rd read]
         }
-        
+
         # we expect to locate the lpush right when the client was unblocked
         assert_match {*"lpush"*"mylist"*"1"*} $monitor_output
-        
+
         # we scan out all the info commands
         set monitor_output [$rd read]
         while { [string match {*"info"*} $monitor_output] } {
             set monitor_output [$rd read]
         }
-        
+
         # we expect to see the next lpush and not duplicate blpop command
         assert_match {*"lpush"*"mylist"*"2"*} $monitor_output
-        
+
         $rd close
         $bc close
     }
@@ -499,7 +514,6 @@ start_server {tags {"introspection"}} {
         set skip_configs {
             rdbchecksum
             daemonize
-            io-threads-do-reads
             tcp-backlog
             always-show-logo
             syslog-enabled
@@ -517,6 +531,7 @@ start_server {tags {"introspection"}} {
             io-threads
             logfile
             unixsocketperm
+            unixsocketgroup
             replicaof
             slaveof
             requirepass
@@ -542,6 +557,7 @@ start_server {tags {"introspection"}} {
             socket-mark-id
             req-res-logfile
             client-default-resp
+            dual-channel-replication-enabled
         }
 
         if {!$::tls} {
@@ -637,7 +653,7 @@ start_server {tags {"introspection"}} {
             assert_equal [r config get save] {save {}}
         }
     } {} {external:skip}
-    
+
     test {CONFIG SET with multiple args} {
         set some_configs {maxmemory 10000001 repl-backlog-size 10000002 save {3000 5}}
 
@@ -659,7 +675,7 @@ start_server {tags {"introspection"}} {
 
     test {CONFIG SET rollback on set error} {
         # This test passes an invalid percent value to maxmemory-clients which should cause an
-        # input verification failure during the "set" phase before trying to apply the 
+        # input verification failure during the "set" phase before trying to apply the
         # configuration. We want to make sure the correct failure happens and everything
         # is rolled back.
         # backup maxmemory config
@@ -682,7 +698,7 @@ start_server {tags {"introspection"}} {
 
     test {CONFIG SET rollback on apply error} {
         # This test tries to configure a used port number in the server. This is expected
-        # to pass the `CONFIG SET` validity checking implementation but fail on 
+        # to pass the `CONFIG SET` validity checking implementation but fail on
         # actual "apply" of the setting. This will validate that after an "apply"
         # failure we rollback to the previous values.
         proc dummy_accept {chan addr port} {}
@@ -715,7 +731,7 @@ start_server {tags {"introspection"}} {
         dict set some_configs port $used_port
 
         # Run a dummy server on used_port so we know we can't configure the server to
-        # use it. It's ok for this to fail because that means used_port is invalid 
+        # use it. It's ok for this to fail because that means used_port is invalid
         # anyway
         catch {socket -server dummy_accept -myaddr 127.0.0.1 $used_port} e
         if {$::verbose} { puts "dummy_accept: $e" }
@@ -761,18 +777,18 @@ start_server {tags {"introspection"}} {
 
     test {CONFIG GET multiple args} {
         set res [r config get maxmemory maxmemory* bind *of]
-        
+
         # Verify there are no duplicates in the result
         assert_equal [expr [llength [dict keys $res]]*2] [llength $res]
-        
+
         # Verify we got both name and alias in result
-        assert {[dict exists $res slaveof] && [dict exists $res replicaof]}  
+        assert {[dict exists $res slaveof] && [dict exists $res replicaof]}
 
         # Verify pattern found multiple maxmemory* configs
-        assert {[dict exists $res maxmemory] && [dict exists $res maxmemory-samples] && [dict exists $res maxmemory-clients]}  
+        assert {[dict exists $res maxmemory] && [dict exists $res maxmemory-samples] && [dict exists $res maxmemory-clients]}
 
         # Verify we also got the explicit config
-        assert {[dict exists $res bind]}  
+        assert {[dict exists $res bind]}
     }
 
     test {valkey-server command line arguments - error cases} {
@@ -811,11 +827,62 @@ start_server {tags {"introspection"}} {
         # Something like `valkey-server --some-config --config-value1 --config-value2 --loglevel debug` would break,
         # because if you want to pass a value to a config starting with `--`, it can only be a single value.
         catch {exec src/valkey-server --replicaof 127.0.0.1 abc} err
-        assert_match {*'replicaof "127.0.0.1" "abc"'*Invalid master port*} $err
+        assert_match {*'replicaof "127.0.0.1" "abc"'*Invalid primary port*} $err
         catch {exec src/valkey-server --replicaof --127.0.0.1 abc} err
-        assert_match {*'replicaof "--127.0.0.1" "abc"'*Invalid master port*} $err
+        assert_match {*'replicaof "--127.0.0.1" "abc"'*Invalid primary port*} $err
         catch {exec src/valkey-server --replicaof --127.0.0.1 --abc} err
         assert_match {*'replicaof "--127.0.0.1"'*wrong number of arguments*} $err
+    } {} {external:skip}
+
+    test {tot-net-out for replica client}  {
+        start_server {} {
+            start_server {} {
+                set primary [srv -1 client]
+                set primary_host [srv -1 host]
+                set primary_port [srv -1 port]
+                set primary_pid [srv -1 pid]
+                set replica [srv 0 client]
+                set replica_pid [srv 0 pid]
+
+                $replica replicaof $primary_host $primary_port
+
+                # Wait for replica to be connected before proceeding.
+                wait_replica_online $primary
+
+                # Avoid PINGs to make sure tot-net-out is stable.
+                $primary config set repl-ping-replica-period 3600
+
+                # Increase repl timeout to avoid replica disconnecting
+                $primary config set repl-timeout 3600
+                $replica config set repl-timeout 3600
+
+                # Get the tot-net-out of the replica before sending the command.
+                set info_list [$primary client list]
+                foreach info [split $info_list "\r\n"] {
+                    if {[string match "* flags=S *" $info]} {
+                        set out_before [get_field_in_client_info $info "tot-net-out"]
+                        break
+                    }
+                }
+
+                # Send a command to the primary.
+                set value_size 10000
+                $primary set foo [string repeat "a" $value_size]
+
+                # Get the tot-net-out of the replica after sending the command.
+                set info_list [$primary client list]
+                foreach info [split $info_list "\r\n"] {
+                    if {[string match "* flags=S *" $info]} {
+                        set out_after [get_field_in_client_info $info "tot-net-out"]
+                        break
+                    }
+                }
+
+                assert_morethan $out_before 0
+                assert_morethan $out_after 0
+                assert_lessthan $out_after [expr $out_before + $value_size + 1000] ; # + 1000 to account for protocol overhead etc
+            }
+        }
     } {} {external:skip}
 
     test {valkey-server command line arguments - allow passing option name and option value in the same arg} {

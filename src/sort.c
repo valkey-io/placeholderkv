@@ -1,6 +1,6 @@
 /* SORT command and helper functions.
  *
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,6 +43,11 @@ serverSortOperation *createSortOperation(int type, robj *pattern) {
     return so;
 }
 
+/* Return 1 if pattern is the special pattern '#'. */
+static int isReturnSubstPattern(sds pattern) {
+    return pattern[0] == '#' && pattern[1] == '\0';
+}
+
 /* Return the value associated to the key with a name obtained using
  * the following rules:
  *
@@ -68,7 +73,7 @@ robj *lookupKeyByPattern(serverDb *db, robj *pattern, robj *subst) {
     /* If the pattern is "#" return the substitution object itself in order
      * to implement the "SORT ... GET #" feature. */
     spat = pattern->ptr;
-    if (spat[0] == '#' && spat[1] == '\0') {
+    if (isReturnSubstPattern(spat)) {
         incrRefCount(subst);
         return subst;
     }
@@ -258,6 +263,7 @@ void sortCommandGeneric(client *c, int readonly) {
              * unless we can make sure the keys formed by the pattern are in the same slot
              * as the key to sort. */
             if (server.cluster_enabled &&
+                !isReturnSubstPattern(c->argv[j + 1]->ptr) &&
                 patternHashSlot(c->argv[j + 1]->ptr, sdslen(c->argv[j + 1]->ptr)) != getKeySlot(c->argv[1]->ptr)) {
                 addReplyError(c, "GET option of SORT denied in Cluster mode when "
                                  "keys formed by the pattern may be in different slots.");
@@ -308,7 +314,7 @@ void sortCommandGeneric(client *c, int readonly) {
      * The other types (list, sorted set) will retain their native order
      * even if no sort order is requested, so they remain stable across
      * scripting and replication. */
-    if (dontsort && sortval->type == OBJ_SET && (storekey || c->flags & CLIENT_SCRIPT)) {
+    if (dontsort && sortval->type == OBJ_SET && (storekey || c->flag.script)) {
         /* Force ALPHA sorting */
         dontsort = 0;
         alpha = 1;

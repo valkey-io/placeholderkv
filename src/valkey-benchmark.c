@@ -1,6 +1,6 @@
 /* Server benchmark utility.
  *
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -41,6 +41,7 @@
 #include <assert.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include <sdscompat.h> /* Use hiredis' sds compat header that maps sds calls to their hi_ variants */
 #include <sds.h>       /* Use hiredis sds. */
@@ -54,7 +55,6 @@
 #include "adlist.h"
 #include "dict.h"
 #include "zmalloc.h"
-#include "atomicvar.h"
 #include "crc16_slottable.h"
 #include "hdr_histogram.h"
 #include "cli_common.h"
@@ -84,11 +84,11 @@ static struct config {
     int tls;
     struct cliSSLconfig sslconfig;
     int numclients;
-    serverAtomic int liveclients;
+    _Atomic int liveclients;
     int requests;
-    serverAtomic int requests_issued;
-    serverAtomic int requests_finished;
-    serverAtomic int previous_requests_finished;
+    _Atomic int requests_issued;
+    _Atomic int requests_finished;
+    _Atomic int previous_requests_finished;
     int last_printed_bytes;
     long long previous_tick;
     int keysize;
@@ -117,9 +117,9 @@ static struct config {
     struct serverConfig *redis_config;
     struct hdr_histogram *latency_histogram;
     struct hdr_histogram *current_sec_latency_histogram;
-    serverAtomic int is_fetching_slots;
-    serverAtomic int is_updating_slots;
-    serverAtomic int slots_last_update;
+    _Atomic int is_fetching_slots;
+    _Atomic int is_updating_slots;
+    _Atomic int slots_last_update;
     int enable_tracking;
     pthread_mutex_t liveclients_mutex;
     pthread_mutex_t is_updating_slots_mutex;
@@ -162,7 +162,7 @@ typedef struct clusterNode {
     int port;
     sds name;
     int flags;
-    sds replicate; /* Master ID if node is a slave */
+    sds replicate; /* Primary ID if node is a replica */
     int *slots;
     int slots_count;
     int *updated_slots;      /* Used by updateClusterSlotsConfiguration */
@@ -195,7 +195,7 @@ static redisContext *getRedisContext(const char *ip, int port, const char *hosts
 static void freeServerConfig(serverConfig *cfg);
 static int fetchClusterSlotsConfiguration(client c);
 static void updateClusterSlotsConfiguration(void);
-int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData);
+static long long showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData);
 
 /* Dict callbacks */
 static uint64_t dictSdsHash(const void *key);
@@ -238,7 +238,7 @@ static redisContext *getRedisContext(const char *ip, int port, const char *hosts
     else
         ctx = redisConnectUnix(hostsocket);
     if (ctx == NULL || ctx->err) {
-        fprintf(stderr, "Could not connect to Redis at ");
+        fprintf(stderr, "Could not connect to server at ");
         char *err = (ctx != NULL ? ctx->errstr : "");
         if (hostsocket == NULL)
             fprintf(stderr, "%s:%d: %s\n", ip, port, err);
@@ -344,8 +344,7 @@ static void freeClient(client c) {
     aeDeleteFileEvent(el, c->context->fd, AE_WRITABLE);
     aeDeleteFileEvent(el, c->context->fd, AE_READABLE);
     if (c->thread_id >= 0) {
-        int requests_finished = 0;
-        atomicGet(config.requests_finished, requests_finished);
+        int requests_finished = atomic_load_explicit(&config.requests_finished, memory_order_relaxed);
         if (requests_finished >= config.requests) {
             aeStop(el);
         }
@@ -403,8 +402,7 @@ static void setClusterKeyHashTag(client c) {
     assert(c->thread_id >= 0);
     clusterNode *node = c->cluster_node;
     assert(node);
-    int is_updating_slots = 0;
-    atomicGet(config.is_updating_slots, is_updating_slots);
+    int is_updating_slots = atomic_load_explicit(&config.is_updating_slots, memory_order_relaxed);
     /* If updateClusterSlotsConfiguration is updating the slots array,
      * call updateClusterSlotsConfiguration is order to block the thread
      * since the mutex is locked. When the slots will be updated by the
@@ -425,8 +423,7 @@ static void setClusterKeyHashTag(client c) {
 }
 
 static void clientDone(client c) {
-    int requests_finished = 0;
-    atomicGet(config.requests_finished, requests_finished);
+    int requests_finished = atomic_load_explicit(&config.requests_finished, memory_order_relaxed);
     if (requests_finished >= config.requests) {
         freeClient(c);
         if (!config.num_threads && config.el) aeStop(config.el);
@@ -520,8 +517,7 @@ static void readHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
                     }
                     continue;
                 }
-                int requests_finished = 0;
-                atomicGetIncr(config.requests_finished, requests_finished, 1);
+                int requests_finished = atomic_fetch_add_explicit(&config.requests_finished, 1, memory_order_relaxed);
                 if (requests_finished < config.requests) {
                     if (config.num_threads == 0) {
                         hdr_record_value(config.latency_histogram, // Histogram to record to
@@ -564,8 +560,7 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     /* Initialize request when nothing was written. */
     if (c->written == 0) {
         /* Enforce upper bound to number of requests. */
-        int requests_issued = 0;
-        atomicGetIncr(config.requests_issued, requests_issued, config.pipeline);
+        int requests_issued = atomic_fetch_add_explicit(&config.requests_issued, config.pipeline, memory_order_relaxed);
         if (requests_issued >= config.requests) {
             return;
         }
@@ -573,7 +568,7 @@ static void writeHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         /* Really initialize: randomize keys and set start time. */
         if (config.randomkeys) randomizeClientKey(c);
         if (config.cluster_mode && c->staglen > 0) setClusterKeyHashTag(c);
-        atomicGet(config.slots_last_update, c->slots_last_update);
+        c->slots_last_update = atomic_load_explicit(&config.slots_last_update, memory_order_relaxed);
         c->start = ustime();
         c->latency = -1;
     }
@@ -653,7 +648,7 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
         c->context = redisConnectUnixNonBlock(config.hostsocket);
     }
     if (c->context->err) {
-        fprintf(stderr, "Could not connect to Redis at ");
+        fprintf(stderr, "Could not connect to server at ");
         if (config.hostsocket == NULL || is_cluster_client)
             fprintf(stderr, "%s:%d: %s\n", ip, port, c->context->errstr);
         else
@@ -804,8 +799,9 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
         aeCreateFileEvent(el, c->context->fd, AE_READABLE, readHandler, c);
 
     listAddNodeTail(config.clients, c);
-    atomicIncr(config.liveclients, 1);
-    atomicGet(config.slots_last_update, c->slots_last_update);
+    atomic_fetch_add_explicit(&config.liveclients, 1, memory_order_relaxed);
+
+    c->slots_last_update = atomic_load_explicit(&config.slots_last_update, memory_order_relaxed);
     return c;
 }
 
@@ -841,7 +837,7 @@ static void showLatencyReport(void) {
         printf("  %d bytes payload\n", config.datasize);
         printf("  keep alive: %d\n", config.keepalive);
         if (config.cluster_mode) {
-            printf("  cluster mode: yes (%d masters)\n", config.cluster_node_count);
+            printf("  cluster mode: yes (%d primaries)\n", config.cluster_node_count);
             int m;
             for (m = 0; m < config.cluster_node_count; m++) {
                 clusterNode *node = config.cluster_nodes[m];
@@ -1096,20 +1092,18 @@ static int fetchClusterConfiguration(void) {
         *p = '\0';
         line = lines;
         lines = p + 1;
-        char *name = NULL, *addr = NULL, *flags = NULL, *master_id = NULL;
+        char *name = NULL, *addr = NULL, *flags = NULL, *primary_id = NULL;
         int i = 0;
         while ((p = strchr(line, ' ')) != NULL) {
             *p = '\0';
             char *token = line;
             line = p + 1;
-            /* clang-format off */
-            switch(i++){
+            switch (i++) {
             case 0: name = token; break;
             case 1: addr = token; break;
             case 2: flags = token; break;
-            case 3: master_id = token; break;
+            case 3: primary_id = token; break;
             }
-            /* clang-format on */
             if (i == 8) break; // Slots
         }
         if (!flags) {
@@ -1118,7 +1112,7 @@ static int fetchClusterConfiguration(void) {
             goto cleanup;
         }
         int myself = (strstr(flags, "myself") != NULL);
-        int is_replica = (strstr(flags, "slave") != NULL || (master_id != NULL && master_id[0] != '-'));
+        int is_replica = (strstr(flags, "slave") != NULL || (primary_id != NULL && primary_id[0] != '-'));
         if (is_replica) continue;
         if (addr == NULL) {
             fprintf(stderr, "Invalid CLUSTER NODES reply: missing addr.\n");
@@ -1208,7 +1202,7 @@ static int fetchClusterConfiguration(void) {
             }
         }
         if (node->slots_count == 0) {
-            fprintf(stderr, "WARNING: Master node %s:%d has no slots, skipping...\n", node->ip, node->port);
+            fprintf(stderr, "WARNING: Primary node %s:%d has no slots, skipping...\n", node->ip, node->port);
             continue;
         }
         if (!addClusterNode(node)) {
@@ -1231,28 +1225,29 @@ static int fetchClusterSlotsConfiguration(client c) {
     UNUSED(c);
     int success = 1, is_fetching_slots = 0, last_update = 0;
     size_t i;
-    atomicGet(config.slots_last_update, last_update);
+
+    last_update = atomic_load_explicit(&config.slots_last_update, memory_order_relaxed);
     if (c->slots_last_update < last_update) {
         c->slots_last_update = last_update;
         return -1;
     }
     redisReply *reply = NULL;
-    atomicGetIncr(config.is_fetching_slots, is_fetching_slots, 1);
+
+    is_fetching_slots = atomic_fetch_add_explicit(&config.is_fetching_slots, 1, memory_order_relaxed);
     if (is_fetching_slots) return -1; // TODO: use other codes || errno ?
-    atomicSet(config.is_fetching_slots, 1);
+    atomic_store_explicit(&config.is_fetching_slots, 1, memory_order_relaxed);
     fprintf(stderr, "WARNING: Cluster slots configuration changed, fetching new one...\n");
     const char *errmsg = "Failed to update cluster slots configuration";
     static dictType dtype = {
         dictSdsHash,       /* hash function */
         NULL,              /* key dup */
-        NULL,              /* val dup */
         dictSdsKeyCompare, /* key compare */
         NULL,              /* key destructor */
         NULL,              /* val destructor */
         NULL               /* allow to expand */
     };
     /* printf("[%d] fetchClusterSlotsConfiguration\n", c->thread_id); */
-    dict *masters = dictCreate(&dtype);
+    dict *primaries = dictCreate(&dtype);
     redisContext *ctx = NULL;
     for (i = 0; i < (size_t)config.cluster_node_count; i++) {
         clusterNode *node = config.cluster_nodes[i];
@@ -1270,7 +1265,7 @@ static int fetchClusterSlotsConfiguration(client c) {
         if (node->updated_slots != NULL) zfree(node->updated_slots);
         node->updated_slots = NULL;
         node->updated_slots_count = 0;
-        dictReplace(masters, node->name, node);
+        dictReplace(primaries, node->name, node);
     }
     reply = redisCommand(ctx, "CLUSTER SLOTS");
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
@@ -1290,7 +1285,7 @@ static int fetchClusterSlotsConfiguration(client c) {
         assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
         assert(nr->element[2]->str != NULL);
         sds name = sdsnew(nr->element[2]->str);
-        dictEntry *entry = dictFind(masters, name);
+        dictEntry *entry = dictFind(primaries, name);
         if (entry == NULL) {
             success = 0;
             fprintf(stderr,
@@ -1309,15 +1304,16 @@ static int fetchClusterSlotsConfiguration(client c) {
 cleanup:
     freeReplyObject(reply);
     redisFree(ctx);
-    dictRelease(masters);
-    atomicSet(config.is_fetching_slots, 0);
+    dictRelease(primaries);
+    atomic_store_explicit(&config.is_fetching_slots, 0, memory_order_relaxed);
     return success;
 }
 
 /* Atomically update the new slots configuration. */
 static void updateClusterSlotsConfiguration(void) {
     pthread_mutex_lock(&config.is_updating_slots_mutex);
-    atomicSet(config.is_updating_slots, 1);
+    atomic_store_explicit(&config.is_updating_slots, 1, memory_order_relaxed);
+
     int i;
     for (i = 0; i < config.cluster_node_count; i++) {
         clusterNode *node = config.cluster_nodes[i];
@@ -1330,8 +1326,8 @@ static void updateClusterSlotsConfiguration(void) {
             zfree(oldslots);
         }
     }
-    atomicSet(config.is_updating_slots, 0);
-    atomicIncr(config.slots_last_update, 1);
+    atomic_store_explicit(&config.is_updating_slots, 0, memory_order_relaxed);
+    atomic_fetch_add_explicit(&config.slots_last_update, 1, memory_order_relaxed);
     pthread_mutex_unlock(&config.is_updating_slots_mutex);
 }
 
@@ -1515,113 +1511,107 @@ invalid:
     printf("Invalid option \"%s\" or option argument missing\n\n", argv[i]);
 
 usage:
-    /* clang-format off */
     tls_usage =
 #ifdef USE_OPENSSL
-" --tls              Establish a secure TLS connection.\n"
-" --sni <host>       Server name indication for TLS.\n"
-" --cacert <file>    CA Certificate file to verify with.\n"
-" --cacertdir <dir>  Directory where trusted CA certificates are stored.\n"
-"                    If neither cacert nor cacertdir are specified, the default\n"
-"                    system-wide trusted root certs configuration will apply.\n"
-" --insecure         Allow insecure TLS connection by skipping cert validation.\n"
-" --cert <file>      Client certificate to authenticate with.\n"
-" --key <file>       Private key file to authenticate with.\n"
-" --tls-ciphers <list> Sets the list of preferred ciphers (TLSv1.2 and below)\n"
-"                    in order of preference from highest to lowest separated by colon (\":\").\n"
-"                    See the ciphers(1ssl) manpage for more information about the syntax of this string.\n"
+        " --tls              Establish a secure TLS connection.\n"
+        " --sni <host>       Server name indication for TLS.\n"
+        " --cacert <file>    CA Certificate file to verify with.\n"
+        " --cacertdir <dir>  Directory where trusted CA certificates are stored.\n"
+        "                    If neither cacert nor cacertdir are specified, the default\n"
+        "                    system-wide trusted root certs configuration will apply.\n"
+        " --insecure         Allow insecure TLS connection by skipping cert validation.\n"
+        " --cert <file>      Client certificate to authenticate with.\n"
+        " --key <file>       Private key file to authenticate with.\n"
+        " --tls-ciphers <list> Sets the list of preferred ciphers (TLSv1.2 and below)\n"
+        "                    in order of preference from highest to lowest separated by colon (\":\").\n"
+        "                    See the ciphers(1ssl) manpage for more information about the syntax of this string.\n"
 #ifdef TLS1_3_VERSION
-" --tls-ciphersuites <list> Sets the list of preferred ciphersuites (TLSv1.3)\n"
-"                    in order of preference from highest to lowest separated by colon (\":\").\n"
-"                    See the ciphers(1ssl) manpage for more information about the syntax of this string,\n"
-"                    and specifically for TLSv1.3 ciphersuites.\n"
+        " --tls-ciphersuites <list> Sets the list of preferred ciphersuites (TLSv1.3)\n"
+        "                    in order of preference from highest to lowest separated by colon (\":\").\n"
+        "                    See the ciphers(1ssl) manpage for more information about the syntax of this string,\n"
+        "                    and specifically for TLSv1.3 ciphersuites.\n"
 #endif
 #endif
-"";
+        "";
 
     printf(
-"%s%s%s", /* Split to avoid strings longer than 4095 (-Woverlength-strings). */
-"Usage: valkey-benchmark [OPTIONS] [COMMAND ARGS...]\n\n"
-"Options:\n"
-" -h <hostname>      Server hostname (default 127.0.0.1)\n"
-" -p <port>          Server port (default 6379)\n"
-" -s <socket>        Server socket (overrides host and port)\n"
-" -a <password>      Password for Valkey Auth\n"
-" --user <username>  Used to send ACL style 'AUTH username pass'. Needs -a.\n"
-" -u <uri>           Server URI on format valkey://user:password@host:port/dbnum\n"
-"                    User, password and dbnum are optional. For authentication\n"
-"                    without a username, use username 'default'. For TLS, use\n"
-"                    the scheme 'valkeys'.\n"
-" -c <clients>       Number of parallel connections (default 50).\n"
-"                    Note: If --cluster is used then number of clients has to be\n"
-"                    the same or higher than the number of nodes.\n"
-" -n <requests>      Total number of requests (default 100000)\n"
-" -d <size>          Data size of SET/GET value in bytes (default 3)\n"
-" --dbnum <db>       SELECT the specified db number (default 0)\n"
-" -3                 Start session in RESP3 protocol mode.\n"
-" --threads <num>    Enable multi-thread mode.\n"
-" --cluster          Enable cluster mode.\n"
-"                    If the command is supplied on the command line in cluster\n"
-"                    mode, the key must contain \"{tag}\". Otherwise, the\n"
-"                    command will not be sent to the right cluster node.\n"
-" --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
-" -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
-" -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
-"                    random members and scores for ZADD.\n"
-"                    Using this option the benchmark will expand the string\n"
-"                    __rand_int__ inside an argument with a 12 digits number in\n"
-"                    the specified range from 0 to keyspacelen-1. The\n"
-"                    substitution changes every time a command is executed.\n"
-"                    Default tests use this to hit random keys in the specified\n"
-"                    range.\n"
-"                    Note: If -r is omitted, all commands in a benchmark will\n"
-"                    use the same key.\n"
-" -P <numreq>        Pipeline <numreq> requests. Default 1 (no pipeline).\n"
-" -q                 Quiet. Just show query/sec values\n"
-" --precision        Number of decimal places to display in latency output (default 0)\n"
-" --csv              Output in CSV format\n"
-" -l                 Loop. Run the tests forever\n"
-" -t <tests>         Only run the comma separated list of tests. The test\n"
-"                    names are the same as the ones produced as output.\n"
-"                    The -t option is ignored if a specific command is supplied\n"
-"                    on the command line.\n"
-" -I                 Idle mode. Just open N idle connections and wait.\n"
-" -x                 Read last argument from STDIN.\n"
-" --seed <num>       Set the seed for random number generator. Default seed is based on time.\n",
-tls_usage,
-" --help             Output this help and exit.\n"
-" --version          Output version and exit.\n\n"
-"Examples:\n\n"
-" Run the benchmark with the default configuration against 127.0.0.1:6379:\n"
-"   $ valkey-benchmark\n\n"
-" Use 20 parallel clients, for a total of 100k requests, against 192.168.1.1:\n"
-"   $ valkey-benchmark -h 192.168.1.1 -p 6379 -n 100000 -c 20\n\n"
-" Fill 127.0.0.1:6379 with about 1 million keys only using the SET test:\n"
-"   $ valkey-benchmark -t set -n 1000000 -r 100000000\n\n"
-" Benchmark 127.0.0.1:6379 for a few commands producing CSV output:\n"
-"   $ valkey-benchmark -t ping,set,get -n 100000 --csv\n\n"
-" Benchmark a specific command line:\n"
-"   $ valkey-benchmark -r 10000 -n 10000 eval 'return redis.call(\"ping\")' 0\n\n"
-" Fill a list with 10000 random elements:\n"
-"   $ valkey-benchmark -r 10000 -n 10000 lpush mylist __rand_int__\n\n"
-" On user specified command lines __rand_int__ is replaced with a random integer\n"
-" with a range of values selected by the -r option.\n"
-    );
-    /* clang-format on */
+        "%s%s%s", /* Split to avoid strings longer than 4095 (-Woverlength-strings). */
+        "Usage: valkey-benchmark [OPTIONS] [COMMAND ARGS...]\n\n"
+        "Options:\n"
+        " -h <hostname>      Server hostname (default 127.0.0.1)\n"
+        " -p <port>          Server port (default 6379)\n"
+        " -s <socket>        Server socket (overrides host and port)\n"
+        " -a <password>      Password for Valkey Auth\n"
+        " --user <username>  Used to send ACL style 'AUTH username pass'. Needs -a.\n"
+        " -u <uri>           Server URI on format valkey://user:password@host:port/dbnum\n"
+        "                    User, password and dbnum are optional. For authentication\n"
+        "                    without a username, use username 'default'. For TLS, use\n"
+        "                    the scheme 'valkeys'.\n"
+        " -c <clients>       Number of parallel connections (default 50).\n"
+        "                    Note: If --cluster is used then number of clients has to be\n"
+        "                    the same or higher than the number of nodes.\n"
+        " -n <requests>      Total number of requests (default 100000)\n"
+        " -d <size>          Data size of SET/GET value in bytes (default 3)\n"
+        " --dbnum <db>       SELECT the specified db number (default 0)\n"
+        " -3                 Start session in RESP3 protocol mode.\n"
+        " --threads <num>    Enable multi-thread mode.\n"
+        " --cluster          Enable cluster mode.\n"
+        "                    If the command is supplied on the command line in cluster\n"
+        "                    mode, the key must contain \"{tag}\". Otherwise, the\n"
+        "                    command will not be sent to the right cluster node.\n"
+        " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
+        " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
+        " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
+        "                    random members and scores for ZADD.\n"
+        "                    Using this option the benchmark will expand the string\n"
+        "                    __rand_int__ inside an argument with a 12 digits number in\n"
+        "                    the specified range from 0 to keyspacelen-1. The\n"
+        "                    substitution changes every time a command is executed.\n"
+        "                    Default tests use this to hit random keys in the specified\n"
+        "                    range.\n"
+        "                    Note: If -r is omitted, all commands in a benchmark will\n"
+        "                    use the same key.\n"
+        " -P <numreq>        Pipeline <numreq> requests. Default 1 (no pipeline).\n"
+        " -q                 Quiet. Just show query/sec values\n"
+        " --precision        Number of decimal places to display in latency output (default 0)\n"
+        " --csv              Output in CSV format\n"
+        " -l                 Loop. Run the tests forever\n"
+        " -t <tests>         Only run the comma separated list of tests. The test\n"
+        "                    names are the same as the ones produced as output.\n"
+        "                    The -t option is ignored if a specific command is supplied\n"
+        "                    on the command line.\n"
+        " -I                 Idle mode. Just open N idle connections and wait.\n"
+        " -x                 Read last argument from STDIN.\n"
+        " --seed <num>       Set the seed for random number generator. Default seed is based on time.\n",
+        tls_usage,
+        " --help             Output this help and exit.\n"
+        " --version          Output version and exit.\n\n"
+        "Examples:\n\n"
+        " Run the benchmark with the default configuration against 127.0.0.1:6379:\n"
+        "   $ valkey-benchmark\n\n"
+        " Use 20 parallel clients, for a total of 100k requests, against 192.168.1.1:\n"
+        "   $ valkey-benchmark -h 192.168.1.1 -p 6379 -n 100000 -c 20\n\n"
+        " Fill 127.0.0.1:6379 with about 1 million keys only using the SET test:\n"
+        "   $ valkey-benchmark -t set -n 1000000 -r 100000000\n\n"
+        " Benchmark 127.0.0.1:6379 for a few commands producing CSV output:\n"
+        "   $ valkey-benchmark -t ping,set,get -n 100000 --csv\n\n"
+        " Benchmark a specific command line:\n"
+        "   $ valkey-benchmark -r 10000 -n 10000 eval 'return redis.call(\"ping\")' 0\n\n"
+        " Fill a list with 10000 random elements:\n"
+        "   $ valkey-benchmark -r 10000 -n 10000 lpush mylist __rand_int__\n\n"
+        " On user specified command lines __rand_int__ is replaced with a random integer\n"
+        " with a range of values selected by the -r option.\n");
     exit(exit_status);
 }
 
-int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+long long showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
     benchmarkThread *thread = (benchmarkThread *)clientData;
-    int liveclients = 0;
-    int requests_finished = 0;
-    int previous_requests_finished = 0;
+    int liveclients = atomic_load_explicit(&config.liveclients, memory_order_relaxed);
+    int requests_finished = atomic_load_explicit(&config.requests_finished, memory_order_relaxed);
+    int previous_requests_finished = atomic_load_explicit(&config.previous_requests_finished, memory_order_relaxed);
     long long current_tick = mstime();
-    atomicGet(config.liveclients, liveclients);
-    atomicGet(config.requests_finished, requests_finished);
-    atomicGet(config.previous_requests_finished, previous_requests_finished);
 
     if (liveclients == 0 && requests_finished != config.requests) {
         fprintf(stderr, "All clients disconnected... aborting.\n");
@@ -1646,7 +1636,7 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
     const float instantaneous_dt = (float)(current_tick - config.previous_tick) / 1000.0;
     const float instantaneous_rps = (float)(requests_finished - previous_requests_finished) / instantaneous_dt;
     config.previous_tick = current_tick;
-    atomicSet(config.previous_requests_finished, requests_finished);
+    atomic_store_explicit(&config.previous_requests_finished, requests_finished, memory_order_relaxed);
     printf("%*s\r", config.last_printed_bytes, " "); /* ensure there is a clean line */
     int printed_bytes =
         printf("%s: rps=%.1f (overall: %.1f) avg_msec=%.3f (overall: %.3f)\r", config.title, instantaneous_rps, rps,
@@ -1754,7 +1744,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid cluster: %d node(s).\n", config.cluster_node_count);
             exit(1);
         }
-        printf("Cluster has %d master nodes:\n\n", config.cluster_node_count);
+        printf("Cluster has %d primary nodes:\n\n", config.cluster_node_count);
         int i = 0;
         for (; i < config.cluster_node_count; i++) {
             clusterNode *node = config.cluster_nodes[i];
@@ -1762,7 +1752,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid cluster node #%d\n", i);
                 exit(1);
             }
-            printf("Master %d: ", i);
+            printf("Primary %d: ", i);
             if (node->name) printf("%s ", node->name);
             printf("%s:%d\n", node->ip, node->port);
             node->redis_config = getServerConfig(node->ip, node->port, NULL);

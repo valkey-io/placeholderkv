@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * Copyright (c) 2012, Twitter, Inc.
  * All rights reserved.
  *
@@ -59,7 +59,11 @@ static int stringmatchlen_impl(const char *pattern,
                                const char *string,
                                int stringLen,
                                int nocase,
-                               int *skipLongerMatches) {
+                               int *skipLongerMatches,
+                               int nesting) {
+    /* Protection against abusive patterns. */
+    if (nesting > 1000) return 0;
+
     while (patternLen && stringLen) {
         switch (pattern[0]) {
         case '*':
@@ -69,7 +73,8 @@ static int stringmatchlen_impl(const char *pattern,
             }
             if (patternLen == 1) return 1; /* match */
             while (stringLen) {
-                if (stringmatchlen_impl(pattern + 1, patternLen - 1, string, stringLen, nocase, skipLongerMatches))
+                if (stringmatchlen_impl(pattern + 1, patternLen - 1, string, stringLen, nocase, skipLongerMatches,
+                                        nesting + 1))
                     return 1;                     /* match */
                 if (*skipLongerMatches) return 0; /* no match */
                 string++;
@@ -93,12 +98,12 @@ static int stringmatchlen_impl(const char *pattern,
             stringLen--;
             break;
         case '[': {
-            int not, match;
+            int not_op, match;
 
             pattern++;
             patternLen--;
-            not= pattern[0] == '^';
-            if (not) {
+            not_op = pattern[0] == '^';
+            if (not_op) {
                 pattern++;
                 patternLen--;
             }
@@ -141,7 +146,7 @@ static int stringmatchlen_impl(const char *pattern,
                 pattern++;
                 patternLen--;
             }
-            if (not) match = !match;
+            if (not_op) match = !match;
             if (!match) return 0; /* no match */
             string++;
             stringLen--;
@@ -179,7 +184,7 @@ static int stringmatchlen_impl(const char *pattern,
 
 int stringmatchlen(const char *pattern, int patternLen, const char *string, int stringLen, int nocase) {
     int skipLongerMatches = 0;
-    return stringmatchlen_impl(pattern, patternLen, string, stringLen, nocase, &skipLongerMatches);
+    return stringmatchlen_impl(pattern, patternLen, string, stringLen, nocase, &skipLongerMatches, 0);
 }
 
 int stringmatch(const char *pattern, const char *string, int nocase) {
@@ -872,6 +877,29 @@ err:
     return 0;
 }
 
+/* Parses a version string on the form "major.minor.patch" and returns an
+ * integer on the form 0xMMmmpp. Returns -1 on parse error. */
+int version2num(const char *version) {
+    int v = 0, part = 0, numdots = 0;
+    const char *p = version;
+    do {
+        if (*p >= '0' && *p <= '9') {
+            part = part * 10 + (unsigned)(*p - '0');
+            if (part > 255) return -1;
+        } else if (*p == '.') {
+            if (++numdots > 2) return -1;
+            v = (v << 8) | part;
+            part = 0;
+        } else {
+            return -1;
+        }
+        p++;
+    } while (*p);
+    if (numdots != 2) return -1;
+    v = (v << 8) | part;
+    return v;
+}
+
 /* Get random bytes, attempts to get an initial seed from /dev/urandom and
  * the uses a one way hash function in counter mode to generate a random
  * stream. However if /dev/urandom is not available, a weaker seed is used.
@@ -1228,7 +1256,6 @@ static char *i2string_async_signal_safe(int base, int64_t val, char *buf) {
         int ix;
         buf = orig_buf - 1;
         for (ix = 0; ix < 16; ++ix, --buf) {
-            /* clang-format off */
             switch (*buf) {
             case '0': *buf = 'f'; break;
             case '1': *buf = 'e'; break;
@@ -1247,7 +1274,6 @@ static char *i2string_async_signal_safe(int base, int64_t val, char *buf) {
             case 'e': *buf = '1'; break;
             case 'f': *buf = '0'; break;
             }
-            /* clang-format on */
         }
     }
     return buf + 1;

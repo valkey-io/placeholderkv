@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2016, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -65,8 +65,18 @@ struct {
 #define RDB_CHECK_DOING_READ_MODULE_AUX 8
 #define RDB_CHECK_DOING_READ_FUNCTIONS 9
 
-char *rdb_check_doing_string[] = {"start",     "read-type", "read-expire", "read-key",        "read-object-value",
-                                  "check-sum", "read-len",  "read-aux",    "read-module-aux", "read-functions"};
+char *rdb_check_doing_string[] = {
+    "start",
+    "read-type",
+    "read-expire",
+    "read-key",
+    "read-object-value",
+    "check-sum",
+    "read-len",
+    "read-aux",
+    "read-module-aux",
+    "read-functions",
+};
 
 char *rdb_type_string[] = {
     "string",
@@ -255,12 +265,6 @@ int redis_check_rdb(char *rdbfilename, FILE *fp) {
             rdbstate.doing = RDB_CHECK_DOING_READ_LEN;
             if ((db_size = rdbLoadLen(&rdb, NULL)) == RDB_LENERR) goto eoferr;
             if ((expires_size = rdbLoadLen(&rdb, NULL)) == RDB_LENERR) goto eoferr;
-            continue; /* Read type again. */
-        } else if (type == RDB_OPCODE_SLOT_INFO) {
-            uint64_t slot_id, slot_size, expires_slot_size;
-            if ((slot_id = rdbLoadLen(&rdb, NULL)) == RDB_LENERR) goto eoferr;
-            if ((slot_size = rdbLoadLen(&rdb, NULL)) == RDB_LENERR) goto eoferr;
-            if ((expires_slot_size = rdbLoadLen(&rdb, NULL)) == RDB_LENERR) goto eoferr;
             continue; /* Read type again. */
         } else if (type == RDB_OPCODE_AUX) {
             /* AUX: generic string-string fields. Use to add state to RDB
