@@ -145,7 +145,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         assert_equal {invalidate key1{t}} [$rd_trk read]
         assert_equal "PONG" [$rd_trk ping]
         $rd_trk close
-    } {OK} {scripting}
+    } {0} {scripting}
 
     test {publish to self inside rm_call} {
         r hello 3
@@ -285,7 +285,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
                 return 1
             } 1 x
         }
-    } {OK} {scripting}
+    } {} {scripting}
 
     # Note: each script is unique, to check that flags are extracted correctly
     test {rm_call EVAL - OOM - with M flag} {

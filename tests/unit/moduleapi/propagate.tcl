@@ -288,7 +288,7 @@ tags "modules" {
                         {exec}
                     }
                     close_replication_stream $repl
-                } {OK} {scripting}
+                } {} {scripting}
 
                 test {module propagates nested ctx case1} {
                     set repl [attach_to_replication_stream]
@@ -466,7 +466,7 @@ tags "modules" {
                         {exec}
                     }
                     close_replication_stream $repl
-                } {OK} {scripting}
+                } {} {scripting}
 
                 test {module propagates from command after good EVAL} {
                     set repl [attach_to_replication_stream]
@@ -491,7 +491,7 @@ tags "modules" {
                         {exec}
                     }
                     close_replication_stream $repl
-                } {OK} {scripting}
+                } {} {scripting}
 
                 test {module propagates from command after bad EVAL} {
                     set repl [attach_to_replication_stream]
@@ -517,7 +517,7 @@ tags "modules" {
                         {exec}
                     }
                     close_replication_stream $repl
-                } {OK} {scripting}
+                } {} {scripting}
 
                 test {module propagates from multi-exec} {
                     set repl [attach_to_replication_stream]
@@ -758,6 +758,6 @@ tags "modules aof" {
             assert_no_match {*calls=*} [cmdrstat set r]
             
         }
-    } {OK} {scripting}
+    } {} {scripting}
     }
 }
