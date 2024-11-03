@@ -301,9 +301,9 @@ void activeDefragSdsDict(dict *d, int val_type) {
     dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = (dictDefragAllocFunction *)activeDefragSds,
-        .defragVal = (val_type == DEFRAG_SDS_DICT_VAL_IS_SDS       ? (dictDefragAllocFunction *)activeDefragSds
-                      : val_type == DEFRAG_SDS_DICT_VAL_IS_STROB   ? (dictDefragAllocFunction *)activeDefragStringOb
-                      : val_type == DEFRAG_SDS_DICT_VAL_VOID_PTR   ? (dictDefragAllocFunction *)activeDefragAlloc
+        .defragVal = (val_type == DEFRAG_SDS_DICT_VAL_IS_SDS     ? (dictDefragAllocFunction *)activeDefragSds
+                      : val_type == DEFRAG_SDS_DICT_VAL_IS_STROB ? (dictDefragAllocFunction *)activeDefragStringOb
+                      : val_type == DEFRAG_SDS_DICT_VAL_VOID_PTR ? (dictDefragAllocFunction *)activeDefragAlloc
 #ifdef USE_LUA
                       : val_type == DEFRAG_SDS_DICT_VAL_LUA_SCRIPT ? (dictDefragAllocFunction *)activeDefragLuaScript
 #endif
