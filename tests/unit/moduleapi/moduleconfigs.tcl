@@ -256,6 +256,3 @@ start_server {tags {"modules"}} {
        string match "40 50 60 70" [lmap x [r module list] {dict get $x args}]
     }
 }
-
-
-

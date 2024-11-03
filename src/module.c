@@ -2255,6 +2255,33 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
     return (cp->module == module_handle);
 }
 
+/* ValkeyModule_UpdateRuntimeArgs can be used to update the values of module->loadmod
+ * so that the updated values can be saved into conf file once 'config rewrite' command
+ * is called
+ * One example can be found in file modules/moduleparameter.c
+ *
+ * Returns:
+ * - VALKEYMODULE_OK on successfully updating.
+ * - VALKEYMODULE_ERR on failure.
+ */
+int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
+    if (!ctx->module->onload) {
+        return VALKEYMODULE_ERR;
+    }
+    struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
+    for (int i = 0; i < loadmod->argc; i++) {
+        decrRefCount(loadmod->argv[i]);
+    }
+    zfree(loadmod->argv);
+    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
+    loadmod->argc = argc;
+    for (int i = 0; i < argc; i++) {
+        loadmod->argv[i] = argv[i];
+        incrRefCount(loadmod->argv[i]);
+    }
+    return VALKEYMODULE_OK;
+}
+
 /* --------------------------------------------------------------------------
  * ## Module information and time measurement
  * -------------------------------------------------------------------------- */
@@ -3041,23 +3068,6 @@ client *moduleGetReplyClient(ValkeyModuleCtx *ctx) {
          * clients, like timer contexts. */
         return ctx->client;
     }
-}
-
-int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
-    client *c = moduleGetReplyClient(ctx);
-    if (c == NULL) return VALKEYMODULE_OK;
-    struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
-    for (int i = 0; i < loadmod->argc; i++) {
-        decrRefCount(loadmod->argv[i]);
-    }
-    zfree(loadmod->argv);
-    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
-    loadmod->argc = argc;
-    for (int i = 0; i < argc; i++) {
-        loadmod->argv[i] = argv[i];
-        incrRefCount(loadmod->argv[i]);
-    }
-    return VALKEYMODULE_OK;
 }
 
 /* Send an integer reply to the client, with the specified `long long` value.
