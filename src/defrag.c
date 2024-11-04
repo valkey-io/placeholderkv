@@ -231,12 +231,10 @@ void zslUpdateNode(zskiplist *zsl, zskiplistNode *oldnode, zskiplistNode *newnod
 }
 
 /* Defrag helper for sorted set.
- * Update the robj pointer, defrag the skiplist struct and return the new score
- * reference. We may not access oldele pointer (not even the pointer stored in
- * the skiplist), as it was already freed. Newele may be null, in which case we
- * only need to defrag the skiplist, but not update the obj pointer.
- * When return value is non-NULL, it is the score reference that must be updated
- * in the dict record. */
+ * Update the robj pointer and defrag the skiplist struct. We may not access oldele
+ * pointer (not even the pointer stored in the skiplist), as it was already freed.
+ * Newele may be null, in which case we only need to defrag the skiplist,
+ * but not update the obj pointer. */
 void zslDefrag(zskiplist *zsl, double score, sds oldele, sds newele) {
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x, *newx;
     int i;
