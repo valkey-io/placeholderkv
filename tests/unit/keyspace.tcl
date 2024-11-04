@@ -47,6 +47,10 @@ start_server {tags {"keyspace"}} {
         r dbsize
     } {0}
 
+    test {KEYS with empty DB} {
+        assert_equal {} [r keys *]
+    }
+
     test "DEL against expired key" {
         r debug set-active-expire 0
         r setex keyExpire 1 valExpire

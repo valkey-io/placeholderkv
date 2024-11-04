@@ -837,6 +837,11 @@ void keysCommand(client *c) {
         }
         kvs_di = kvstoreGetDictSafeIterator(c->db->keys, pslot);
     } else {
+        if (!kvstoreSize(c->db->keys)) {
+            /* Requested db is empty. */
+            setDeferredArrayLen(c, replylen, 0);
+            return;
+        }
         kvs_it = kvstoreIteratorInit(c->db->keys);
     }
     robj keyobj;
