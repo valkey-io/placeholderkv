@@ -253,10 +253,11 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
         char key[32], val[32];
         snprintf(key, sizeof(key), "%d", j);
         snprintf(val, sizeof(val), "%d", count - j + 42);
-        void *position = hashsetFindPositionForInsert(s, key, NULL);
-        assert(position != NULL);
+        hashsetPosition position;
+        int ret = hashsetFindPositionForInsert(s, key, &position, NULL);
+        assert(ret == 1);
         keyval *e = create_keyval(key, val);
-        hashsetInsertAtPosition(s, e, position);
+        hashsetInsertAtPosition(s, e, &position);
     }
 
     if (count < 1000) {
@@ -279,14 +280,14 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
         char key[32], val[32];
         snprintf(key, sizeof(key), "%d", j);
         snprintf(val, sizeof(val), "%d", count - j + 42);
-        void *position;
+        hashsetPosition position;
         size_t size_before_find = hashsetSize(s);
         void **ref = hashsetTwoPhasePopFindRef(s, key, &position);
         assert(ref != NULL);
         keyval *e = *ref;
         assert(!strcmp(val, getval(e)));
         assert(hashsetSize(s) == size_before_find);
-        hashsetTwoPhasePopDelete(s, position);
+        hashsetTwoPhasePopDelete(s, &position);
         assert(hashsetSize(s) == size_before_find - 1);
     }
     assert(hashsetSize(s) == 0);
