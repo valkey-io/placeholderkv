@@ -2981,7 +2981,7 @@ int clusterIsValidPacket(clusterLink *link) {
         return 0;
     }
 
-    if (type == server.cluster_drop_packet_filter) {
+    if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
         serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
         return 0;
     }
@@ -3070,7 +3070,8 @@ int clusterProcessPacket(clusterLink *link) {
     if (!clusterIsValidPacket(link)) {
         clusterMsg *hdr = (clusterMsg *)link->rcvbuf;
         uint16_t type = ntohs(hdr->type);
-        if (server.debug_cluster_close_link_on_packet_drop && type == server.cluster_drop_packet_filter) {
+        if (server.debug_cluster_close_link_on_packet_drop &&
+            (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
             serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
             return 0;
