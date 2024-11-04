@@ -841,13 +841,23 @@ void keysCommand(client *c) {
     } else {
         kvs_it = kvstoreIteratorInit(c->db->keys);
     }
-    robj keyobj;
-    while ((de = kvs_di ? kvstoreDictIteratorNext(kvs_di) : kvstoreIteratorNext(kvs_it)) != NULL) {
+    while (1) {
+        robj keyobj;
+        int dict_index;
+        if (kvs_di) {
+            de = kvstoreDictIteratorNext(kvs_di);
+            dict_index = pslot;
+        } else {
+            de = kvstoreIteratorNext(kvs_it);
+            dict_index = kvstoreIteratorGetCurrentDictIndex(kvs_it);
+        }
+        if (de == NULL) break;
+
         sds key = dictGetKey(de);
 
         if (allkeys || stringmatchlen(pattern, plen, key, sdslen(key), 0)) {
             initStaticStringObject(keyobj, key);
-            if (!keyIsExpired(c->db, &keyobj)) {
+            if (!keyIsExpiredWithDictIndex(c->db, &keyobj, dict_index)) {
                 addReplyBulkCBuffer(c, key, sdslen(key));
                 numkeys++;
             }
