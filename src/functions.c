@@ -199,8 +199,12 @@ void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
 
 /* Swap the current functions ctx with the given one.
  * Free the old functions ctx. */
-void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx) {
-    functionsLibCtxFree(curr_functions_lib_ctx);
+void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async) {
+    if (async) {
+        freeFunctionsAsync(curr_functions_lib_ctx);
+    } else {
+        functionsLibCtxFree(curr_functions_lib_ctx);
+    }
     curr_functions_lib_ctx = new_lib_ctx;
 }
 
@@ -772,7 +776,7 @@ void functionRestoreCommand(client *c) {
     }
 
     if (restore_replicy == restorePolicy_Flush) {
-        functionsLibCtxSwapWithCurrent(functions_lib_ctx);
+        functionsLibCtxSwapWithCurrent(functions_lib_ctx, server.lazyfree_lazy_user_flush);
         functions_lib_ctx = NULL; /* avoid releasing the f_ctx in the end */
     } else {
         if (libraryJoin(curr_functions_lib_ctx, functions_lib_ctx, restore_replicy == restorePolicy_Replace, &err) !=

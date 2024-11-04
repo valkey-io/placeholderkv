@@ -136,7 +136,7 @@ functionsLibCtx *functionsLibCtxCreate(void);
 void functionsLibCtxClearCurrent(int async);
 void functionsLibCtxFree(functionsLibCtx *lib_ctx);
 void functionsLibCtxClear(functionsLibCtx *lib_ctx);
-void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx);
+void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
 
 int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
 

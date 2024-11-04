@@ -2293,7 +2293,7 @@ void readSyncBulkPayload(connection *conn) {
             swapMainDbWithTempDb(diskless_load_tempDb);
 
             /* swap existing functions ctx with the temporary one */
-            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx);
+            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 0);
 
             moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_COMPLETED,
                                   NULL);
