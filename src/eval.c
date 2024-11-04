@@ -1805,23 +1805,23 @@ void ldbKillForkedSessions(void) {
 }
 
 void evalCommand(client *c) {
-    addReplyError(c, "Lua scripting disabled");
+    addReplyError(c, "No default engine loaded");
 }
 
 void evalRoCommand(client *c) {
-    addReplyError(c, "Lua scripting disabled");
+    addReplyError(c, "No default engine loaded");
 }
 
 void evalShaCommand(client *c) {
-    addReplyError(c, "Lua scripting disabled");
+    addReplyError(c, "No default engine loaded");
 }
 
 void evalShaRoCommand(client *c) {
-    addReplyError(c, "Lua scripting disabled");
+    addReplyError(c, "No default engine loaded");
 }
 
 void scriptCommand(client *c) {
-    addReplyError(c, "Lua scripting disabled");
+    addReplyError(c, "No default engine loaded");
 }
 
 #endif
