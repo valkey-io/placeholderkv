@@ -392,7 +392,8 @@ ifeq ($(BUILD_FAST_FLOAT),yes)
 	ifeq (clang,$(CLANG))
   		FINAL_LIBS+= -lc++
 	else
-		FINAL_LIBS+= -lstdc++
+		# We also need to account for both 32-bit and 64 bit locations of this library. 
+		FINAL_LIBS+= -L/usr/lib64 -L/usr/lib -lstdc++
 	endif
 endif
 
