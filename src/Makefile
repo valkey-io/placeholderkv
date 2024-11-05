@@ -393,7 +393,7 @@ ifeq ($(BUILD_FAST_FLOAT),yes)
   		FINAL_LIBS+= -lc++
 	else
 		# We also need to account for both 32-bit and 64 bit locations of this library. 
-		FINAL_LIBS+= -L/usr/lib/gcc/i686-linux-gnu/11/ -lstdc++
+		FINAL_LIBS+= -lstdc++
 	endif
 endif
 
@@ -606,9 +606,9 @@ bench: $(ENGINE_BENCHMARK_NAME)
 
 32bit:
 	@echo ""
-	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
+	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386 and libstdc++-11-dev-i386-cross"
 	@echo ""
-	$(MAKE) all-with-unit-tests CFLAGS="-m32" LDFLAGS="-m32"
+	$(MAKE) all-with-unit-tests CFLAGS="-m32" LDFLAGS="-m32 -L/usr/lib/gcc-cross/i686-linux-gnu/11/"
 
 gcov:
 	$(MAKE) SERVER_CFLAGS="-fprofile-arcs -ftest-coverage -DCOVERAGE_TEST" SERVER_LDFLAGS="-fprofile-arcs -ftest-coverage"
