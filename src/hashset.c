@@ -7,20 +7,19 @@
 /* Hashset
  * =======
  *
- * This is an implementation of an open addressing hash table with cache-line
- * sized buckets. It's designed for speed and low memory overhead. It provides
- * lookups using a single memory access in most cases and it provides the
- * following features:
+ * This is an implementation of a hash table with cache-line sized buckets. It's
+ * designed for speed and low memory overhead. It provides the following
+ * features:
  *
  * - Incremental rehashing using two tables.
  *
  * - Stateless iteration using 'scan'.
  *
  * - A hash table contains pointer-sized elements rather than key-value entries.
- *   Using it as a set is straight-forward. Using it as a key-value store requires
- *   combining key and value in an object and inserting this object into the
- *   hash table. A callback for fetching the key from within the element is
- *   provided by the caller when creating the hash table.
+ *   Using it as a set is straight-forward. Using it as a key-value store
+ *   requires combining key and value in an object and inserting this object
+ *   into the hash table. A callback for fetching the key from within the object
+ *   is provided by the caller when creating the hash table.
  *
  * - The element type, key type, hash function and other properties are
  *   configurable as callbacks in a 'type' structure provided when creating a
@@ -35,19 +34,14 @@
  * Credits
  * -------
  *
- * - The design of the cache-line aware open addressing scheme is inspired by
- *   tricks used in 'Swiss tables' (Sam Benzaquen, Alkis Evlogimenos, Matt
- *   Kulukundis, and Roman Perepelitsa et. al.).
- *
- * - The incremental rehashing using two tables, though for a chaining hash
- *   table, was designed by Salvatore Sanfilippo.
- *
- * - The original scan algorithm (for a chained hash table) was designed by
- *   Pieter Noordhuis.
- *
- * - The incremental rehashing and the scan algorithm were adapted for the open
- *   addressing scheme, including the use of linear probing by scan cursor
- *   increment, by Viktor Söderqvist. */
+ * - The hashset was designed by Viktor Söderqvist.
+ * - The bucket chaining is based on an idea by Madelyn Olson.
+ * - The cache-line sized bucket is inspired by ideas used in 'Swiss tables'
+ *   (Benzaquen, Evlogimenos, Kulukundis, and Perepelitsa et. al.).
+ * - The incremental rehashing using two tables and much of the API is based on
+ *   the design used in dict, designed by Salvatore Sanfilippo.
+ * - The original scan algorithm was designed by Pieter Noordhuis.
+ */
 #include "hashset.h"
 #include "serverassert.h"
 #include "zmalloc.h"
@@ -79,15 +73,13 @@ static hashsetResizePolicy resize_policy = HASHSET_RESIZE_ALLOW;
  * running. Then, we don't want to move too much memory around, since the fork
  * is using copy-on-write.
  *
- * With open addressing, the physical fill factor limit is 100% (probes the
- * whole table) so we may need to expand even if when it's preferred to avoid
- * it. Even if we resize and start inserting new elements in the new table, we
+ * Even if we resize and start inserting new elements in the new table, we
  * can avoid actively moving elements from the old table to the new table. When
  * the resize policy is AVOID, we perform a step of incremental rehashing only
  * on insertions and not on lookups. */
 
-#define MAX_FILL_PERCENT_SOFT 77
-#define MAX_FILL_PERCENT_HARD 90
+#define MAX_FILL_PERCENT_SOFT 100
+#define MAX_FILL_PERCENT_HARD 500
 
 #define MIN_FILL_PERCENT_SOFT 13
 #define MIN_FILL_PERCENT_HARD 3
@@ -127,19 +119,15 @@ uint64_t hashsetGenCaseHashFunction(const char *buf, size_t len) {
  * Incremental rehashing works in the following way: A new table is allocated
  * and elements are incrementally moved from the old to the new table.
  *
- * To avoid affecting copy-on-write , we avoids rehashing when there is a forked
+ * To avoid affecting copy-on-write, we avoid rehashing when there is a forked
  * child process.
  *
- * With an open addressing scheme, we can't completely forbid resizing the table
- * if we want to be able to insert elements. It's impossible to insert more
- * elements than the number of slots, so we need to allow resizing even if the
- * resize policy is set to HASHSET_RESIZE_AVOID, but we resize with incremental
- * rehashing paused, so new elements are added to the new table and the old
- * elements are rehashed only when the child process is done.
- *
- * This also means that we may need to resize even if rehashing is already
- * started and paused. In the worst case, we need to resize multiple times while
- * a child process is running. We fast-forward the rehashing in this case. */
+ * We don't completely forbid resizing the table but the fill factor is
+ * significantly larger when the resize policy is set to HASHSET_RESIZE_AVOID
+ * and we resize with incremental rehashing paused, so new elements are added to
+ * the new table and the old elements are rehashed only when the child process
+ * is done.
+ */
 void hashsetSetResizePolicy(hashsetResizePolicy policy) {
     resize_policy = policy;
 }
@@ -176,9 +164,9 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
  *                 = BUCKET_DIVISOR / BUCKET_FACTOR / ELEMENTS_PER_BUCKET
  */
 
-#define BUCKET_FACTOR 3
-#define BUCKET_DIVISOR 16
-/* When resizing, we get a fill of at most 76.19% (16 / 3 / 7). */
+#define BUCKET_FACTOR 5
+#define BUCKET_DIVISOR 32
+/* When resizing, we get a fill of at most 91.43% (32 / 5 / 7). */
 
 #define randomSizeT() ((size_t)genrand64_int64())
 
@@ -187,9 +175,9 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 #define ELEMENTS_PER_BUCKET 12
 #define BUCKET_BITS_TYPE uint16_t
 #define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 4
-#define BUCKET_FACTOR 7
-#define BUCKET_DIVISOR 64
-/* When resizing, we get a fill of at most 76.19% (64 / 7 / 12). */
+#define BUCKET_FACTOR 3
+#define BUCKET_DIVISOR 32
+/* When resizing, we get a fill of at most 88.89% (32 / 3 / 12). */
 
 #define randomSizeT() ((size_t)random())
 
@@ -204,7 +192,6 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 static_assert(100 * BUCKET_DIVISOR / BUCKET_FACTOR / ELEMENTS_PER_BUCKET <= MAX_FILL_PERCENT_SOFT,
               "Expand must result in a fill below the soft max fill factor");
 static_assert(MAX_FILL_PERCENT_SOFT <= MAX_FILL_PERCENT_HARD, "Soft vs hard fill factor");
-static_assert(MAX_FILL_PERCENT_HARD < 100, "Hard fill factor must be below 100%");
 
 /* --- Random element --- */
 
@@ -213,39 +200,84 @@ static_assert(MAX_FILL_PERCENT_HARD < 100, "Hard fill factor must be below 100%"
 
 /* --- Types --- */
 
-/* Open addressing scheme
- * ----------------------
+/* Design
+ * ------
  *
- * We use an open addressing scheme, with buckets of 64 bytes (one cache line).
- * Each bucket contains metadata and element slots for a fixed number of
- * elements. In a 64-bit system, there are up to 7 elements per bucket. These
- * are unordered and an element can be inserted in any of the free slots.
- * Additionally, the bucket contains metadata for the elements. This includes a
- * few bits of the hash of the key of each element, which are used to rule out
- * false negatives when looking up elements.
+ * We use a design with buckets of 64 bytes (one cache line). Each bucket
+ * contains metadata and element slots for a fixed number of elements. In a
+ * 64-bit system, there are up to 7 elements per bucket. These are unordered and
+ * an element can be inserted in any of the free slots. Additionally, the bucket
+ * contains metadata for the elements. This includes a few bits of the hash of
+ * the key of each element, which are used to rule out false positives when
+ * looking up elements.
  *
- * The bucket metadata contains a bit that is set if the bucket has ever been
- * full. This bit acts as a tombstone for the bucket and it's what we need to
- * know if probing the next bucket is necessary.
+ * Bucket chaining
+ * ---------------
  *
- * Bucket layout, 64-bit version, 7 elements per bucket:
+ * Each key hashes to a bucket in the hash table. A bucket has space for 7
+ * unordered elements (on 64-bit platforms). If a bucket is full, the last
+ * element is replaced by a pointer to a separately allocated child bucket.
+ * Child buckets form a bucket chain.
+ *
+ *           Bucket          Bucket          Bucket
+ *     -----+---------------+---------------+---------------+-----
+ *      ... | x x x x x x p | x x x x x x x | x x x x x x x | ...
+ *     -----+-------------|-+---------------+---------------+-----
+ *                        |
+ *                        v  Child bucket
+ *                      +---------------+
+ *                      | x x x x x x p |
+ *                      +-------------|-+
+ *                                    |
+ *                                    v  Child bucket
+ *                                  +---------------+
+ *                                  | x x x x x x x |
+ *                                  +---------------+
+ *
+ * Within each bucket chain, the elements are unordered. To avoid false
+ * positives when looking up an element, a few bits of the hash value is stored
+ * in a bucket metadata section in each bucket. The bucket metadata contains a
+ * bit that is set when the bucket is full and more elements need to be stored
+ * in another bucket. When this bit is set, the last element of the bucket is
+ * replaced by pointer to another, separately allocated, child bucket.
+ *
+ *         +-------------------------------------------------------+
+ *         | Meta | Ele- | Ele- | Ele- | Ele- | Ele- | Ele- | Ele- | Bucket
+ *         | data | ment | ment | ment | ment | ment | ment | ment | 64 bytes
+ *         +-------------------------------------------------------+
+ *        /        ` - - . _ _
+ *       /                     ` - - . _ _
+ *      /                                  ` - - . _
+ *     +----------------------------------------------+
+ *     | c ppppppp hash hash hash hash hash hash hash |
+ *     +----------------------------------------------+
+ *      |    |       |
+ *      |    |      One byte of hash for each element position in the bucket.
+ *      |    |
+ *      |   Presence bits. One bit for each element position.
+ *      |
+ *     Chained? One bit. If set, the last element is a child bucket pointer.
+ *
+ * Bucket layout, 64-bit version, 7 elements per bucket
+ * ----------------------------------------------------
  *
  *     1 bit     7 bits    [1 byte] x 7  [8 bytes] x 7 = 64 bytes
- *     everfull  presence  hashes        elements
+ *     chained   presence  hashes        elements
  *
- *     everfull: a shared tombstone; set if the bucket has ever been full
+ *     chained: when set, the last element a pointer to a child bucket
  *     presence: an bit per element slot indicating if an element present or not
  *     hashes: some bits of hash of each element to rule out false positives
  *     elements: the actual elements, typically pointers (pointer-sized)
  *
- * The 32-bit version has 12 elements and 19 unused bits per bucket:
+ * The 32-bit version has 12 elements and 19 unused bits per bucket
+ * ----------------------------------------------------------------
  *
  *     1 bit     12 bits   3 bits  [1 byte] x 12  2 bytes  [4 bytes] x 12
- *     everfull  presence  unused  hashes         unused   elements
+ *     chained   presence  unused  hashes         unused   elements
  */
 
-typedef struct {
-    BUCKET_BITS_TYPE everfull : 1;
+typedef struct hashsetBucket {
+    BUCKET_BITS_TYPE chained : 1;
     BUCKET_BITS_TYPE presence : ELEMENTS_PER_BUCKET;
     uint8_t hashes[ELEMENTS_PER_BUCKET];
     void *elements[ELEMENTS_PER_BUCKET];
@@ -262,20 +294,20 @@ struct hashset {
     int8_t bucket_exp[2];      /* Exponent for num buckets (num = 1 << exp). */
     int16_t pause_rehash;      /* Non-zero = rehashing is paused */
     int16_t pause_auto_shrink; /* Non-zero = automatic resizing disallowed. */
-    size_t everfulls[2];       /* Number of buckets with the everfull flag set. */
+    size_t child_buckets[2];   /* Number of allocated child buckets. */
     void *metadata[];
 };
 
 /* Struct used for stats functions. */
 struct hashsetStats {
-    int table_index;             /* 0 or 1 (old or new while rehashing). */
-    unsigned long buckets;       /* Number of buckets. */
-    unsigned long max_chain_len; /* Length of longest probing chain. */
-    unsigned long probe_count;   /* Number of buckets with probing flag. */
-    unsigned long size;          /* Number of element slots (incl. empty). */
-    unsigned long used;          /* Number of elements. */
-    unsigned long *clvector;     /* (Probing-)chain length vector; element i
-                                  * counts probing chains of length i. */
+    int table_index;                /* 0 or 1 (old or new while rehashing). */
+    unsigned long toplevel_buckets; /* Number of buckets in table. */
+    unsigned long child_buckets;  /* Number of child buckets. */
+    unsigned long size;             /* Capacity of toplevel buckets. */
+    unsigned long used;             /* Number of elements in the table. */
+    unsigned long max_chain_len;    /* Length of longest bucket chain. */
+    unsigned long *clvector;        /* Chain length vector; element i counts
+                                     * bucket chains of length i. */
 };
 
 /* Struct for sampling elements using scan, used by random key functions. */
@@ -330,7 +362,8 @@ static inline uint8_t highBits(uint64_t hash) {
 }
 
 static inline int bucketIsFull(bucket *b) {
-    return b->presence == (1 << ELEMENTS_PER_BUCKET) - 1;
+    int num_positions = ELEMENTS_PER_BUCKET - (b->chained ? 1 : 0);
+    return b->presence == (1 << num_positions) - 1;
 }
 
 /* Returns non-zero if the position within the bucket is occupied. */
@@ -341,9 +374,10 @@ static void resetTable(hashset *s, int table_idx) {
     s->tables[table_idx] = NULL;
     s->used[table_idx] = 0;
     s->bucket_exp[table_idx] = -1;
-    s->everfulls[table_idx] = 0;
+    s->child_buckets[table_idx] = 0;
 }
 
+/* Number of top-level buckets. */
 static inline size_t numBuckets(int exp) {
     return exp == -1 ? 0 : (size_t)1 << exp;
 }
@@ -371,7 +405,7 @@ static void rehashingCompleted(hashset *s) {
     s->bucket_exp[0] = s->bucket_exp[1];
     s->tables[0] = s->tables[1];
     s->used[0] = s->used[1];
-    s->everfulls[0] = s->everfulls[1];
+    s->child_buckets[0] = s->child_buckets[1];
     resetTable(s, 1);
     s->rehash_idx = -1;
 }
@@ -410,47 +444,36 @@ size_t nextCursor(size_t v, size_t mask) {
     return v;
 }
 
-/* The reverse of nextCursor. */
-static size_t prevCursor(size_t v, size_t mask) {
-    v = rev(v);
-    v--;
-    v = rev(v);
-    v = v & mask;
-    return v;
+/* Returns the next bucket in a bucket chain, or NULL if there's no next. */
+static bucket *bucketNext(bucket *b) {
+    return b->chained ? b->elements[ELEMENTS_PER_BUCKET - 1] : NULL;
 }
 
-/* Returns 1 if cursor A is less then cursor B, compared in cursor next/prev
- * order, 0 otherwise. This function can be used to compare bucket indexes in
- * probing order (since probing order is cursor order) and to check if a bucket
- * has already been rehashed, since incremental rehashing is also performed in
- * cursor order. */
-static inline int cursorIsLessThan(size_t a, size_t b) {
-    /* Since cursors are advanced in reversed-bits order, we can just reverse
-     * both numbers to compare them. If a cursor with more bits than the other,
-     * it is not significant, since the more significatnt bits become less
-     * significant when reversing. */
-    return rev(a) < rev(b);
+/* Attempts to defrag bucket 'b' using the defrag callback function. If the
+ * defrag callback function returns a pointer to a new allocation, this pointer
+ * is returned and the 'prev' bucket is updated to point to the new allocation.
+ * Otherwise, the 'b' pointer is returned. */
+static bucket *bucketDefrag(bucket *prev, bucket *b, void *(*defragfn)(void *)) {
+    bucket *reallocated = defragfn(b);
+    if (reallocated == NULL) return b;
+    prev->elements[ELEMENTS_PER_BUCKET - 1] = reallocated;
+    return reallocated;
 }
 
 /* Rehashes one bucket. */
-static void rehashStep(hashset *s) {
-    assert(hashsetIsRehashing(s));
-    size_t idx = s->rehash_idx;
-    bucket *b = &s->tables[0][idx];
+static void rehashBucket(hashset *s, bucket *b) {
+    int num_positions = ELEMENTS_PER_BUCKET - (b->chained ? 1 : 0);
     int pos;
-    for (pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+    for (pos = 0; pos < num_positions; pos++) {
         if (!isPositionFilled(b, pos)) continue; /* empty */
         void *element = b->elements[pos];
         uint8_t h2 = b->hashes[pos];
         /* Insert into table 1. */
         uint64_t hash;
         /* When shrinking, it's possible to avoid computing the hash. We can
-         * just use idx has the hash, but only if we know that probing didn't
-         * push this element away from its primary bucket, so only if the
-         * bucket before the current one hasn't ever been full. */
-        if (s->bucket_exp[1] <= s->bucket_exp[0] &&
-            !s->tables[0][prevCursor(idx, expToMask(s->bucket_exp[0]))].everfull) {
-            hash = idx;
+         * just use idx has the hash. */
+        if (s->bucket_exp[1] < s->bucket_exp[0]) {
+            hash = s->rehash_idx;
         } else {
             hash = hashElement(s, element);
         }
@@ -459,19 +482,39 @@ static void rehashStep(hashset *s) {
         dst->elements[pos_in_dst_bucket] = element;
         dst->hashes[pos_in_dst_bucket] = h2;
         dst->presence |= (1 << pos_in_dst_bucket);
-        if (!dst->everfull && bucketIsFull(dst)) {
-            dst->everfull = 1;
-            s->everfulls[1]++;
-        }
         s->used[0]--;
         s->used[1]++;
     }
     /* Mark the source bucket as empty. */
     b->presence = 0;
-    /* Bucket done. Advance to the next bucket in probing order. We rehash in
-     * this order to be able to skip already rehashed buckets in scan. */
-    s->rehash_idx = nextCursor(s->rehash_idx, expToMask(s->bucket_exp[0]));
-    if (s->rehash_idx == 0) {
+}
+
+static void rehashStep(hashset *s) {
+    assert(hashsetIsRehashing(s));
+    size_t idx = s->rehash_idx;
+    bucket *b = &s->tables[0][idx];
+    rehashBucket(s, b);
+    if (b->chained) {
+        /* Rehash and free child buckets. */
+        bucket *next = bucketNext(b);
+        b->chained = 0;
+        b = next;
+        while (b != NULL) {
+            rehashBucket(s, b);
+            next = bucketNext(b);
+            zfree(b);
+            s->child_buckets[0]--;
+            b = next;
+        }
+    }
+
+    /* Advance to the next bucket. */
+    s->rehash_idx++;
+    if ((size_t)s->rehash_idx >= numBuckets(s->bucket_exp[0])) {
+        if ((size_t)s->rehash_idx > numBuckets(s->bucket_exp[0])) {
+            printf("rehash_idx > numBuckets! %zd > %zu\n",
+                   s->rehash_idx, numBuckets(s->bucket_exp[0]));
+        }
         rehashingCompleted(s);
     }
 }
@@ -515,14 +558,11 @@ static int resize(hashset *s, size_t min_capacity, int *malloc_failed) {
     signed char old_exp = s->bucket_exp[hashsetIsRehashing(s) ? 1 : 0];
     size_t alloc_size = num_buckets * sizeof(bucket);
     if (exp == old_exp) {
-        /* The only time we want to allow resize to the same size is when we
-         * have too many tombstones and need to rehash to improve probing
-         * performance. */
-        if (hashsetIsRehashing(s)) return 0;
-        size_t old_num_buckets = numBuckets(s->bucket_exp[0]);
-        if (s->everfulls[0] < old_num_buckets / 2) return 0;
-        if (s->everfulls[0] != old_num_buckets && s->everfulls[0] < 10) return 0;
-    } else if (s->type->resizeAllowed) {
+        /* Can't resize to same size. */
+        return 0;
+    }
+
+    if (s->type->resizeAllowed) {
         double fill_factor = (double)min_capacity / ((double)numBuckets(old_exp) * ELEMENTS_PER_BUCKET);
         if (fill_factor * 100 < MAX_FILL_PERCENT_HARD && !s->type->resizeAllowed(alloc_size, fill_factor)) {
             /* Resize callback says no. */
@@ -531,9 +571,14 @@ static int resize(hashset *s, size_t min_capacity, int *malloc_failed) {
     }
 
     /* We can't resize if rehashing is already ongoing. Fast-forward ongoing
-     * rehashing before we continue. */
-    while (hashsetIsRehashing(s)) {
-        rehashStep(s);
+     * rehashing before we continue. This can happen only in exceptional
+     * scenarios, such as when many insertions are made while rehashing is
+     * paused. */
+    if (hashsetIsRehashing(s)) {
+        if (hashsetIsRehashingPaused(s)) return 0;
+        while (hashsetIsRehashing(s)) {
+            rehashStep(s);
+        }
     }
 
     /* Allocate the new hash table. */
@@ -564,18 +609,6 @@ static int resize(hashset *s, size_t min_capacity, int *malloc_failed) {
     return 1;
 }
 
-/* Probing is slow when there are too long probing chains, i.e. too many
- * tombstones. Resize to the same size to trigger rehashing. */
-static int cleanUpProbingChainsIfNeeded(hashset *s) {
-    if (hashsetIsRehashing(s) || resize_policy == HASHSET_RESIZE_FORBID) {
-        return 0;
-    }
-    if (s->everfulls[0] * 100 >= numBuckets(s->bucket_exp[0]) * MAX_FILL_PERCENT_SOFT) {
-        return resize(s, s->used[0], NULL);
-    }
-    return 0;
-}
-
 /* Returns 1 if the table is expanded, 0 if not expanded. If 0 is returned and
  * 'malloc_failed' is proveded, it is set to 1 if malloc failed and 0
  * otherwise. */
@@ -600,18 +633,19 @@ static bucket *findBucket(hashset *s, uint64_t hash, const void *key, int *pos_i
     /* Do some incremental rehashing. */
     rehashStepOnReadIfNeeded(s);
 
-    /* Check rehashing destination table first, since it is newer and typically
-     * has less 'everfull' flagged buckets. Therefore it needs less probing for
-     * lookup. */
-    for (table = 1; table >= 0; table--) {
+    for (table = 0; table <= 1; table++) {
         if (s->used[table] == 0) continue;
         size_t mask = expToMask(s->bucket_exp[table]);
         size_t bucket_idx = hash & mask;
-        size_t start_bucket_idx = bucket_idx;
-        while (1) {
-            bucket *b = &s->tables[table][bucket_idx];
+        /* Skip already rehashed buckets. */
+        if (table == 0 && s->rehash_idx >= 0 && bucket_idx < (size_t)s->rehash_idx) {
+            continue;
+        }
+        bucket *b = &s->tables[table][bucket_idx];
+        do {
             /* Find candidate elements with presence flag set and matching h2 hash. */
-            for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+            int num_positions = ELEMENTS_PER_BUCKET - (b->chained ? 1 : 0);
+            for (int pos = 0; pos < num_positions; pos++) {
                 if (isPositionFilled(b, pos) && b->hashes[pos] == h2) {
                     /* It's a candidate. */
                     void *element = b->elements[pos];
@@ -625,19 +659,127 @@ static bucket *findBucket(hashset *s, uint64_t hash, const void *key, int *pos_i
                     }
                 }
             }
-
-            /* Probe the next bucket? */
-            if (!b->everfull) break;
-            bucket_idx = nextCursor(bucket_idx, mask);
-            if (bucket_idx == start_bucket_idx) {
-                /* We probed the whole table. It can happen that all buckets
-                 * have the 'everfull' bit set. This can only happen for small
-                 * tables and then rehashing is already in progress. */
-                break;
-            }
-        }
+            b = bucketNext(b);
+        } while (b != NULL);
     }
     return NULL;
+}
+
+/* Move an element from one bucket to another. */
+static void moveElement(bucket *bucket_to, int pos_to, bucket *bucket_from, int pos_from) {
+    assert(!isPositionFilled(bucket_to, pos_to));
+    assert(isPositionFilled(bucket_from, pos_from));
+    bucket_to->elements[pos_to] = bucket_from->elements[pos_from];
+    bucket_to->hashes[pos_to] = bucket_from->hashes[pos_from];
+    bucket_to->presence |= (1 << pos_to);
+    bucket_from->presence &= ~(1 << pos_from);
+}
+
+/* Converts a full bucket b to a chained bucket and adds a new child bucket. The
+ * new child bucket is returned. */
+static void bucketConvertToChained(bucket *b) {
+    assert(!b->chained);
+    /* We'll move the last element from the bucket to the new child bucket. */
+    int pos = ELEMENTS_PER_BUCKET - 1;
+    assert(isPositionFilled(b, pos));
+    bucket *child = zcalloc(sizeof(bucket));
+    moveElement(child, 0, b, pos);
+    b->chained = 1;
+    b->elements[pos] = child;
+}
+
+/* Converts a bucket with a next-bucket pointer to one without one. */
+static void bucketConvertToUnchained(bucket *b) {
+    assert(b->chained);
+    b->chained = 0;
+    assert(!isPositionFilled(b, ELEMENTS_PER_BUCKET - 1));
+}
+
+/* If the last bucket is empty, free it. The before-last bucket is converted
+ * back to an "unchained" bucket, becoming the new last bucket in the chain. If
+ * there's only one element left in the last bucket, it's moved to the
+ * before-last bucket's last position, to take the place of the next-bucket
+ * link.
+ *
+ * This function needs the penultimate 'before_last' bucket in the chain, to be
+ * able to update it when the last bucket is freed. */
+static void pruneLastBucket(hashset *s, bucket *before_last, bucket *last, int table_index) {
+    assert(before_last->chained);
+    assert(!last->chained);
+    assert(last->presence == 0 || __builtin_popcount(last->presence) == 1);
+    bucketConvertToUnchained(before_last);
+    if (last->presence != 0) {
+        /* Move the last remaining element to the new last position in the
+         * before-last bucket. */
+        int pos_in_last = __builtin_ctz(last->presence);
+        moveElement(before_last, ELEMENTS_PER_BUCKET - 1, last, pos_in_last);
+    }
+    zfree(last);
+    s->child_buckets[table_index]--;
+}
+
+/* After removing an element in a bucket with children, we can fill the hole
+ * with an element from the end of the bucket chain and potentially free the
+ * last bucket in the chain. */
+static void fillBucketHole(hashset *s, bucket *b, int pos_in_bucket, int table_index) {
+    assert(b->chained && !isPositionFilled(b, pos_in_bucket));
+    /* Find the last bucket */
+    bucket *before_last = b;
+    bucket *last = bucketNext(b);
+    while (last->chained) {
+        before_last = last;
+        last = bucketNext(last);
+    }
+    /* Unless the last bucket is empty, find an element in the last bucket and
+     * move it to the hole in b. */
+    if (last->presence != 0) {
+        int pos_in_last = __builtin_ctz(last->presence);
+        assert(pos_in_last < ELEMENTS_PER_BUCKET && isPositionFilled(last, pos_in_last));
+        moveElement(b, pos_in_bucket, last, pos_in_last);
+    }
+    /* Free the last bucket if it becomes empty. */
+    if (last->presence == 0 || __builtin_popcount(last->presence) == 1) {
+        pruneLastBucket(s, before_last, last, table_index);
+    }
+}
+
+/* When elements are deleted while rehashing is paused, they leave empty holes
+ * in the buckets. This functions attempts to fill the holes by moving elements
+ * from the end of the bucket chain to fill the holes and free any empty
+ * buckets in the end of the chain. */
+static void compactBucketChain(hashset *s, size_t bucket_index, int table_index) {
+    bucket *b = &s->tables[table_index][bucket_index];
+    while (b->chained) {
+        bucket *next = bucketNext(b);
+        if (next->chained && next->presence == 0) {
+            /* Empty bucket in the middle of the chain. Remove it from the chain. */
+            bucket *next_next = bucketNext(next);
+            b->elements[ELEMENTS_PER_BUCKET - 1] = next_next;
+            zfree(next);
+            s->child_buckets[table_index]--;
+            continue;
+        }
+
+        if (!next->chained && (next->presence == 0 || __builtin_popcount(next->presence) == 1)) {
+            /* Next is the last bucket and it's empty or has only one element.
+             * Delete it and turn b into an "unchained" bucket. */
+            pruneLastBucket(s, b, next, table_index);
+            return;
+        }
+
+        if (__builtin_popcount(b->presence) == ELEMENTS_PER_BUCKET - 1) {
+            /* Fill the holes in the bucket. */
+            for (int pos = 0; pos < ELEMENTS_PER_BUCKET - 1; pos++) {
+                if (!isPositionFilled(b, pos)) {
+                    fillBucketHole(s, b, pos, table_index);
+                    if (!b->chained) return;
+                }
+            }
+        }
+
+        /* Bucket is full. Move forward to next bucket. */
+        b = next;
+    }
 }
 
 /* Find an empty position in the table for inserting an element with the given hash. */
@@ -646,19 +788,25 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
     assert(s->tables[table]);
     size_t mask = expToMask(s->bucket_exp[table]);
     size_t bucket_idx = hash & mask;
-    size_t start_bucket_idx = bucket_idx;
-    while (1) {
-        bucket *b = &s->tables[table][bucket_idx];
-        for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-            if (isPositionFilled(b, pos)) continue; /* busy */
-            assert(pos_in_bucket != NULL);
-            *pos_in_bucket = pos;
-            if (table_index) *table_index = table;
-            return b;
+    bucket *b = &s->tables[table][bucket_idx];
+    /* Find bucket that's not full, or create one. */
+    while (bucketIsFull(b)) {
+        if (!b->chained) {
+            bucketConvertToChained(b);
+            s->child_buckets[table]++;
         }
-        bucket_idx = nextCursor(bucket_idx, mask);
-        assert(bucket_idx != start_bucket_idx); /* Detect infinite loop. */
+        b = bucketNext(b);
     }
+    /* Find a free slot in the bucket. There must be at least one. */
+    int pos;
+    for (pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+        if (!isPositionFilled(b, pos)) break;
+    }
+    assert(pos < ELEMENTS_PER_BUCKET);
+    assert(pos_in_bucket != NULL);
+    *pos_in_bucket = pos;
+    if (table_index) *table_index = table;
+    return b;
 }
 
 /* Helper to insert an element. Doesn't check if an element with a matching key
@@ -673,11 +821,6 @@ static void insert(hashset *s, uint64_t hash, void *element) {
     b->presence |= (1 << pos_in_bucket);
     b->hashes[pos_in_bucket] = highBits(hash);
     s->used[table_index]++;
-    if (!b->everfull && bucketIsFull(b)) {
-        b->everfull = 1;
-        s->everfulls[table_index]++;
-        cleanUpProbingChainsIfNeeded(s);
-    }
 }
 
 /* A 63-bit fingerprint of some of the state of the hash table. */
@@ -747,19 +890,27 @@ void hashsetEmpty(hashset *s, void(callback)(hashset *)) {
         if (s->bucket_exp[table_index] < 0) {
             continue;
         }
-        if (s->type->elementDestructor) {
-            /* Call the destructor with each element. */
+        if (s->used[table_index] > 0) {
             for (size_t idx = 0; idx < numBuckets(s->bucket_exp[table_index]); idx++) {
                 if (callback && (idx & 65535) == 0) callback(s);
                 bucket *b = &s->tables[table_index][idx];
-                if (b->presence == 0) {
-                    continue;
-                }
-                for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-                    if (isPositionFilled(b, pos)) {
-                        s->type->elementDestructor(s, b->elements[pos]);
+                do {
+                    /* Call the destructor with each element. */
+                    if (s->type->elementDestructor != NULL && b->presence != 0) {
+                        for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+                            if (isPositionFilled(b, pos)) {
+                                s->type->elementDestructor(s, b->elements[pos]);
+                            }
+                        }
                     }
-                }
+                    bucket *next = bucketNext(b);
+
+                    /* Free allocated bucket. */
+                    if (b != &s->tables[table_index][idx]) {
+                        zfree(b);
+                    }
+                    b = next;
+                } while (b != NULL);
             }
         }
         zfree(s->tables[table_index]);
@@ -788,20 +939,22 @@ size_t hashsetSize(hashset *s) {
     return s->used[0] + s->used[1];
 }
 
-/* Returns the number of hash table buckets. */
+/* Returns the number of buckets in the hash table itself. */
 size_t hashsetBuckets(hashset *s) {
     return numBuckets(s->bucket_exp[0]) + numBuckets(s->bucket_exp[1]);
 }
 
-/* Returns the number of buckets that have the probe flag (tombstone) set. */
-size_t hashsetProbeCounter(hashset *s, int table) {
-    return s->everfulls[table];
+/* Returns the number of buckets that have a child bucket. Equivalently, the
+ * number of allocated buckets, outside of the hash table itself. */
+size_t hashsetChainedBuckets(hashset *s, int table) {
+    return s->child_buckets[table];
 }
 
 /* Returns the size of the hashset structures, in bytes (not including the sizes
  * of the elements, if the elements are pointers to allocated objects). */
 size_t hashsetMemUsage(hashset *s) {
     size_t num_buckets = numBuckets(s->bucket_exp[0]) + numBuckets(s->bucket_exp[1]);
+    num_buckets = s->child_buckets[0] + s->child_buckets[1];
     size_t metasize = s->type->getMetadataSize ? s->type->getMetadataSize() : 0;
     return sizeof(hashset) + metasize + sizeof(bucket) * num_buckets;
 }
@@ -823,7 +976,9 @@ void hashsetResumeAutoShrink(hashset *s) {
     }
 }
 
-/* Pauses incremental rehashing. */
+/* Pauses incremental rehashing. When rehashing is paused, bucket chains are not
+ * automatically compacted when elements are deleted. Doing so may leave empty
+ * spaces, "holes", in the bucket chains, which wastes memory. */
 void hashsetPauseRehashing(hashset *s) {
     s->pause_rehash++;
 }
@@ -1028,11 +1183,6 @@ int hashsetFindPositionForInsert(hashset *s, void *key, hashsetPosition *positio
          * when hashsetInsertAtPosition() is called. */
         b->hashes[pos_in_bucket] = highBits(hash);
 
-        /* Compute bucket index from bucket pointer. */
-        void *b0 = &s->tables[table_index][0];
-        size_t bucket_index = ((uintptr_t)b - (uintptr_t)b0) / sizeof(bucket);
-        assert(&s->tables[table_index][bucket_index] == b);
-
         /* Populate position struct. */
         assert(position != NULL);
         position->bucket = b;
@@ -1056,11 +1206,6 @@ void hashsetInsertAtPosition(hashset *s, void *element, hashsetPosition *positio
     b->elements[pos_in_bucket] = element;
     s->used[table_index]++;
     /* Hash bits are already set by hashsetFindPositionForInsert. */
-    if (!b->everfull && bucketIsFull(b)) {
-        b->everfull = 1;
-        s->everfulls[table_index]++;
-        cleanUpProbingChainsIfNeeded(s);
-    }
 }
 
 /* Add or overwrite. Returns 1 if an new element was inserted, 0 if an existing
@@ -1093,6 +1238,12 @@ int hashsetPop(hashset *s, const void *key, void **popped) {
         if (popped) *popped = b->elements[pos_in_bucket];
         b->presence &= ~(1 << pos_in_bucket);
         s->used[table_index]--;
+        if (b->chained && !hashsetIsRehashingPaused(s)) {
+            /* Rehashing is paused while iterating and when a scan callback is
+             * running. In those cases, we do the compaction in the scan and
+             * interator code instead. */
+            fillBucketHole(s, b, pos_in_bucket, table_index);
+        }
         hashsetShrinkIfNeeded(s);
         return 1;
     } else {
@@ -1183,6 +1334,13 @@ void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
     s->used[table_index]--;
     hashsetShrinkIfNeeded(s);
     hashsetResumeRehashing(s);
+    if (b->chained && !hashsetIsRehashingPaused(s)) {
+        /* Rehashing paused also means bucket chain compaction paused. It is
+         * paused while iterating and when a scan callback is running, to be
+         * able to live up to the scan and iterator guarantes. In those cases,
+         * we do the compaction in the scan and interator code instead. */
+        fillBucketHole(s, b, pos_in_bucket, table_index);
+    }
 }
 
 /* --- Scan --- */
@@ -1208,12 +1366,27 @@ void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
  * - An element that is inserted or deleted during a full scan may or may not be
  *   returned during the scan.
  *
- * The hash table uses a variant of linear probing with a cursor increment
- * rather than a regular increment of the index when probing. The scan algorithm
- * needs to continue scanning as long as a bucket in either of the tables has
- * ever been full. This means that we may wrap around cursor zero and still
- * continue until we find a bucket where we can stop, so some elements can be
- * returned twice (in the first and the last scan calls) due to this.
+ * Scan callback rules:
+ *
+ * - The scan callback may delete the element that was passed to it.
+ *
+ * - It may not delete other elements, because that may lead to internal
+ *   fragmentation in the form of "holes" in the bucket chains.
+ *
+ * - The scan callback may insert or replace any element.
+ */
+size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata) {
+    return hashsetScanDefrag(s, cursor, fn, privdata, NULL, 0);
+}
+
+/* Like hashsetScan, but additionally reallocates the memory used by the dict
+ * entries using the provided allocation function. This feature was added for
+ * the active defrag feature.
+ *
+ * The 'defragfn' callback is called with a pointer to memory that callback can
+ * reallocate. The callbacks should return a new memory address or NULL, where
+ * NULL means that no reallocation happened and the old memory is still
+ * valid. The 'defragfn' can be NULL if you don't need defrag reallocation.
  *
  * The 'flags' argument can be used to tweak the behaviour. It's a bitwise-or
  * (zero means no flags) of the following:
@@ -1223,13 +1396,9 @@ void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
  *   for advanced things like reallocating the memory of an element (for the
  *   purpose of defragmentation) and updating the pointer to the element inside
  *   the hash table.
- *
- * - HASHSET_SCAN_SINGLE_STEP: This flag can be used for selecting fewer
- *   elements when the scan guarantees don't need to be enforced. With this
- *   flag, we don't continue scanning complete probing chains, so if rehashing
- *   happens between calls, elements can be missed. The scan cursor is advanced
- *   only a single step. */
-size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata, int flags) {
+ */
+size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata,
+                         void *(*defragfn)(void *), int flags) {
     if (hashsetSize(s) == 0) return 0;
 
     /* Prevent elements from being moved around during the scan call, as a
@@ -1238,76 +1407,50 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
 
     /* Flags. */
     int emit_ref = (flags & HASHSET_SCAN_EMIT_REF);
-    int single_step = (flags & HASHSET_SCAN_SINGLE_STEP);
 
-    /* If any element that hashes to the current bucket may have been inserted
-     * in another bucket due to probing, we need to continue to cover the whole
-     * probe sequence in the same scan cycle. Otherwise we may miss those
-     * elements if they are rehashed before the next scan call. */
-    int in_probe_sequence = 0;
-
-    /* When the cursor reaches zero, may need to continue scanning and advancing
-     * the cursor until the probing chain ends, but when we stop, we return 0 to
-     * indicate that the full scan is completed. */
-    int cursor_passed_zero = 0;
-
-    /* Mask the start cursor to the bigger of the tables, so we can detect if we
-     * come back to the start cursor and break the loop. It can happen if enough
-     * tombstones (in both tables while rehashing) make us continue scanning. */
-    cursor = cursor & (expToMask(s->bucket_exp[0]) | expToMask(s->bucket_exp[1]));
-    size_t start_cursor = cursor;
-    do {
-        in_probe_sequence = 0; /* Set to 1 if an ever-full bucket is scanned. */
-        if (!hashsetIsRehashing(s)) {
-            /* Emit elements at the cursor index. */
-            size_t mask = expToMask(s->bucket_exp[0]);
-            bucket *b = &s->tables[0][cursor & mask];
-            int pos;
-            for (pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-                if (isPositionFilled(b, pos)) {
-                    void *emit = emit_ref ? &b->elements[pos] : b->elements[pos];
-                    fn(privdata, emit);
+    if (!hashsetIsRehashing(s)) {
+        /* Emit elements at the cursor index. */
+        size_t mask = expToMask(s->bucket_exp[0]);
+        bucket *b = &s->tables[0][cursor & mask];
+        do {
+            if (b->presence != 0) {
+                int pos;
+                for (pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+                    if (isPositionFilled(b, pos)) {
+                        void *emit = emit_ref ? &b->elements[pos] : b->elements[pos];
+                        fn(privdata, emit);
+                    }
                 }
             }
+            bucket *next = bucketNext(b);
+            if (next != NULL && defragfn != NULL) {
+                next = bucketDefrag(b, next, defragfn);
+            }
+            b = next;
+        } while (b != NULL);
 
-            /* Do we need to continue scanning? */
-            in_probe_sequence |= b->everfull;
-
-            /* Advance cursor. */
-            cursor = nextCursor(cursor, mask);
+        /* Advance cursor. */
+        cursor = nextCursor(cursor, mask);
+    } else {
+        int table_small, table_large;
+        if (s->bucket_exp[0] <= s->bucket_exp[1]) {
+            table_small = 0;
+            table_large = 1;
         } else {
-            int table_small, table_large;
-            if (s->bucket_exp[0] <= s->bucket_exp[1]) {
-                table_small = 0;
-                table_large = 1;
-            } else {
-                table_small = 1;
-                table_large = 0;
-            }
+            table_small = 1;
+            table_large = 0;
+        }
 
-            size_t mask_small = expToMask(s->bucket_exp[table_small]);
-            size_t mask_large = expToMask(s->bucket_exp[table_large]);
+        size_t mask_small = expToMask(s->bucket_exp[table_small]);
+        size_t mask_large = expToMask(s->bucket_exp[table_large]);
 
-            /* Emit elements in the smaller table, if this bucket hasn't already
-             * been rehashed. */
-            if (table_small == 0 && !cursorIsLessThan(cursor, s->rehash_idx)) {
-                bucket *b = &s->tables[table_small][cursor & mask_small];
-                if (b->presence) {
-                    for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-                        if (isPositionFilled(b, pos)) {
-                            void *emit = emit_ref ? &b->elements[pos] : b->elements[pos];
-                            fn(privdata, emit);
-                        }
-                    }
-                }
-                in_probe_sequence |= b->everfull;
-            }
-
-            /* Iterate over indices in larger table that are the expansion of
-             * the index pointed to by the cursor in the smaller table. */
+        /* Emit elements in the smaller table, if this index hasn't already been
+         * rehashed. */
+        size_t idx = cursor & mask_small;
+        if (table_small == 1 || s->rehash_idx == -1 || idx >= (size_t)s->rehash_idx) {
+            size_t used_before = s->used[table_small];
+            bucket *b = &s->tables[table_small][idx];
             do {
-                /* Emit elements in bigger table. */
-                bucket *b = &s->tables[table_large][cursor & mask_large];
                 if (b->presence) {
                     for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
                         if (isPositionFilled(b, pos)) {
@@ -1316,20 +1459,56 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
                         }
                     }
                 }
-                in_probe_sequence |= b->everfull;
-
-                /* Increment the reverse cursor not covered by the smaller mask.*/
-                cursor = nextCursor(cursor, mask_large);
-
-                /* Continue while bits covered by mask difference is non-zero */
-            } while (cursor & (mask_small ^ mask_large) && cursor != start_cursor);
+                bucket *next = bucketNext(b);
+                if (next != NULL && defragfn != NULL) {
+                    next = bucketDefrag(b, next, defragfn);
+                }
+                b = next;
+            } while (b != NULL);
+            /* If any elements were deleted, fill the holes. */
+            if (s->used[table_small] < used_before) {
+                compactBucketChain(s, idx, table_small);
+            }
         }
-        if (cursor == 0) {
-            cursor_passed_zero = 1;
-        }
-    } while (in_probe_sequence && !single_step && cursor != start_cursor);
+
+        /* Iterate over indices in larger table that are the expansion of the
+         * index pointed to by the cursor in the smaller table. */
+        do {
+            /* Emit elements in the larger table at this cursor, if this index
+             * hash't already been rehashed. */
+            idx = cursor & mask_large;
+            if (table_large == 1 || s->rehash_idx == -1 || idx >= (size_t)s->rehash_idx) {
+                size_t used_before = s->used[table_large];
+                bucket *b = &s->tables[table_large][idx];
+                do {
+                    if (b->presence) {
+                        for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+                            if (isPositionFilled(b, pos)) {
+                                void *emit = emit_ref ? &b->elements[pos] : b->elements[pos];
+                                fn(privdata, emit);
+                            }
+                        }
+                    }
+                    bucket *next = bucketNext(b);
+                    if (next != NULL && defragfn != NULL) {
+                        next = bucketDefrag(b, next, defragfn);
+                    }
+                    b = next;
+                } while (b != NULL);
+                /* If any elements were deleted, fill the holes. */
+                if (s->used[table_large] < used_before) {
+                    compactBucketChain(s, idx, table_large);
+                }
+            }
+
+            /* Increment the reverse cursor not covered by the smaller mask. */
+            cursor = nextCursor(cursor, mask_large);
+
+            /* Continue while bits covered by mask difference is non-zero. */
+        } while (cursor & (mask_small ^ mask_large));
+    }
     hashsetResumeRehashing(s);
-    return cursor_passed_zero ? 0 : cursor;
+    return cursor;
 }
 
 /* --- Iterator --- */
@@ -1350,6 +1529,10 @@ void hashsetInitIterator(hashsetIterator *iter, hashset *s) {
  * iterating. It pauses incremental rehashing to prevent elements from moving
  * around. Call hashsetNext to fetch each element. You must call
  * hashsetResetIterator when you are done with a safe iterator.
+ *
+ * It's allowed to insert and replace elements. Deleting elements is only
+ * allowed for the element that was just returned by hashsetNext. Deleting other
+ * elements are not supported. (It can cause internal fragmentation.)
  *
  * Guarantees:
  *
@@ -1404,44 +1587,68 @@ void hashsetReleaseIterator(hashsetIterator *iter) {
 }
 
 /* Points elemptr to the next element and returns 1 if there is a next element.
- * Returns 0 if there are not more elements. */
+ * Returns 0 if there are no more elements. */
 int hashsetNext(hashsetIterator *iter, void **elemptr) {
     while (1) {
         if (iter->index == -1 && iter->table == 0) {
             /* It's the first call to next. */
             if (iter->safe) {
                 hashsetPauseRehashing(iter->hashset);
+                iter->last_seen_size = iter->hashset->used[iter->table];
             } else {
                 iter->fingerprint = hashsetFingerprint(iter->hashset);
             }
             if (iter->hashset->tables[0] == NULL) {
-                /* empty hashset, we're done */
+                /* Empty hashset. We're done. */
                 break;
             }
             iter->index = 0;
+            /* Skip already rehashed buckets. */
             if (hashsetIsRehashing(iter->hashset)) {
                 iter->index = iter->hashset->rehash_idx;
             }
+            iter->bucket = &iter->hashset->tables[iter->table][iter->index];
             iter->pos_in_bucket = 0;
         } else {
-            /* Advance position within bucket, or bucket index, or table. */
+            /* Advance to the next position within the bucket, or to the next
+             * child bucket in a chain, or to the next bucket index, or to the
+             * next table. */
             iter->pos_in_bucket++;
-            if (iter->pos_in_bucket >= ELEMENTS_PER_BUCKET) {
+            if (iter->bucket->chained && iter->pos_in_bucket >= ELEMENTS_PER_BUCKET - 1) {
                 iter->pos_in_bucket = 0;
-                iter->index = nextCursor(iter->index, expToMask(iter->hashset->bucket_exp[iter->table]));
-                if (iter->index == 0) {
+                iter->bucket = bucketNext(iter->bucket);
+            } else if (iter->pos_in_bucket >= ELEMENTS_PER_BUCKET) {
+                /* Bucket index done. */
+                if (iter->safe) {
+                    /* If elements in this bucket chain have been deleted,
+                     * they've left empty spaces in the buckets. The chain is
+                     * not automatically compacted when rehashing is paused. If
+                     * this iterator is the only reason for pausing rehashing,
+                     * we can do the compaction now when we're done with a
+                     * bucket chain, before we move on to the next index. */
+                    if (iter->hashset->pause_rehash == 1 &&
+                        iter->hashset->used[iter->table] < iter->last_seen_size) {
+                        compactBucketChain(iter->hashset, iter->index, iter->table);
+                    }
+                    iter->last_seen_size = iter->hashset->used[iter->table];
+                }
+                iter->pos_in_bucket = 0;
+                iter->index++;
+                if ((size_t)iter->index >= numBuckets(iter->hashset->bucket_exp[iter->table])) {
                     if (hashsetIsRehashing(iter->hashset) && iter->table == 0) {
+                        iter->index = 0;
                         iter->table++;
                     } else {
                         /* Done. */
                         break;
                     }
                 }
+                iter->bucket = &iter->hashset->tables[iter->table][iter->index];
             }
         }
-        bucket *b = &iter->hashset->tables[iter->table][iter->index];
-        if (!(b->presence & (1 << iter->pos_in_bucket))) {
-            /* No element here. Skip. */
+        bucket *b = iter->bucket;
+        if (!isPositionFilled(b, iter->pos_in_bucket)) {
+            /* No element here. */
             continue;
         }
         /* Return the element at this position. */
@@ -1494,7 +1701,7 @@ unsigned hashsetSampleElements(hashset *s, void **dst, unsigned count) {
     samples.elements = dst;
     size_t cursor = randomSizeT();
     while (samples.count < count) {
-        cursor = hashsetScan(s, cursor, sampleElementsScanFn, &samples, HASHSET_SCAN_SINGLE_STEP);
+        cursor = hashsetScan(s, cursor, sampleElementsScanFn, &samples);
     }
     rehashStepOnReadIfNeeded(s);
     return count;
@@ -1509,9 +1716,9 @@ void hashsetFreeStats(hashsetStats *stats) {
 }
 
 void hashsetCombineStats(hashsetStats *from, hashsetStats *into) {
-    into->buckets += from->buckets;
+    into->toplevel_buckets += from->toplevel_buckets;
+    into->child_buckets += from->child_buckets;
     into->max_chain_len = (from->max_chain_len > into->max_chain_len) ? from->max_chain_len : into->max_chain_len;
-    into->probe_count += from->probe_count;
     into->size += from->size;
     into->used += from->used;
     for (int i = 0; i < HASHSET_STATS_VECTLEN; i++) {
@@ -1524,40 +1731,28 @@ hashsetStats *hashsetGetStatsHt(hashset *s, int table_index, int full) {
     hashsetStats *stats = zcalloc(sizeof(hashsetStats));
     stats->table_index = table_index;
     stats->clvector = clvector;
-    stats->buckets = numBuckets(s->bucket_exp[table_index]);
-    stats->size = stats->buckets * ELEMENTS_PER_BUCKET;
+    stats->toplevel_buckets = numBuckets(s->bucket_exp[table_index]);
+    stats->child_buckets = s->child_buckets[table_index];
+    stats->size = numBuckets(s->bucket_exp[table_index]) * ELEMENTS_PER_BUCKET;
     stats->used = s->used[table_index];
     if (!full) return stats;
-    /* Compute stats about probing chain lengths. */
-    unsigned long chainlen = 0;
-    size_t mask = expToMask(s->bucket_exp[table_index]);
-    /* Find a suitable place to start: not in the middle of a probing chain. */
-    size_t start_idx;
-    for (start_idx = 0; start_idx <= mask; start_idx++) {
-        bucket *b = &s->tables[table_index][start_idx];
-        if (!b->everfull) break;
-    }
-    size_t idx = start_idx;
-    do {
-        idx = nextCursor(idx, mask);
+    /* Compute stats about bucket chain lengths. */
+    stats->max_chain_len = 0;
+    for (size_t idx = 0; idx < numBuckets(s->bucket_exp[table_index]); idx++) {
         bucket *b = &s->tables[table_index][idx];
-        if (b->everfull) {
-            stats->probe_count++;
+        unsigned long chainlen = 0;
+        while (b->chained) {
             chainlen++;
-        } else {
-            /* End of a chain (even a zero-length chain). */
-            /* Keys hashing to each bucket in this chain has a probe length
-             * depending on the bucket they hash to. Keys hashing to this bucket
-             * have probing length 0, keys hashing to the previous bucket has
-             * probling length 1, and so on. */
-            for (unsigned long i = 0; i <= chainlen; i++) {
-                int index = (i < HASHSET_STATS_VECTLEN) ? i : HASHSET_STATS_VECTLEN - 1;
-                clvector[index]++;
-            }
-            if (chainlen > stats->max_chain_len) stats->max_chain_len = chainlen;
-            chainlen = 0;
+            b = bucketNext(b);
         }
-    } while (idx != start_idx);
+        if (chainlen > stats->max_chain_len) {
+            stats->max_chain_len = chainlen;
+        }
+        if (chainlen >= HASHSET_STATS_VECTLEN) {
+            chainlen = HASHSET_STATS_VECTLEN - 1;
+        }
+        clvector[chainlen]++;
+    }
     return stats;
 }
 
@@ -1579,20 +1774,21 @@ size_t hashsetGetStatsMsg(char *buf, size_t bufsize, hashsetStats *stats, int fu
                   stats->used);
     if (full) {
         l += snprintf(buf + l, bufsize - l,
-                      " buckets: %lu\n"
-                      " max probing length: %lu\n"
-                      " avg probing length: %.02f\n"
-                      " probing length distribution:\n",
-                      stats->buckets, stats->max_chain_len, (float)stats->probe_count / stats->buckets);
-        unsigned long chain_length_sum = 0;
+                      " top-level buckets: %lu\n"
+                      " child buckets: %lu\n"
+                      " max chain length: %lu\n"
+                      " avg chain length: %.02f\n"
+                      " chain length distribution:\n",
+                      stats->toplevel_buckets,
+                      stats->child_buckets,
+                      stats->max_chain_len,
+                      (float)stats->child_buckets / stats->toplevel_buckets);
         for (unsigned long i = 0; i < HASHSET_STATS_VECTLEN - 1; i++) {
             if (stats->clvector[i] == 0) continue;
             if (l >= bufsize) break;
-            chain_length_sum += stats->clvector[i];
             l += snprintf(buf + l, bufsize - l, "   %ld: %ld (%.02f%%)\n", i, stats->clvector[i],
-                          ((float)stats->clvector[i] / stats->buckets) * 100);
+                          ((float)stats->clvector[i] / stats->toplevel_buckets) * 100);
         }
-        assert(chain_length_sum == stats->buckets);
     }
 
     /* Make sure there is a NULL term at the end. */
@@ -1624,68 +1820,81 @@ void hashsetGetStats(char *buf, size_t bufsize, hashset *s, int full) {
 
 void hashsetDump(hashset *s) {
     for (int table = 0; table <= 1; table++) {
-        printf("Table %d, used %zu, exp %d, buckets %zu, everfulls %zu\n",
-               table, s->used[table], s->bucket_exp[table], numBuckets(s->bucket_exp[table]), s->everfulls[table]);
+        printf("Table %d, used %zu, exp %d, top-level buckets %zu, child buckets %zu\n",
+               table, s->used[table], s->bucket_exp[table],
+               numBuckets(s->bucket_exp[table]), s->child_buckets[table]);
         for (size_t idx = 0; idx < numBuckets(s->bucket_exp[table]); idx++) {
             bucket *b = &s->tables[table][idx];
-            printf("Bucket %d:%zu everfull:%d\n", table, idx, b->everfull);
-            for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
-                printf("  %d ", pos);
-                if (isPositionFilled(b, pos)) {
-                    printf("h2 %02x, key \"%s\"\n", b->hashes[pos], (const char *)elementGetKey(s, b->elements[pos]));
-                } else {
-                    printf("(empty)\n");
+            int level = 0;
+            do {
+                printf("Bucket %d:%zu level:%d\n", table, idx, level);
+                for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
+                    printf("  %d ", pos);
+                    if (isPositionFilled(b, pos)) {
+                        printf("h2 %02x, key \"%s\"\n", b->hashes[pos],
+                               (const char *)elementGetKey(s, b->elements[pos]));
+                    } else {
+                        printf("(empty)\n");
+                    }
                 }
-            }
+                b = bucketNext(b);
+                level++;
+            } while (b != NULL);
         }
     }
 }
 
+/* Prints a histogram-like view of the number of elements in each bucket and
+ * sub-bucket. Example:
+ *
+ *     Bucket fill table=0 size=32 used=200:
+ *         67453462673764475436556656776756
+ *         2     3 2   3      3  45 5     3
+ */
 void hashsetHistogram(hashset *s) {
     for (int table = 0; table <= 1; table++) {
-        for (size_t idx = 0; idx < numBuckets(s->bucket_exp[table]); idx++) {
-            bucket *b = &s->tables[table][idx];
-            char c = b->presence == 0 && b->everfull ? 'X' : '0' + __builtin_popcount(b->presence);
-            printf("%c", c);
+        if (s->bucket_exp[table] < 0) continue;
+        size_t size = numBuckets(s->bucket_exp[table]);
+        bucket *buckets[size];
+        for (size_t idx = 0; idx < size; idx++) {
+            buckets[idx] = &s->tables[table][idx];
         }
-        if (table == 0) printf(" ");
+        size_t chains_left = size;
+        printf("Bucket fill table=%d size=%zu used=%zu:\n",
+               table, size, s->used[table]);
+        do {
+            printf("    ");
+            for (size_t idx = 0; idx < size; idx++) {
+                bucket *b = buckets[idx];
+                if (b == NULL) {
+                    printf(" ");
+                    continue;
+                }
+                printf("%X", __builtin_popcount(b->presence));
+                buckets[idx] = bucketNext(b);
+                if (buckets[idx] == NULL) chains_left--;
+            }
+            printf("\n");
+        } while (chains_left > 0);
     }
-    printf("\n");
 }
 
-void hashsetProbeMap(hashset *s) {
-    for (int table = 0; table <= 1; table++) {
-        for (size_t idx = 0; idx < numBuckets(s->bucket_exp[table]); idx++) {
-            bucket *b = &s->tables[table][idx];
-            char c = b->everfull ? 'X' : 'o';
-            printf("%c", c);
-        }
-        if (table == 0) printf(" ");
-    }
-    printf("\n");
-}
-
-int hashsetLongestProbingChain(hashset *s) {
+int hashsetLongestBucketChain(hashset *s) {
     int maxlen = 0;
     for (int table = 0; table <= 1; table++) {
         if (s->bucket_exp[table] < 0) {
             continue; /* table not used */
         }
-        size_t cursor = 0;
-        size_t mask = expToMask(s->bucket_exp[table]);
-        int chainlen = 0;
-        do {
-            assert(cursor <= mask);
-            bucket *b = &s->tables[table][cursor];
-            if (b->everfull) {
+        for (size_t i = 0; i < numBuckets(s->bucket_exp[table]); i++) {
+            int chainlen = 0;
+            bucket *b = &s->tables[table][i];
+            while (b->chained) {
                 if (++chainlen > maxlen) {
                     maxlen = chainlen;
                 }
-            } else {
-                chainlen = 0;
+                b = bucketNext(b);
             }
-            cursor = nextCursor(cursor, mask);
-        } while (cursor != 0);
+        }
     }
     return maxlen;
 }

@@ -34,6 +34,7 @@
 /* --- Opaque types --- */
 
 typedef struct hashset hashset;
+typedef struct hashsetBucket hashsetBucket;
 typedef struct hashsetStats hashsetStats;
 
 /* --- Non-opaque types --- */
@@ -81,16 +82,23 @@ typedef void (*hashsetScanFunction)(void *privdata, void *element);
 
 /* Scan flags */
 #define HASHSET_SCAN_EMIT_REF (1 << 0)
-#define HASHSET_SCAN_SINGLE_STEP (1 << 2)
 
+/* Iterator. To be able to use a stack-allocated iterator, it's not opaque. The
+ * fields in this struct should not be accessed though. Just use the hashset
+ * iterator functions. */
 typedef struct {
     hashset *hashset;
+    hashsetBucket *bucket;
     long index;
     int table;
     int pos_in_bucket;
     uint64_t safe : 1;
-    /* unsafe iterator fingerprint for misuse detection. */
-    uint64_t fingerprint : 63;
+    union {
+        /* Unsafe iterator fingerprint for misuse detection. */
+        uint64_t fingerprint : 63;
+        /* Safe iterator temporary storage for bucket chain compaction. */
+        uint64_t last_seen_size : 63;
+    };
 } hashsetIterator;
 
 /* Position, used by some hashset functions such as two-phase insert and delete.
@@ -121,7 +129,7 @@ hashsetType *hashsetGetType(hashset *s);
 void *hashsetMetadata(hashset *s);
 size_t hashsetSize(hashset *s);
 size_t hashsetBuckets(hashset *s);
-size_t hashsetProbeCounter(hashset *s, int table);
+size_t hashsetChainedBuckets(hashset *s, int table);
 size_t hashsetMemUsage(hashset *s);
 void hashsetPauseAutoShrink(hashset *s);
 void hashsetResumeAutoShrink(hashset *s);
@@ -149,7 +157,9 @@ void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, hashsetPosition *p
 void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position);
 
 /* Iteration & scan */
-size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata, int flags);
+size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata);
+size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata,
+                         void *(*defragfn)(void *), int flags);
 void hashsetInitIterator(hashsetIterator *iter, hashset *s);
 void hashsetInitSafeIterator(hashsetIterator *iter, hashset *s);
 void hashsetResetIterator(hashsetIterator *iter);

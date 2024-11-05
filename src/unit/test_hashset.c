@@ -1,6 +1,7 @@
 #include "../hashset.h"
 #include "test_help.h"
 #include "../mt19937-64.h"
+#include "../zmalloc.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -80,8 +81,7 @@ void emptyCallback(hashset *s) {
 /* Prototypes for debugging */
 void hashsetDump(hashset *s);
 void hashsetHistogram(hashset *s);
-void hashsetProbeMap(hashset *s);
-int hashsetLongestProbingChain(hashset *s);
+int hashsetLongestBucketChain(hashset *s);
 size_t nextCursor(size_t v, size_t mask);
 
 int test_cursor(int argc, char **argv, int flags) {
@@ -114,11 +114,11 @@ static void add_find_delete_test_helper(int flags) {
         snprintf(key, sizeof(key), "%d", j);
         snprintf(val, sizeof(val), "%d", count - j + 42);
         keyval *e = create_keyval(key, val);
+        /* printf("Adding %s => %s\n", key, val); */
         assert(hashsetAdd(s, e));
     }
 
     if (count < 1000) {
-        printf("Bucket fill: ");
         hashsetHistogram(s);
     }
 
@@ -162,6 +162,7 @@ int test_add_find_delete(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
     add_find_delete_test_helper(flags);
+    TEST_ASSERT(zmalloc_used_memory() == 0);
     return 0;
 }
 
@@ -171,6 +172,7 @@ int test_add_find_delete_avoid_resize(int argc, char **argv, int flags) {
     hashsetSetResizePolicy(HASHSET_RESIZE_AVOID);
     add_find_delete_test_helper(flags);
     hashsetSetResizePolicy(HASHSET_RESIZE_ALLOW);
+    TEST_ASSERT(zmalloc_used_memory() == 0);
     return 0;
 }
 
@@ -203,7 +205,7 @@ int test_instant_rehashing(int argc, char **argv, int flags) {
 }
 
 
-int test_probing_chain_length(int argc, char **argv, int flags) {
+int test_bucket_chain_length(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
     UNUSED(flags);
@@ -223,8 +225,8 @@ int test_probing_chain_length(int argc, char **argv, int flags) {
         assert(hashsetAdd(s, (void *)j));
     }
     TEST_ASSERT(j < count * 2);
-    int max_chainlen_not_rehashing = hashsetLongestProbingChain(s);
-    TEST_ASSERT(max_chainlen_not_rehashing < 100);
+    int max_chainlen_not_rehashing = hashsetLongestBucketChain(s);
+    TEST_ASSERT(max_chainlen_not_rehashing < 10);
 
     /* Add more until rehashing starts again. */
     while (!hashsetIsRehashing(s)) {
@@ -232,8 +234,8 @@ int test_probing_chain_length(int argc, char **argv, int flags) {
         assert(hashsetAdd(s, (void *)j));
     }
     TEST_ASSERT(j < count * 2);
-    int max_chainlen_rehashing = hashsetLongestProbingChain(s);
-    TEST_ASSERT(max_chainlen_rehashing < 100);
+    int max_chainlen_rehashing = hashsetLongestBucketChain(s);
+    TEST_ASSERT(max_chainlen_rehashing < 10);
 
     hashsetRelease(s);
     return 0;
@@ -261,7 +263,6 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
     }
 
     if (count < 1000) {
-        printf("Bucket fill: ");
         hashsetHistogram(s);
     }
 
@@ -341,7 +342,7 @@ int test_scan(int argc, char **argv, int flags) {
         size_t cursor = 0;
         do {
             data->count = 0;
-            cursor = hashsetScan(s, cursor, scanfn, data, 0);
+            cursor = hashsetScan(s, cursor, scanfn, data);
             if (data->count > max_elements_per_cycle) {
                 max_elements_per_cycle = data->count;
             }
@@ -416,6 +417,11 @@ int test_iterator(int argc, char **argv, int flags) {
     uint8_t *element;
     while (hashsetNext(&iter, (void **)&element)) {
         num_returned++;
+        if (!(element >= element_array && element < element_array + count)) {
+            printf("Element pointer out of range: %p but range is [%p, %p)\n",
+                   element, element_array, element_array + count);
+            printf("\n");
+        }
         assert(element >= element_array && element < element_array + count);
         /* increment element at this position as a counter */
         (*element)++;
@@ -643,11 +649,8 @@ int test_random_element_with_long_chain(int argc, char **argv, int flags) {
 
     assert(!hashsetIsRehashing(s));
 
-    printf("Bucket fill: ");
+    printf("Created a table with a long bucket chain.\n");
     hashsetHistogram(s);
-    printf("probe map  : ");
-    hashsetProbeMap(s);
-
 
     printf("Taking %zu random samples\n", num_samples);
     size_t count_chain_element_picked = 0;
@@ -670,62 +673,10 @@ int test_random_element_with_long_chain(int argc, char **argv, int flags) {
     return 0;
 }
 
-typedef struct {
-    size_t capacity;
-    size_t count;
-    long elements[];
-} sampledata;
-
-void sample_scanfn(void *privdata, void *element) {
-    sampledata *data = (sampledata *)privdata;
-    if (data->count == data->capacity) return;
-    long j = (long)element;
-    data->elements[data->count++] = j;
-}
-
-int test_full_probe(int argc, char **argv, int flags) {
+int test_all_memory_freed(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
     UNUSED(flags);
-    randomSeed();
-
-    long count = 42; /* 75% of 8 buckets (7 elements per bucket). */
-    long num_rounds = (flags & UNIT_TEST_ACCURATE) ? 100000 : 1000;
-
-    /* A set of longs, i.e. pointer-sized values. */
-    hashsetType type = {0};
-    hashset *s = hashsetCreate(&type);
-
-    /* Populate */
-    for (long j = 0; j < count; j++) {
-        assert(hashsetAdd(s, (void *)j));
-    }
-
-    /* Scan and delete (simulates eviction), then add some more, repeat. */
-    size_t cursor = 0;
-    size_t max_samples = 30; /* at least the size of a bucket */
-    sampledata *data = calloc(1, sizeof(sampledata) + sizeof(long) * max_samples);
-    data->capacity = max_samples;
-
-    for (int r = 0; r < num_rounds; r++) {
-        size_t probes = hashsetProbeCounter(s, 0);
-        size_t buckets = hashsetBuckets(s);
-        assert(probes < buckets);
-
-        /* Empty the next buckets. */
-        data->count = 0;
-        cursor = hashsetScan(s, cursor, sample_scanfn, data, HASHSET_SCAN_SINGLE_STEP);
-        long n = data->count;
-        for (long i = 0; i < n; i++) {
-            int deleted = hashsetDelete(s, (void *)data->elements[i]);
-            if (!deleted) n--; /* Duplicate retuned by scan. */
-        }
-
-        /* Add the same number of elements back */
-        while (n > 0) {
-            n -= hashsetAdd(s, (void *)random());
-        }
-    }
-    hashsetRelease(s);
+    TEST_ASSERT(zmalloc_used_memory() == 0);
     return 0;
 }
