@@ -171,7 +171,7 @@ message(STATUS "Using ${MALLOC_LIB}")
 # TLS support
 if (BUILD_TLS)
     valkey_parse_build_option(${BUILD_TLS} USE_TLS)
-    if (USE_TLS EQUAL 1 OR USE_TLS EQUAL 2)
+    if (USE_TLS EQUAL 1)
         # Only search for OpenSSL if needed
         find_package(OpenSSL REQUIRED)
         message(STATUS "OpenSSL include dir: ${OPENSSL_INCLUDE_DIR}")
@@ -182,10 +182,11 @@ if (BUILD_TLS)
     if (USE_TLS EQUAL 1)
         add_valkey_server_compiler_options("-DUSE_OPENSSL=1")
         add_valkey_server_compiler_options("-DBUILD_TLS_MODULE=0")
-    elseif (USE_TLS EQUAL 2)
-        # Build TLS as a module
-        add_valkey_server_compiler_options("-DUSE_OPENSSL=2")
-        set(BUILD_TLS_MODULE 1)
+    else ()
+        # Build TLS as a module RDMA can only be built as a module. So disable it
+        message(WARN "BUILD_TLS can be one of: [ON | OFF | 1 | 0], but '${BUILD_TLS}' was provided")
+        message(STATUS "TLS support is disabled")
+        set(USE_TLS 0)
     endif ()
 else ()
     # By default, TLS is disabled
@@ -214,7 +215,7 @@ if (BUILD_RDMA)
             set(BUILD_RDMA_MODULE 1)
         elseif (USE_RDMA EQUAL 1)
             # RDMA can only be built as a module. So disable it
-            message(WARN "BUILD_RDMA can be on of: [no | 0 | module], but '${BUILD_RDMA}' was provided")
+            message(WARN "BUILD_RDMA can be one of: [NO | 0 | MODULE], but '${BUILD_RDMA}' was provided")
             message(STATUS "RDMA build is disabled")
             set(USE_RDMA 0)
         endif ()
