@@ -77,7 +77,7 @@ fpconv: .make-prerequisites
 
 fast_float: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	cd fast_float && $(MAKE)
+	cd fast_float && $(MAKE) CFLAGS=$(CFLAGS) LDFLAGS=$(LDFLAGS)
 
 .PHONY: fast_float
 
