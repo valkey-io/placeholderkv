@@ -1169,7 +1169,7 @@ void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, hashsetPosition *p
 }
 
 /* Clears the position of the element in the hashset and resumes rehashing. The
- * element destructor is NOT called. The position is aquired using a preceeding
+ * element destructor is NOT called. The position is acquired using a preceding
  * call to hashsetTwoPhasePopFindRef(). */
 void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
     /* Read position. */

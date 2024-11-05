@@ -489,7 +489,7 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     }
     /* Check that elements inserted during the iteration were returned at most
      * once. */
-    unsigned long num_optional_returned;
+    unsigned long num_optional_returned = 0;
     for (j = count; j < count * 2; j++) {
         assert(element_returned[j] <= 1);
         num_optional_returned += element_returned[j];
