@@ -6,7 +6,7 @@ extern "C"
 {
 #endif
 
-    double fast_float_strtod(const char *nptr, char **endptr);
+    const char* fast_float_strtod(const char *nptr, double *value);
 
 #ifdef __cplusplus
 }

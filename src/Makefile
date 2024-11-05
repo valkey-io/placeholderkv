@@ -383,6 +383,20 @@ else
 	MAYBE_UNINSTALL_REDIS_SYMLINK=
 endif
 
+# Determine whether to use fast_float as a library or not. 
+BUILD_FAST_FLOAT:=yes
+ifeq ($(BUILD_FAST_FLOAT),yes)
+	DEPENDENCY_TARGETS+= fast_float
+        FINAL_LIBS += ../deps/fast_float/fast_float_strtod.o
+	# Mac uses Clang and the standard c++ library is named libc++. For others, it is named libstdc++. 
+	ifeq (clang,$(CLANG))
+  		FINAL_LIBS+= -lc++
+	else
+		FINAL_LIBS+= -lstdc++
+	endif
+endif
+
+
 SERVER_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
 SERVER_AR=$(QUIET_AR)$(AR)
 SERVER_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)

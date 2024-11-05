@@ -25,27 +25,11 @@
 
 extern "C"
 {
-    double fast_float_strtod(const char *nptr, char **endptr)
+    const char* fast_float_strtod(const char *nptr, double *value)
     {
-        double result;
-        auto answer = fast_float::from_chars(nptr, nptr + strlen(nptr), result);
-
-        if (answer.ec == std::errc())
-        {
-            if (endptr)
-            {
-                *endptr = const_cast<char *>(answer.ptr);
-            }
-            return result;
-        }
-        else
-        {
-            if (endptr)
-            {
-                *endptr = const_cast<char *>(answer.ptr);
-            }
-            errno = (answer.ec == std::errc::result_out_of_range) ? ERANGE : EINVAL;
-            return 0.0;
-        }
+        double temp = 0; 
+        auto answer = fast_float::from_chars(nptr, nptr + strlen(nptr), temp);
+        *value = temp; 
+        return const_cast<char *>(answer.ptr);
     }
 }
