@@ -2255,16 +2255,17 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
     return (cp->module == module_handle);
 }
 
-/* ValkeyModule_UpdateRuntimeArgs can be used to update the values of module->loadmod
- * so that the updated values can be saved into conf file once 'config rewrite' command
- * is called
- * One example can be found in file modules/moduleparameter.c
+/* ValkeyModule_UpdateRuntimeArgs can be used to update the module argument values.
+ * The function parameter 'argc' indicates the number of updated arguments, and 'argv'
+ * represents the values of the updated arguments.
+ * Once 'CONFIG REWRITE' command is called, the updated argument values can be saved into conf file.
+ * One example can be found in file tests/modules/moduleparameter.c.
  *
  * Returns:
  * - VALKEYMODULE_OK on successfully updating.
  * - VALKEYMODULE_ERR on failure.
  */
-int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, int argc, ValkeyModuleString **argv) {
+int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
     if (!ctx->module->onload) {
         return VALKEYMODULE_ERR;
     }
