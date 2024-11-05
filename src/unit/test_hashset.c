@@ -396,36 +396,37 @@ int test_iterator(int argc, char **argv, int flags) {
     UNUSED(argv);
     UNUSED(flags);
 
-    long count = 2000000;
+    size_t count = 2000000;
+    uint8_t element_array[count];
+    memset(element_array, 0, sizeof element_array);
 
-    /* A set of longs, i.e. pointer-sized values. */
+    /* A set of uint8_t pointers */
     hashsetType type = {0};
     hashset *s = hashsetCreate(&type);
-    long j;
 
     /* Populate */
-    for (j = 0; j < count; j++) {
-        assert(hashsetAdd(s, (void *)j));
+    for (size_t j = 0; j < count; j++) {
+        assert(hashsetAdd(s, element_array + j));
     }
 
     /* Iterate */
-    uint8_t element_returned[count];
-    memset(element_returned, 0, sizeof element_returned);
-    long num_returned = 0;
+    size_t num_returned = 0;
     hashsetIterator iter;
     hashsetInitIterator(&iter, s);
-    while (hashsetNext(&iter, (void **)&j)) {
+    uint8_t *element;
+    while (hashsetNext(&iter, (void **)&element)) {
         num_returned++;
-        assert(j >= 0 && j < count);
-        element_returned[j]++;
+        assert(element >= element_array && element < element_array + count);
+        /* increment element at this position as a counter */
+        (*element)++;
     }
     hashsetResetIterator(&iter);
 
     /* Check that all elements were returned exactly once. */
     TEST_ASSERT(num_returned == count);
-    for (j = 0; j < count; j++) {
-        if (element_returned[j] != 1) {
-            printf("Element %ld returned %d times\n", j, element_returned[j]);
+    for (size_t j = 0; j < count; j++) {
+        if (element_array[j] != 1) {
+            printf("Element %zu returned %d times\n", j, element_array[j]);
             return 0;
         }
     }
@@ -439,41 +440,36 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     UNUSED(argv);
     UNUSED(flags);
 
-    long count = 1000;
+    size_t count = 1000;
+    uint8_t element_counts[count * 2];
+    memset(element_counts, 0, sizeof element_counts);
 
     /* A set of longs, i.e. pointer-sized values. */
     hashsetType type = {0};
     hashset *s = hashsetCreate(&type);
-    long j;
 
     /* Populate */
-    for (j = 0; j < count; j++) {
-        assert(hashsetAdd(s, (void *)j));
+    for (size_t j = 0; j < count; j++) {
+        assert(hashsetAdd(s, element_counts + j));
     }
 
     /* Iterate */
-    uint8_t element_returned[count * 2];
-    memset(element_returned, 0, sizeof element_returned);
-    long num_returned = 0;
+    size_t num_returned = 0;
     hashsetIterator iter;
     hashsetInitSafeIterator(&iter, s);
-    while (hashsetNext(&iter, (void **)&j)) {
+    uint8_t *element;
+    while (hashsetNext(&iter, (void **)&element)) {
+        size_t index = element - element_counts;
         num_returned++;
-        if (j < 0 || j >= count * 2) {
-            printf("Element %ld returned, max == %ld. Num returned: %ld\n", j, count * 2 - 1, num_returned);
-            printf("Safe %d, table %d, index %lu, pos in bucket %d, rehashing? %d\n", iter.safe, iter.table, iter.index,
-                   iter.pos_in_bucket, !hashsetIsRehashing(s));
-            hashsetHistogram(s);
-            exit(1);
+        assert(element >= element_counts && element < element_counts + count * 2);
+        /* increment element at this position as a counter */
+        (*element)++;
+        if (index % 4 == 0) {
+            assert(hashsetDelete(s, element));
         }
-        assert(j >= 0 && j < count * 2);
-        element_returned[j]++;
-        if (j % 4 == 0) {
-            assert(hashsetDelete(s, (void *)j));
-        }
-        /* Add elements x if count <= x < count * 2) */
-        if (j < count) {
-            assert(hashsetAdd(s, (void *)(j + count)));
+        /* Add new item each time we see one of the original items */
+        if (index < count) {
+            assert(hashsetAdd(s, element + count));
         }
     }
     hashsetResetIterator(&iter);
@@ -481,20 +477,20 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     /* Check that all elements present during the whole iteration were returned
      * exactly once. (Some are deleted after being returned.) */
     TEST_ASSERT(num_returned >= count);
-    for (j = 0; j < count; j++) {
-        if (element_returned[j] != 1) {
-            printf("Element %ld returned %d times\n", j, element_returned[j]);
+    for (size_t j = 0; j < count; j++) {
+        if (element_counts[j] != 1) {
+            printf("Element %zu returned %d times\n", j, element_counts[j]);
             return 0;
         }
     }
     /* Check that elements inserted during the iteration were returned at most
      * once. */
     unsigned long num_optional_returned = 0;
-    for (j = count; j < count * 2; j++) {
-        assert(element_returned[j] <= 1);
-        num_optional_returned += element_returned[j];
+    for (size_t j = count; j < count * 2; j++) {
+        assert(element_counts[j] <= 1);
+        num_optional_returned += element_counts[j];
     }
-    printf("Safe iterator returned %lu of the %lu elements inserted while iterating.\n", num_optional_returned, count);
+    printf("Safe iterator returned %lu of the %zu elements inserted while iterating.\n", num_optional_returned, count);
 
     hashsetRelease(s);
     return 0;
@@ -506,26 +502,29 @@ int test_random_element(int argc, char **argv, int flags) {
     UNUSED(flags);
     randomSeed();
 
-    long count = (flags & UNIT_TEST_LARGE_MEMORY) ? 7000 : 400;
+    size_t count = (flags & UNIT_TEST_LARGE_MEMORY) ? 7000 : 400;
     long num_rounds = (flags & UNIT_TEST_ACCURATE) ? 1000000 : 10000;
 
-    /* A set of longs, i.e. pointer-sized values. */
+    /* A set of ints */
     hashsetType type = {0};
     hashset *s = hashsetCreate(&type);
 
     /* Populate */
-    for (long j = 0; j < count; j++) {
-        assert(hashsetAdd(s, (void *)j));
+    unsigned times_picked[count];
+    memset(times_picked, 0, sizeof(times_picked));
+    for (size_t j = 0; j < count; j++) {
+        assert(hashsetAdd(s, times_picked + j));
     }
 
     /* Pick elements, and count how many times each element is picked. */
-    unsigned times_picked[count];
-    memset(times_picked, 0, sizeof(times_picked));
     for (long i = 0; i < num_rounds; i++) {
-        long element;
+        /* Using void* variable to avoid a cast that violates strict aliasing */
+        unsigned *element;
         assert(hashsetFairRandomElement(s, (void **)&element));
-        assert(element >= 0 && element < count);
-        times_picked[element]++;
+
+        assert(element >= times_picked && element < times_picked + count);
+        /* increment element at this position as a counter */
+        (*element)++;
     }
     hashsetRelease(s);
 
@@ -560,7 +559,7 @@ int test_random_element(int argc, char **argv, int flags) {
      * can use p68 = within 1 std dev, p95 = within 2 std dev, p99.7 = within 3
      * std dev. */
     long p68 = 0, p95 = 0, p99 = 0, p4dev = 0, p5dev = 0;
-    for (long j = 0; j < count; j++) {
+    for (size_t j = 0; j < count; j++) {
         double dev = expected - times_picked[j];
         p68 += (dev >= -std_dev && dev <= std_dev);
         p95 += (dev >= -std_dev * 2 && dev <= std_dev * 2);
@@ -569,7 +568,7 @@ int test_random_element(int argc, char **argv, int flags) {
         p5dev += (dev >= -std_dev * 5 && dev <= std_dev * 5);
     }
     printf("Random element fairness test\n");
-    printf("  Pick one of %ld elements, %ld times.\n", count, num_rounds);
+    printf("  Pick one of %zu elements, %ld times.\n", count, num_rounds);
     printf("  Expecting each element to be picked %.2lf times, std dev %.3lf.\n", expected, std_dev);
     printf("  Within 1 std dev (p68) = %.2lf%%\n", 100 * p68 / m);
     printf("  Within 2 std dev (p95) = %.2lf%%\n", 100 * p95 / m);
