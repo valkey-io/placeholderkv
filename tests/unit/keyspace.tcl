@@ -558,3 +558,14 @@ foreach {type large} [array get largevalue] {
         r KEYS [string repeat "*?" 50000]
     } {}
 }
+
+start_cluster 1 0 {tags {"keyspace external:skip cluster"}} {
+    test {KEYS with empty DB in cluster mode} {
+        assert_equal {} [r keys *]
+        assert_equal {} [r keys foo*]
+    }
+
+    test {KEYS with empty slot in cluster mode} {
+        assert_equal {} [r keys foo]
+    }
+}
