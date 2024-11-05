@@ -149,6 +149,8 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 #if SIZE_MAX == UINT64_MAX /* 64-bit version */
 
 #define ELEMENTS_PER_BUCKET 7
+#define BUCKET_BITS_TYPE uint8_t
+#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 3
 
 /* Selecting the number of buckets.
  *
@@ -183,6 +185,8 @@ void hashsetSetResizePolicy(hashsetResizePolicy policy) {
 #elif SIZE_MAX == UINT32_MAX /* 32-bit version */
 
 #define ELEMENTS_PER_BUCKET 12
+#define BUCKET_BITS_TYPE uint16_t
+#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 4
 #define BUCKET_FACTOR 7
 #define BUCKET_DIVISOR 64
 /* When resizing, we get a fill of at most 76.19% (64 / 7 / 12). */
@@ -239,16 +243,6 @@ static_assert(MAX_FILL_PERCENT_HARD < 100, "Hard fill factor must be below 100%"
  *     1 bit     12 bits   3 bits  [1 byte] x 12  2 bytes  [4 bytes] x 12
  *     everfull  presence  unused  hashes         unused   elements
  */
-
-#if ELEMENTS_PER_BUCKET < 8
-#define BUCKET_BITS_TYPE uint8_t
-#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 3
-#elif ELEMENTS_PER_BUCKET < 16
-#define BUCKET_BITS_TYPE uint16_t
-#define BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET 4
-#else
-#error "Unexpected value of ELEMENTS_PER_BUCKET"
-#endif
 
 typedef struct {
     BUCKET_BITS_TYPE everfull : 1;
@@ -652,6 +646,7 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
     assert(s->tables[table]);
     size_t mask = expToMask(s->bucket_exp[table]);
     size_t bucket_idx = hash & mask;
+    size_t start_bucket_idx = bucket_idx;
     while (1) {
         bucket *b = &s->tables[table][bucket_idx];
         for (int pos = 0; pos < ELEMENTS_PER_BUCKET; pos++) {
@@ -662,29 +657,8 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
             return b;
         }
         bucket_idx = nextCursor(bucket_idx, mask);
+        assert(bucket_idx != start_bucket_idx); /* Detect infinite loop. */
     }
-}
-
-/* Encode bucket_index, pos_in_bucket, table_index into an opaque pointer. */
-static void *encodePositionInTable(size_t bucket_index, int pos_in_bucket, int table_index) {
-    uintptr_t encoded = bucket_index;
-    encoded <<= BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET;
-    encoded |= pos_in_bucket;
-    encoded <<= 1;
-    encoded |= table_index;
-    encoded++; /* Add one to make sure we don't return NULL. */
-    return (void *)encoded;
-}
-
-/* Decodes a position in the table encoded using encodePositionInTable(). */
-static void decodePositionInTable(void *encoded_position, size_t *bucket_index, int *pos_in_bucket, int *table_index) {
-    uintptr_t encoded = (uintptr_t)encoded_position;
-    encoded--;
-    *table_index = encoded & 1;
-    encoded >>= 1;
-    *pos_in_bucket = encoded & ((1 << BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET) - 1);
-    encoded >>= BITS_NEEDED_TO_STORE_POS_WITHIN_BUCKET;
-    *bucket_index = encoded;
 }
 
 /* Helper to insert an element. Doesn't check if an element with a matching key
@@ -1009,24 +983,41 @@ int hashsetAddOrFind(hashset *s, void *element, void **existing) {
     }
 }
 
-/* Finds and returns the position within the hashset where an element with the
+/* Finds a position within the hashset where an element with the
  * given key should be inserted using hashsetInsertAtPosition. This is the first
  * phase in a two-phase insert operation and it can be used if you want to avoid
  * creating an element before you know if it already exists in the table or not,
  * and without a separate lookup to the table.
  *
- * The returned pointer is opaque, but if it's NULL, it means that an element
- * with the given key already exists in the table.
+ * The function returns 1 if a position was found where an element with the
+ * given key can be inserted. The position is stored in provided 'position'
+ * argument, which can be stack-allocated. This position should then be used in
+ * a call to hashsetInsertAtPosition.
  *
- * If a non-NULL pointer is returned, this pointer can be passed as the
- * 'position' argument to hashsetInsertAtPosition to insert an element. */
-void *hashsetFindPositionForInsert(hashset *s, void *key, void **existing) {
+ * If the function returns 0, it means that an an element with the given key
+ * already exists in the table. If an 'existing' pointer is provided, it is
+ * pointed to the existing element with the matching key.
+ *
+ * Example:
+ *
+ *     hashsetPosition position;
+ *     void *existing;
+ *     if (hashsetFindPositionForInsert(s, key, &position, &existing)) {
+ *         // Position found where we can insert an element with this key.
+ *         void *element = createNewElementWithKeyAndValue(key, some_value);
+ *         hashsetInsertAtPosition(s, element, &position);
+ *     } else {
+ *         // Existing element found with the matching key.
+ *         doSomethingWithExistingElement(existing);
+ *     }
+ */
+int hashsetFindPositionForInsert(hashset *s, void *key, hashsetPosition *position, void **existing) {
     uint64_t hash = hashKey(s, key);
     int pos_in_bucket, table_index;
     bucket *b = findBucket(s, hash, key, &pos_in_bucket, NULL);
     if (b != NULL) {
         if (existing) *existing = b->elements[pos_in_bucket];
-        return NULL;
+        return 0;
     } else {
         hashsetExpandIfNeeded(s);
         rehashStepOnWriteIfNeeded(s);
@@ -1042,8 +1033,12 @@ void *hashsetFindPositionForInsert(hashset *s, void *key, void **existing) {
         size_t bucket_index = ((uintptr_t)b - (uintptr_t)b0) / sizeof(bucket);
         assert(&s->tables[table_index][bucket_index] == b);
 
-        /* Encode position as pointer. */
-        return encodePositionInTable(bucket_index, pos_in_bucket, table_index);
+        /* Populate position struct. */
+        assert(position != NULL);
+        position->bucket = b;
+        position->pos_in_bucket = pos_in_bucket;
+        position->table_index = table_index;
+        return 1;
     }
 }
 
@@ -1052,14 +1047,10 @@ void *hashsetFindPositionForInsert(hashset *s, void *key, void **existing) {
  * finding the position. You must not access the hashset in any way between
  * hashsetFindPositionForInsert() and hashsetInsertAtPosition(), since even a
  * hashsetFind() may cause incremental rehashing to move elements in memory. */
-void hashsetInsertAtPosition(hashset *s, void *element, void *position) {
-    /* Decode position. */
-    size_t bucket_index;
-    int table_index, pos_in_bucket;
-    decodePositionInTable(position, &bucket_index, &pos_in_bucket, &table_index);
-
-    /* Insert the element at this position. */
-    bucket *b = &s->tables[table_index][bucket_index];
+void hashsetInsertAtPosition(hashset *s, void *element, hashsetPosition *position) {
+    bucket *b = position->bucket;
+    int pos_in_bucket = position->pos_in_bucket;
+    int table_index = position->table_index;
     assert(!isPositionFilled(b, pos_in_bucket));
     b->presence |= (1 << pos_in_bucket);
     b->elements[pos_in_bucket] = element;
@@ -1143,18 +1134,21 @@ int hashsetDelete(hashset *s, const void *key) {
  *
  * Example:
  *
- *     void *position;
+ *     hashsetPosition position;
  *     void **ref = hashsetTwoPhasePopFindRef(s, key, &position)
  *     if (ref != NULL) {
  *         void *element = *ref;
  *         // do something with the element, then...
- *         hashsetTwoPhasePopDelete(s, position);
+ *         hashsetTwoPhasePopDelete(s, &position);
  *     }
  */
 
 /* Like hashsetTwoPhasePopFind, but returns a pointer to where the element is
- * stored in the table, or NULL if no matching element is found. */
-void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, void **position) {
+ * stored in the table, or NULL if no matching element is found. The 'position'
+ * argument is populated with a representation of where the element is stored.
+ * This must be provided to hashsetTwoPhasePopDelete to complete the
+ * operation. */
+void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, hashsetPosition *position) {
     if (hashsetSize(s) == 0) return NULL;
     uint64_t hash = hashKey(s, key);
     int pos_in_bucket = 0;
@@ -1163,13 +1157,11 @@ void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, void **position) {
     if (b) {
         hashsetPauseRehashing(s);
 
-        /* Compute bucket index from bucket pointer. */
-        void *b0 = &s->tables[table_index][0];
-        size_t bucket_index = ((uintptr_t)b - (uintptr_t)b0) / sizeof(bucket);
-        assert(&s->tables[table_index][bucket_index] == b);
-
-        /* Encode position as pointer. */
-        *position = encodePositionInTable(bucket_index, pos_in_bucket, table_index);
+        /* Store position. */
+        assert(position != NULL);
+        position->bucket = b;
+        position->pos_in_bucket = pos_in_bucket;
+        position->table_index = table_index;
         return &b->elements[pos_in_bucket];
     } else {
         return NULL;
@@ -1177,16 +1169,15 @@ void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, void **position) {
 }
 
 /* Clears the position of the element in the hashset and resumes rehashing. The
- * element destructor is NOT called. The position is an opaque representation of
- * its position as found using hashsetTwoPhasePopFindRef(). */
-void hashsetTwoPhasePopDelete(hashset *s, void *position) {
-    /* Decode position. */
-    size_t bucket_index;
-    int table_index, pos_in_bucket;
-    decodePositionInTable(position, &bucket_index, &pos_in_bucket, &table_index);
+ * element destructor is NOT called. The position is acquired using a preceding
+ * call to hashsetTwoPhasePopFindRef(). */
+void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
+    /* Read position. */
+    bucket *b = position->bucket;
+    int pos_in_bucket = position->pos_in_bucket;
+    int table_index = position->table_index;
 
     /* Delete the element and resume rehashing. */
-    bucket *b = &s->tables[table_index][bucket_index];
     assert(isPositionFilled(b, pos_in_bucket));
     b->presence &= ~(1 << pos_in_bucket);
     s->used[table_index]--;

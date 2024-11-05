@@ -253,10 +253,11 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
         char key[32], val[32];
         snprintf(key, sizeof(key), "%d", j);
         snprintf(val, sizeof(val), "%d", count - j + 42);
-        void *position = hashsetFindPositionForInsert(s, key, NULL);
-        assert(position != NULL);
+        hashsetPosition position;
+        int ret = hashsetFindPositionForInsert(s, key, &position, NULL);
+        assert(ret == 1);
         keyval *e = create_keyval(key, val);
-        hashsetInsertAtPosition(s, e, position);
+        hashsetInsertAtPosition(s, e, &position);
     }
 
     if (count < 1000) {
@@ -279,14 +280,14 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
         char key[32], val[32];
         snprintf(key, sizeof(key), "%d", j);
         snprintf(val, sizeof(val), "%d", count - j + 42);
-        void *position;
+        hashsetPosition position;
         size_t size_before_find = hashsetSize(s);
         void **ref = hashsetTwoPhasePopFindRef(s, key, &position);
         assert(ref != NULL);
         keyval *e = *ref;
         assert(!strcmp(val, getval(e)));
         assert(hashsetSize(s) == size_before_find);
-        hashsetTwoPhasePopDelete(s, position);
+        hashsetTwoPhasePopDelete(s, &position);
         assert(hashsetSize(s) == size_before_find - 1);
     }
     assert(hashsetSize(s) == 0);
@@ -370,6 +371,24 @@ int test_scan(int argc, char **argv, int flags) {
         free(data);
     }
     return 0;
+}
+
+typedef struct {
+    uint64_t value;
+    uint64_t hash;
+} mock_hash_element;
+
+static mock_hash_element *mock_hash_element_create(uint64_t value, uint64_t hash) {
+    mock_hash_element *element = malloc(sizeof(mock_hash_element));
+    element->value = value;
+    element->hash = hash;
+    return element;
+}
+
+static uint64_t mock_hash_element_get_hash(const void *element) {
+    if (element == NULL) return 0UL;
+    mock_hash_element *mock = (mock_hash_element *)element;
+    return (mock->hash != 0) ? mock->hash : mock->value;
 }
 
 int test_iterator(int argc, char **argv, int flags) {
@@ -466,7 +485,7 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     }
     /* Check that elements inserted during the iteration were returned at most
      * once. */
-    unsigned long num_optional_returned;
+    unsigned long num_optional_returned = 0;
     for (size_t j = count; j < count * 2; j++) {
         assert(element_counts[j] <= 1);
         num_optional_returned += element_counts[j];
@@ -565,6 +584,89 @@ int test_random_element(int argc, char **argv, int flags) {
     } else {
         printf("To uncertain numbers to draw any conclusions about fairness.\n");
     }
+    return 0;
+}
+
+int test_random_element_with_long_chain(int argc, char **argv, int flags) {
+    UNUSED(argc);
+    UNUSED(argv);
+    UNUSED(flags);
+
+    /* We use an estimator of true probability.
+     * We determine how many samples to take based on how precise of a
+     * measurement we want to take, and how certain we want to be that the
+     * measurement is correct.
+     * https://en.wikipedia.org/wiki/Checking_whether_a_coin_is_fair#Estimator_of_true_probability
+     */
+
+    /* In a thousand runs the worst deviation seen was 0.018 +/- 0.01.
+     * This means the true deviation was at least 0.008 or 0.8% */
+    const double acceptable_probability_deviation = 0.015;
+
+    const size_t num_chained_elements = 64;
+    const size_t num_random_elements = 448;
+    const double p_fair = (double)num_chained_elements / (num_chained_elements + num_random_elements);
+
+    /* Precision of our measurement */
+    const double precision = (flags & UNIT_TEST_ACCURATE) ? 0.001 : 0.01;
+
+    /* This is confidence level for our measurement as the Z value of a normal
+     * distribution. 5 sigma corresponds to 0.00002% probability that our
+     * measurement is farther than 'precision' from the truth. This value is
+     * used in particle physics. */
+    const double z = 5;
+
+    const double n = p_fair * (1 - p_fair) * z * z / (precision * precision);
+    const size_t num_samples = (size_t)n + 1;
+
+    hashsetType type = {
+        .hashFunction = mock_hash_element_get_hash,
+        .elementDestructor = freekeyval,
+    };
+
+    hashset *s = hashsetCreate(&type);
+    hashsetExpand(s, num_random_elements + num_chained_elements);
+    uint64_t chain_hash = (uint64_t)genrand64_int64();
+    if (chain_hash == 0) chain_hash++;
+
+    /* add random elements */
+    for (size_t i = 0; i < num_random_elements; i++) {
+        uint64_t random_hash = (uint64_t)genrand64_int64();
+        if (random_hash == chain_hash) random_hash++;
+        hashsetAdd(s, mock_hash_element_create(random_hash, 0));
+    }
+
+    /* create long chain */
+    for (size_t i = 0; i < num_chained_elements; i++) {
+        hashsetAdd(s, mock_hash_element_create(i, chain_hash));
+    }
+
+    assert(!hashsetIsRehashing(s));
+
+    printf("Bucket fill: ");
+    hashsetHistogram(s);
+    printf("probe map  : ");
+    hashsetProbeMap(s);
+
+
+    printf("Taking %zu random samples\n", num_samples);
+    size_t count_chain_element_picked = 0;
+    for (size_t i = 0; i < num_samples; i++) {
+        mock_hash_element *element;
+        assert(hashsetFairRandomElement(s, (void **)&element));
+        if (element->hash == chain_hash) {
+            count_chain_element_picked++;
+        }
+    }
+    const double measured_probability = (double)count_chain_element_picked / num_samples;
+    const double deviation = fabs(measured_probability - p_fair);
+    printf("Measured probability: %.1f%%\n", measured_probability * 100);
+    printf("Expected probability: %.1f%%\n", p_fair * 100);
+    printf("Measured probability deviated %1.1f%% +/- %1.1f%% from expected probability\n",
+           deviation * 100, precision * 100);
+    TEST_ASSERT(deviation <= precision + acceptable_probability_deviation);
+
+    hashsetRelease(s);
     return 0;
 }
 

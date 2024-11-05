@@ -93,6 +93,15 @@ typedef struct {
     uint64_t fingerprint : 63;
 } hashsetIterator;
 
+/* Position, used by some hashset functions such as two-phase insert and delete.
+ * This is not opaque, to be able to place it on the stack, but don't access the
+ * fields. Only use it with the hashset functions. */
+typedef struct {
+    void *bucket;
+    uint16_t pos_in_bucket;
+    uint16_t table_index;
+} hashsetPosition;
+
 /* --- Prototypes --- */
 
 /* Hash function (global seed) */
@@ -131,13 +140,13 @@ int hashsetFind(hashset *s, const void *key, void **found);
 void **hashsetFindRef(hashset *s, const void *key);
 int hashsetAdd(hashset *s, void *element);
 int hashsetAddOrFind(hashset *s, void *element, void **existing);
-void *hashsetFindPositionForInsert(hashset *s, void *key, void **existing);
-void hashsetInsertAtPosition(hashset *s, void *element, void *position);
+int hashsetFindPositionForInsert(hashset *s, void *key, hashsetPosition *position, void **existing);
+void hashsetInsertAtPosition(hashset *s, void *element, hashsetPosition *position);
 int hashsetReplace(hashset *s, void *element);
 int hashsetPop(hashset *s, const void *key, void **popped);
 int hashsetDelete(hashset *s, const void *key);
-void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, void **position);
-void hashsetTwoPhasePopDelete(hashset *s, void *position);
+void **hashsetTwoPhasePopFindRef(hashset *s, const void *key, hashsetPosition *position);
+void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position);
 
 /* Iteration & scan */
 size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata, int flags);
