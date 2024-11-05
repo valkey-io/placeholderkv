@@ -393,7 +393,7 @@ ifeq ($(BUILD_FAST_FLOAT),yes)
   		FINAL_LIBS+= -lc++
 	else
 		# We also need to account for both 32-bit and 64 bit locations of this library. 
-		FINAL_LIBS+= -lstdc++
+		FINAL_LIBS+= -L/usr/lib/gcc/i686-linux-gnu/11/ -lstdc++
 	endif
 endif
 
