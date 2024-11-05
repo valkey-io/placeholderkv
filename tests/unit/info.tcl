@@ -424,8 +424,7 @@ start_server {tags {"info" "external:skip"}} {
             set info [r info clients]
             assert_equal [getInfoProperty $info pubsub_clients] {1}
             # non-pubsub clients should not be involved
-            catch {unsubscribe $rd2 {non-exist-chan}} e
-            assert_match {*NOSUB*} $e
+            assert_equal {0} [unsubscribe $rd2 {non-exist-chan}]
             set info [r info clients]
             assert_equal [getInfoProperty $info pubsub_clients] {1}
             # close all clients
