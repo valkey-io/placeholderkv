@@ -5544,12 +5544,12 @@ sds representClusterNodeFlags(sds ci, uint16_t flags) {
  * else each slot is added separately. */
 sds representSlotInfo(sds ci, uint16_t *slot_info_pairs, int slot_info_pairs_count) {
     for (int i = 0; i < slot_info_pairs_count; i += 2) {
-        unsigned long start = slot_info_pairs[i];
-        unsigned long end = slot_info_pairs[i + 1];
+        unsigned int start = slot_info_pairs[i];
+        unsigned int end = slot_info_pairs[i + 1];
         if (start == end) {
-            ci = sdscatfmt(ci, " %i", start);
+            ci = sdscatfmt(ci, " %u", start);
         } else {
-            ci = sdscatfmt(ci, " %i-%i", start, end);
+            ci = sdscatfmt(ci, " %u-%u", start, end);
         }
     }
     return ci;
