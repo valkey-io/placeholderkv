@@ -3237,7 +3237,6 @@ int dualChannelReplMainConnSendHandshake(connection *conn, sds *err) {
     ull2string(llstr, sizeof(llstr), server.rdb_client_id);
     *err = sendCommand(conn, "REPLCONF", "set-rdb-client-id", llstr, NULL);
     if (*err) return C_ERR;
-    server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
     return C_OK;
 }
 
@@ -3248,7 +3247,6 @@ int dualChannelReplMainConnRecvCapaReply(connection *conn, sds *err) {
         serverLog(LL_NOTICE, "Primary does not understand REPLCONF identify: %s", *err);
         return C_ERR;
     }
-    server.repl_state = REPL_STATE_SEND_PSYNC;
     return C_OK;
 }
 
@@ -3259,7 +3257,6 @@ int dualChannelReplMainConnSendPsync(connection *conn, sds *err) {
         *err = sdsnew(connGetLastError(conn));
         return C_ERR;
     }
-    server.repl_state = REPL_STATE_RECEIVE_PSYNC_REPLY;
     return C_OK;
 }
 
