@@ -48,9 +48,12 @@ jobs:
       - name: test
         run: |
           sudo apt-get install -y tcl8.6 tclx
-          ln -sf $(pwd)/build-release/bin/valkey-server $(pwd)/src
-          ln -sf $(pwd)/build-release/bin/valkey-cli $(pwd)/src
-          ln -sf $(pwd)/build-release/bin/valkey-benchmark $(pwd)/src
+          ln -sf $(pwd)/build-release/bin/valkey-server $(pwd)/src/valkey-server
+          ln -sf $(pwd)/build-release/bin/valkey-cli $(pwd)/src/valkey-cli
+          ln -sf $(pwd)/build-release/bin/valkey-benchmark $(pwd)/src/valkey-benchmark
+          ln -sf $(pwd)/build-release/bin/valkey-server $(pwd)/src/valkey-check-aof
+          ln -sf $(pwd)/build-release/bin/valkey-server $(pwd)/src/valkey-check-rdb
+          ln -sf $(pwd)/build-release/bin/valkey-server $(pwd)/src/valkey-sentinel
           ./runtest --verbose --tags -slow --dump-logs
       - name: unit tests
         run: |
