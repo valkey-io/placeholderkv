@@ -6,7 +6,7 @@ CXXFLAGS=-std=c++11 -O3 -fPIC
 SOURCES=fast_float_strtod.cpp
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -c $< -o $@
 
 .PHONY: all clean
 
