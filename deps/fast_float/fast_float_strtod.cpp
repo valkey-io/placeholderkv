@@ -30,6 +30,9 @@ extern "C"
         double temp = 0; 
         auto answer = fast_float::from_chars(nptr, nptr + strlen(nptr), temp);
         *value = temp; 
+        if (answer.ec != std::errc()) { 
+            errno = (answer.ec == std::errc::result_out_of_range) ? ERANGE : EINVAL;
+        }
         return const_cast<char *>(answer.ptr);
     }
 }
