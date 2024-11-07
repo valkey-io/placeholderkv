@@ -523,7 +523,7 @@ hashsetType commandSetType = {.elementGetKey = hashsetCommandGetKey,
                               .keyCompare = hashsetStringKeyCaseCompare,
                               .instant_rehashing = 1};
 
-/* Command set, hashed by char* string, stores serverCommand structs. */
+/* Sub-command set, hashed by char* string, stores serverCommand structs. */
 hashsetType subcommandSetType = {.elementGetKey = hashsetSubcommandGetKey,
                                  .hashFunction = dictCStrCaseHash,
                                  .keyCompare = hashsetStringKeyCaseCompare,
