@@ -23,8 +23,8 @@ from_chars_result from_chars(const char* first, const char* last, double& value,
 ...REMOVE THIS LATER...
 
 - [x] Create the wrapper.
-- [] Compile it.
-- [] Replace it with strtod.
+- [x] Compile it.
+- [x] Replace it with strtod.
 - [] Benchmark it.
 - [] Run it on different platforms.
 

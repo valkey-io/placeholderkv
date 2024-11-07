@@ -50,6 +50,7 @@
 #include "util.h"
 #include "sha256.h"
 #include "config.h"
+#include "../deps/fast_float/fast_float_strtod.h"
 
 #define UNUSED(x) ((void)(x))
 
@@ -595,7 +596,7 @@ int string2ld(const char *s, size_t slen, long double *dp) {
 int string2d(const char *s, size_t slen, double *dp) {
     errno = 0;
     char *eptr;
-    *dp = strtod(s, &eptr);
+    eptr = fast_float_strtod(s, dp);
     if (slen == 0 || isspace(((const char *)s)[0]) || (size_t)(eptr - (char *)s) != slen ||
         (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp))
         return 0;
