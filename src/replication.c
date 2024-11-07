@@ -2698,6 +2698,7 @@ static int dualChannelReplHandleEndOffsetResponse(connection *conn, sds *err) {
     /* Initiate repl_provisional_primary to act as this replica temp primary until RDB is loaded */
     server.repl_provisional_primary.conn = server.repl_transfer_s;
     memcpy(server.repl_provisional_primary.replid, primary_replid, CONFIG_RUN_ID_SIZE);
+    server.repl_provisional_primary.replid[CONFIG_RUN_ID_SIZE] = '\0';
     server.repl_provisional_primary.reploff = reploffset;
     server.repl_provisional_primary.read_reploff = reploffset;
     server.repl_provisional_primary.dbid = dbid;
@@ -4270,6 +4271,7 @@ void replicationResurrectProvisionalPrimary(void) {
      * drain. */
     replicationCreatePrimaryClientWithHandler(server.repl_transfer_s, server.repl_provisional_primary.dbid, NULL);
     memcpy(server.primary->replid, server.repl_provisional_primary.replid, CONFIG_RUN_ID_SIZE);
+    server.primary->replid[CONFIG_RUN_ID_SIZE] = '\0';
     server.primary->reploff = server.repl_provisional_primary.reploff;
     server.primary->read_reploff = server.repl_provisional_primary.read_reploff;
     server.primary_repl_offset = server.primary->reploff;
