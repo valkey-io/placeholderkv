@@ -158,8 +158,7 @@ void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position);
 
 /* Iteration & scan */
 size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata);
-size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata,
-                         void *(*defragfn)(void *), int flags);
+size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata, void *(*defragfn)(void *), int flags);
 void hashsetInitIterator(hashsetIterator *iter, hashset *s);
 void hashsetInitSafeIterator(hashsetIterator *iter, hashset *s);
 void hashsetResetIterator(hashsetIterator *iter);

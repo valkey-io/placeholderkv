@@ -302,7 +302,7 @@ struct hashset {
 struct hashsetStats {
     int table_index;                /* 0 or 1 (old or new while rehashing). */
     unsigned long toplevel_buckets; /* Number of buckets in table. */
-    unsigned long child_buckets;  /* Number of child buckets. */
+    unsigned long child_buckets;    /* Number of child buckets. */
     unsigned long size;             /* Capacity of toplevel buckets. */
     unsigned long used;             /* Number of elements in the table. */
     unsigned long max_chain_len;    /* Length of longest bucket chain. */
@@ -1241,7 +1241,7 @@ int hashsetPop(hashset *s, const void *key, void **popped) {
         if (b->chained && !hashsetIsRehashingPaused(s)) {
             /* Rehashing is paused while iterating and when a scan callback is
              * running. In those cases, we do the compaction in the scan and
-             * interator code instead. */
+             * iterator code instead. */
             fillBucketHole(s, b, pos_in_bucket, table_index);
         }
         hashsetShrinkIfNeeded(s);
@@ -1337,8 +1337,8 @@ void hashsetTwoPhasePopDelete(hashset *s, hashsetPosition *position) {
     if (b->chained && !hashsetIsRehashingPaused(s)) {
         /* Rehashing paused also means bucket chain compaction paused. It is
          * paused while iterating and when a scan callback is running, to be
-         * able to live up to the scan and iterator guarantes. In those cases,
-         * we do the compaction in the scan and interator code instead. */
+         * able to live up to the scan and iterator guarantees. In those cases,
+         * we do the compaction in the scan and iterator code instead. */
         fillBucketHole(s, b, pos_in_bucket, table_index);
     }
 }
@@ -1397,8 +1397,7 @@ size_t hashsetScan(hashset *s, size_t cursor, hashsetScanFunction fn, void *priv
  *   purpose of defragmentation) and updating the pointer to the element inside
  *   the hash table.
  */
-size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata,
-                         void *(*defragfn)(void *), int flags) {
+size_t hashsetScanDefrag(hashset *s, size_t cursor, hashsetScanFunction fn, void *privdata, void *(*defragfn)(void *), int flags) {
     if (hashsetSize(s) == 0) return 0;
 
     /* Prevent elements from being moved around during the scan call, as a

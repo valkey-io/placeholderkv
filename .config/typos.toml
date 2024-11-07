@@ -21,6 +21,7 @@ extend-ignore-re = [
     "Georg Nees",
     "\\[l\\]ist", # eval.c
     "LKE", # test_rax.c
+    "ment", # hashset.c, hyphenized "ele-ment"
 ]
 
 [type.tcl]
