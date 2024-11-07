@@ -1,5 +1,3 @@
-# Author: Roshan Swain <swainroshan001@gmail.com>
-
 CXX?=g++
 CXXFLAGS=-std=c++11 -O3 -fPIC
 
