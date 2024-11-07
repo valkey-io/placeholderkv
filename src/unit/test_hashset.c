@@ -417,11 +417,6 @@ int test_iterator(int argc, char **argv, int flags) {
     uint8_t *element;
     while (hashsetNext(&iter, (void **)&element)) {
         num_returned++;
-        if (!(element >= element_array && element < element_array + count)) {
-            printf("Element pointer out of range: %p but range is [%p, %p)\n",
-                   element, element_array, element_array + count);
-            printf("\n");
-        }
         assert(element >= element_array && element < element_array + count);
         /* increment element at this position as a counter */
         (*element)++;
