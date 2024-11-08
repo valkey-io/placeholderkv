@@ -2670,7 +2670,6 @@ void initServer(void) {
     server.aof_state = server.aof_enabled ? AOF_ON : AOF_OFF;
     server.fsynced_reploff = server.aof_enabled ? 0 : -1;
     server.hz = server.config_hz;
-    server.pid = getpid();
     server.in_fork_child = CHILD_TYPE_NONE;
     server.rdb_pipe_read = -1;
     server.rdb_child_exit_pipe = -1;
@@ -6883,6 +6882,7 @@ __attribute__((weak)) int main(int argc, char **argv) {
     if (exec_name == NULL) exec_name = argv[0];
     server.sentinel_mode = checkForSentinelMode(argc, argv, exec_name);
     initServerConfig();
+    server.pid = getpid();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
     moduleInitModulesSystem();
