@@ -2259,7 +2259,6 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
  * The function parameter 'argc' indicates the number of updated arguments, and 'argv'
  * represents the values of the updated arguments.
  * Once 'CONFIG REWRITE' command is called, the updated argument values can be saved into conf file.
- * One example can be found in file tests/modules/moduleparameter.c.
  *
  * Returns:
  * - VALKEYMODULE_OK on successfully updating.
