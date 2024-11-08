@@ -604,7 +604,7 @@ start_server {tags {"scripting"}} {
             }
         } e
         set _ $e
-    } {*Library names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
+    } {*Function names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
 
     test {LIBRARIES - test registration with empty name} {
         catch {
@@ -613,7 +613,7 @@ start_server {tags {"scripting"}} {
             }
         } e
         set _ $e
-    } {*Library names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
+    } {*Function names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
 
     test {LIBRARIES - math.random from function load} {
         catch {
