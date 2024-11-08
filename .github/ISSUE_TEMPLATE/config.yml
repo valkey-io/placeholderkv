@@ -9,6 +9,9 @@ contact_links:
   - name: Chat with us on Matrix?
     url: https://matrix.to/#/#valkey:matrix.org
     about: We are on Matrix too!
+  - name: Chat with us on Slack?
+    url: https://valkey-oss-developer.slack.com/archives/C071Q2B3RNC
+    about: We are on Slack too!
   - name: Documentation issue?
     url: https://github.com/valkey-io/valkey-doc/issues
     about: Report it on the valkey-doc repo.
