@@ -2716,6 +2716,7 @@ int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long en
 void moduleDefragGlobals(void);
 void *moduleGetHandleByName(char *modulename);
 int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
+struct scriptRunCtx *moduleGetScriptRunCtxFromFunctionCtx(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx);
 
 /* Utils */
 long long ustime(void);

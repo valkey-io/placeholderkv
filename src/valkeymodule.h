@@ -794,6 +794,16 @@ typedef void (*ValkeyModuleInfoFunc)(ValkeyModuleInfoCtx *ctx, int for_crash_rep
 typedef void (*ValkeyModuleDefragFunc)(ValkeyModuleDefragCtx *ctx);
 typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 
+/* Type definitions for implementing scripting engines modules. */
+typedef struct ValkeyModuleScriptingEngineFunctionLibrary ValkeyModuleScriptingEngineFunctionLibrary;
+typedef struct ValkeyModuleScriptingEngineFunctionCallCtx ValkeyModuleScriptingEngineFunctionCallCtx;
+typedef int (*ValkeyModuleScriptingEngineCreateFunc)(void *engine_ctx, ValkeyModuleScriptingEngineFunctionLibrary *li, const char *code, size_t timeout, char **err);
+typedef void (*ValkeyModuleScriptingEngineFunctionCallFunc)(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx, void *engine_ctx, void *compiled_function, ValkeyModuleString **keys, size_t nkeys, ValkeyModuleString **args, size_t nargs);
+typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(void *engine_ctx);
+typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(void *compiled_function);
+typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(void *engine_ctx);
+typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(void *engine_ctx, void *compiled_function);
+
 /* ------------------------- End of common defines ------------------------ */
 
 /* ----------- The rest of the defines are only for modules ----------------- */
@@ -1649,6 +1659,28 @@ VALKEYMODULE_API int (*ValkeyModule_RdbSave)(ValkeyModuleCtx *ctx,
                                              ValkeyModuleRdbStream *stream,
                                              int flags) VALKEYMODULE_ATTR;
 
+VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *ctx,
+                                                             const char *engine_name,
+                                                             void *engine_ctx,
+                                                             ValkeyModuleScriptingEngineCreateFunc create_func,
+                                                             ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                                                             ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
+                                                             ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
+                                                             ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
+                                                             ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func) VALKEYMODULE_ATTR;
+
+VALKEYMODULE_API int (*ValkeyModule_UnregisterScriptingEngine)(ValkeyModuleCtx *ctx,
+                                                               const char *engine_name) VALKEYMODULE_ATTR;
+
+VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngineFunction)(const char *name,
+                                                                     void *function,
+                                                                     ValkeyModuleScriptingEngineFunctionLibrary *li,
+                                                                     const char *desc,
+                                                                     uint64_t f_flags,
+                                                                     char **err) VALKEYMODULE_ATTR;
+
+VALKEYMODULE_API ValkeyModuleCtx *(*ValkeyModule_GetModuleCtxFromFunctionCallCtx)(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx);
+
 #define ValkeyModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
 /* This is included inline inside each Valkey module. */
@@ -2015,6 +2047,10 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(RdbStreamFree);
     VALKEYMODULE_GET_API(RdbLoad);
     VALKEYMODULE_GET_API(RdbSave);
+    VALKEYMODULE_GET_API(RegisterScriptingEngine);
+    VALKEYMODULE_GET_API(UnregisterScriptingEngine);
+    VALKEYMODULE_GET_API(RegisterScriptingEngineFunction);
+    VALKEYMODULE_GET_API(GetModuleCtxFromFunctionCallCtx);
 
     if (ValkeyModule_IsModuleNameBusy && ValkeyModule_IsModuleNameBusy(name)) return VALKEYMODULE_ERR;
     ValkeyModule_SetModuleAttribs(ctx, name, ver, apiver);

@@ -14,6 +14,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include "zmalloc.h"
 
 /*
  * Copy string src to buffer dst of size dsize.  At most dsize-1
@@ -81,6 +84,24 @@ valkey_strlcat(char *dst, const char *src, size_t dsize)
 }
 
 
+/*
+ * This function is similar to asprintf function, but it uses zmalloc for
+ * allocating the string buffer.
+ *
+ * IMPORTANT: don't forget to free the buffer when no longer needed.
+ */
+char *valkey_asprintf(char const *fmt, ...) {
+    va_list args;
 
+    va_start(args, fmt);
+    size_t str_len = vsnprintf(NULL, 0, fmt, args) + 1;
+    va_end(args);
 
+    char* str = zmalloc(str_len);
 
+    va_start(args, fmt);
+    vsnprintf(str, str_len, fmt, args);
+    va_end(args);
+
+    return str;
+}

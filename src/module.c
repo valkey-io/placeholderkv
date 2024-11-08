@@ -67,6 +67,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <string.h>
+#include "functions.h"
 
 /* --------------------------------------------------------------------------
  * Private data structures used by the modules system. Those are data
@@ -172,6 +173,11 @@ struct ValkeyModuleCtx {
                                            VM_Call should be executed as, if set */
 };
 typedef struct ValkeyModuleCtx ValkeyModuleCtx;
+
+struct ValkeyModuleScriptingEngineFunctionCallCtx {
+    ValkeyModuleCtx module_ctx;
+    scriptRunCtx run_ctx;
+};
 
 #define VALKEYMODULE_CTX_NONE (0)
 #define VALKEYMODULE_CTX_AUTO_MEMORY (1 << 0)
@@ -13032,6 +13038,168 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
     return VALKEYMODULE_OK;
 }
 
+/* Registers a new scripting engine in the server.
+ *
+ * - `engine_name`: the name of the scripting engine. This name will match
+ *                   against the engine name specified in the script header
+ *                   using a shebang.
+ *
+ * - `engine_ctx`: engine specific context pointer.
+ *
+ * - `create_func`: Library create function callback. When a new script is
+ *                  loaded, this callback will be called with the script code.
+ *                  `VM_RegisterScriptingEngineFunction` function should be
+ *                  called inside this callback to register the library
+ *                  functions declared in the script code.
+ *
+ * - `call_func`: the callback function called when `FCALL` command is called
+ *                on a function registered in this engine.
+ *
+ * - `get_used_memory_func`: function callback to get current used memory by the
+ *                           engine.
+ *
+ * - `get_function_memory_overhead_func`: function callback to return memory
+ *                                        overhead for a given function.
+ *
+ * - `get_engine_memory_overhead_func`: function callback to return memory
+ *                                      overhead of the engine.
+ *
+ * - `free_function_func`: function callback to free the memory of a registered
+ *                         engine function.
+ */
+int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
+                               const char *engine_name,
+                               void *engine_ctx,
+                               ValkeyModuleScriptingEngineCreateFunc create_func,
+                               ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                               ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
+                               ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
+                               ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
+                               ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func) {
+    serverLog(LL_DEBUG, "Registering a new scripting engine: %s", engine_name);
+
+    if (functionsRegisterEngine(engine_name,
+                                ctx->module,
+                                engine_ctx,
+                                create_func,
+                                call_func,
+                                get_used_memory_func,
+                                get_function_memory_overhead_func,
+                                get_engine_memory_overhead_func,
+                                free_function_func) != C_OK) {
+        return VALKEYMODULE_ERR;
+    }
+
+    return VALKEYMODULE_OK;
+}
+
+/* Removes the scripting engine from the server.
+ *
+ * `engine_name` is the name of the scripting engine.
+ *
+ */
+int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
+    UNUSED(ctx);
+    functionsUnregisterEngine(engine_name);
+    return VALKEYMODULE_OK;
+}
+
+
+/* Registers a new scripting function in the engine function library.
+ *
+ * This function should only be called in the context of the scripting engine
+ * creation callback function.
+ *
+ * - `name`: the name of the function.
+ *
+ * - `function`: the generic pointer to the function being registered.
+ *
+ * - `li`: the pointer to the opaque structure that holds the functions
+ *         registered in the library that is currently being created.
+ *
+ * - `desc`: an optional description for the function.
+ *
+ * - `flags`: optional flags of the function. See `SCRIPT_FLAG_*` constants.
+ *
+ * - `err`: the pointer that will hold the error message in case of an error.
+ */
+int VM_RegisterScriptingEngineFunction(const char *name,
+                                       void *function,
+                                       ValkeyModuleScriptingEngineFunctionLibrary *li,
+                                       const char *desc,
+                                       uint64_t f_flags,
+                                       char **err) {
+    sds fname = sdsnew(name);
+    sds fdesc = sdsnew(desc);
+    if (functionLibCreateFunction(fname, function, li, fdesc, f_flags, err) != C_OK) {
+        sdsfree(fname);
+        sdsfree(fdesc);
+        return VALKEYMODULE_ERR;
+    }
+
+    return VALKEYMODULE_OK;
+}
+
+/* Implements the scripting engine function call logic.
+ *
+ */
+void fcallCommandGeneric(dict *functions, client *c, int ro) {
+    /* Functions need to be fed to monitors before the commands they execute. */
+    replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
+
+    robj *function_name = c->argv[1];
+    dictEntry *de = c->cur_script;
+    if (!de) de = dictFind(functions, function_name->ptr);
+    if (!de) {
+        addReplyError(c, "Function not found");
+        return;
+    }
+    functionInfo *fi = dictGetVal(de);
+    engine *engine = fi->li->ei->engine;
+
+    long long numkeys;
+    /* Get the number of arguments that are keys */
+    if (getLongLongFromObject(c->argv[2], &numkeys) != C_OK) {
+        addReplyError(c, "Bad number of keys provided");
+        return;
+    }
+    if (numkeys > (c->argc - 3)) {
+        addReplyError(c, "Number of keys can't be greater than number of args");
+        return;
+    } else if (numkeys < 0) {
+        addReplyError(c, "Number of keys can't be negative");
+        return;
+    }
+
+    struct ValkeyModuleScriptingEngineFunctionCallCtx func_ctx;
+
+    if (scriptPrepareForRun(&func_ctx.run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK) return;
+
+    if (fi->li->ei->engineModule != NULL) {
+        moduleCreateContext(&func_ctx.module_ctx, fi->li->ei->engineModule, VALKEYMODULE_CTX_NONE);
+        func_ctx.module_ctx.client = func_ctx.run_ctx.original_client;
+    }
+
+    engine->call(&func_ctx, engine->engine_ctx, fi->function, c->argv + 3, numkeys, c->argv + 3 + numkeys,
+                 c->argc - 3 - numkeys);
+    scriptResetRun(&func_ctx.run_ctx);
+
+    if (fi->li->ei->engineModule != NULL) {
+        moduleFreeContext(&func_ctx.module_ctx);
+    }
+}
+
+/* Allows to get the module context pointer from the function call context pointer.
+ *
+ */
+ValkeyModuleCtx *VM_GetModuleCtxFromFunctionCallCtx(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx) {
+    return &func_ctx->module_ctx;
+}
+
+scriptRunCtx *moduleGetScriptRunCtxFromFunctionCtx(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx) {
+    return &func_ctx->run_ctx;
+}
+
 /* MODULE command.
  *
  * MODULE LIST
@@ -13901,4 +14069,8 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbStreamFree);
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
+    REGISTER_API(RegisterScriptingEngine);
+    REGISTER_API(UnregisterScriptingEngine);
+    REGISTER_API(RegisterScriptingEngineFunction);
+    REGISTER_API(GetModuleCtxFromFunctionCallCtx);
 }

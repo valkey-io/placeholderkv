@@ -52,7 +52,7 @@
 #include "script.h"
 #include "valkeymodule.h"
 
-typedef struct functionLibInfo functionLibInfo;
+typedef struct ValkeyModuleScriptingEngineFunctionLibrary ValkeyModuleScriptingEngineFunctionLibrary;
 
 typedef struct engine {
     /* engine specific context */
@@ -65,19 +65,23 @@ typedef struct engine {
      * timeout - timeout for the library creation (0 for no timeout)
      * err - description of error (if occurred)
      * returns C_ERR on error and set err to be the error message */
-    int (*create)(void *engine_ctx, functionLibInfo *li, sds code, size_t timeout, sds *err);
+    int (*create)(void *engine_ctx,
+                  ValkeyModuleScriptingEngineFunctionLibrary *li,
+                  const char *code,
+                  size_t timeout,
+                  char **err);
 
-    /* Invoking a function, r_ctx is an opaque object (from engine POV).
-     * The r_ctx should be used by the engine to interaction with the server,
+    /* Invoking a function, func_ctx is an opaque object (from engine POV).
+     * The func_ctx should be used by the engine to interaction with the server,
      * such interaction could be running commands, set resp, or set
      * replication mode
      */
-    void (*call)(scriptRunCtx *r_ctx,
+    void (*call)(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx,
                  void *engine_ctx,
                  void *compiled_function,
-                 robj **keys,
+                 ValkeyModuleString **keys,
                  size_t nkeys,
-                 robj **args,
+                 ValkeyModuleString **args,
                  size_t nargs);
 
     /* get current used memory by the engine */
@@ -98,32 +102,43 @@ typedef struct engine {
 /* Hold information about an engine.
  * Used on rdb.c so it must be declared here. */
 typedef struct engineInfo {
-    sds name;       /* Name of the engine */
-    engine *engine; /* engine callbacks that allows to interact with the engine */
-    client *c;      /* Client that is used to run commands */
+    sds name;                   /* Name of the engine */
+    ValkeyModule *engineModule; /* the module that implements the scripting engine */
+    engine *engine;             /* engine callbacks that allows to interact with the engine */
+    client *c;                  /* Client that is used to run commands */
 } engineInfo;
 
 /* Hold information about the specific function.
  * Used on rdb.c so it must be declared here. */
 typedef struct functionInfo {
-    sds name;            /* Function name */
-    void *function;      /* Opaque object that set by the function's engine and allow it
-                            to run the function, usually it's the function compiled code. */
-    functionLibInfo *li; /* Pointer to the library created the function */
-    sds desc;            /* Function description */
-    uint64_t f_flags;    /* Function flags */
+    sds name;                                       /* Function name */
+    void *function;                                 /* Opaque object that set by the function's engine and allow it
+                                                       to run the function, usually it's the function compiled code. */
+    ValkeyModuleScriptingEngineFunctionLibrary *li; /* Pointer to the library created the function */
+    sds desc;                                       /* Function description */
+    uint64_t f_flags;                               /* Function flags */
 } functionInfo;
 
 /* Hold information about the specific library.
  * Used on rdb.c so it must be declared here. */
-struct functionLibInfo {
+struct ValkeyModuleScriptingEngineFunctionLibrary {
     sds name;        /* Library name */
     dict *functions; /* Functions dictionary */
     engineInfo *ei;  /* Pointer to the function engine */
     sds code;        /* Library code */
 };
 
-int functionsRegisterEngine(const char *engine_name, engine *engine_ctx);
+int functionsRegisterEngine(const char *engine_name,
+                            ValkeyModule *engine_module,
+                            void *engine_ctx,
+                            ValkeyModuleScriptingEngineCreateFunc create_func,
+                            ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                            ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
+                            ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
+                            ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
+                            ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func);
+int functionsUnregisterEngine(const char *engine_name);
+
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout);
 unsigned long functionsMemory(void);
 unsigned long functionsMemoryOverhead(void);
@@ -138,7 +153,14 @@ void functionsLibCtxFree(functionsLibCtx *lib_ctx);
 void functionsLibCtxClear(functionsLibCtx *lib_ctx);
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx);
 
-int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
+void fcallCommandGeneric(dict *functions, client *c, int ro);
+
+int functionLibCreateFunction(sds name,
+                              void *function,
+                              ValkeyModuleScriptingEngineFunctionLibrary *li,
+                              sds desc,
+                              uint64_t f_flags,
+                              char **err);
 
 int luaEngineInitEngine(void);
 int functionsInit(void);
