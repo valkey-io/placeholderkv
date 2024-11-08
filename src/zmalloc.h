@@ -48,7 +48,7 @@
 #endif
 
 #elif defined(USE_JEMALLOC)
-#define ZMALLOC_LIB                                                                                                    \
+#define ZMALLOC_LIB \
     ("jemalloc-" __xstr(JEMALLOC_VERSION_MAJOR) "." __xstr(JEMALLOC_VERSION_MINOR) "." __xstr(JEMALLOC_VERSION_BUGFIX))
 #include <jemalloc/jemalloc.h>
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
@@ -76,7 +76,7 @@
 #define ZMALLOC_LIB "libc"
 #define USE_LIBC 1
 
-#if !defined(NO_MALLOC_USABLE_SIZE) && (defined(__GLIBC__) || defined(__FreeBSD__) || defined(__DragonFly__) ||        \
+#if !defined(NO_MALLOC_USABLE_SIZE) && (defined(__GLIBC__) || defined(__FreeBSD__) || defined(__DragonFly__) || \
                                         defined(__HAIKU__) || defined(USE_MALLOC_USABLE_SIZE))
 
 /* Includes for malloc_usable_size() */
@@ -106,6 +106,15 @@
 #if defined(USE_JEMALLOC) && defined(JEMALLOC_FRAG_HINT)
 #define HAVE_DEFRAG
 #endif
+
+/* The zcalloc symbol is a symbol name already used by zlib, which is defining
+ * other names using the "z" prefix specific to zlib. In practice, linking
+ * valkey with a static openssl, which itself might depend on a static libz
+ * will result in link time error rejecting multiple symbol definitions. */
+#define zmalloc valkey_malloc
+#define zcalloc valkey_calloc
+#define zrealloc valkey_realloc
+#define zfree valkey_free
 
 /* 'noinline' attribute is intended to prevent the `-Wstringop-overread` warning
  * when using gcc-12 later with LTO enabled. It may be removed once the

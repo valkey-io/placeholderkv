@@ -98,15 +98,6 @@ ifeq ($(USE_JEMALLOC),no)
 	MALLOC=libc
 endif
 
-# Some unit tests compile files a second time to get access to static functions, the "--allow-multiple-definition" flag
-# allows us to do that without an error, by using the first instance of function. This behavior can also be used
-# to tweak behavior of code just for unit tests. The version of ld on MacOS apparently always does this.
-ifneq ($(uname_S),Darwin)
-	ALLOW_DUPLICATE_FLAG=-Wl,--allow-multiple-definition
-else
-	ALLOW_DUPLICATE_FLAG=
-endif
-
 ifdef SANITIZER
 ifeq ($(SANITIZER),address)
 	MALLOC=libc
@@ -494,7 +485,7 @@ $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 
 # valkey-unit-tests
 $(ENGINE_UNIT_TESTS): $(ENGINE_TEST_OBJ) $(ENGINE_LIB_NAME)
-	$(SERVER_LD) $(ALLOW_DUPLICATE_FLAG) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS)
+	$(SERVER_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS)
 
 # valkey-sentinel
 $(ENGINE_SENTINEL_NAME): $(SERVER_NAME)
@@ -513,7 +504,7 @@ $(TLS_MODULE_NAME): $(SERVER_NAME)
 	$(QUIET_CC)$(CC) -o $@ tls.c -shared -fPIC $(TLS_MODULE_CFLAGS) $(TLS_CLIENT_LIBS)
 
 # valkey-rdma.so
-$(RDMA_MODULE_NAME): $(REDIS_SERVER_NAME)
+$(RDMA_MODULE_NAME): $(SERVER_NAME)
 	$(QUIET_CC)$(CC) -o $@ rdma.c -shared -fPIC $(RDMA_MODULE_CFLAGS)
 
 # valkey-cli

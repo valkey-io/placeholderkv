@@ -109,11 +109,69 @@ const char *replstateToString(int replstate);
  * function of the server may be called from other threads. */
 void nolocks_localtime(struct tm *tmp, time_t t, time_t tz, int dst);
 
+/* Formats the timezone offset into a string. daylight_active indicates whether dst is active (1)
+ * or not (0). */
+void formatTimezone(char *buf, size_t buflen, int timezone, int daylight_active) {
+    serverAssert(buflen >= 7);
+    serverAssert(timezone >= -50400 && timezone <= 43200);
+    // Adjust the timezone for daylight saving, if active
+    int total_offset = (-1) * timezone + 3600 * daylight_active;
+    int hours = abs(total_offset / 3600);
+    int minutes = abs(total_offset % 3600) / 60;
+    buf[0] = total_offset >= 0 ? '+' : '-';
+    buf[1] = '0' + hours / 10;
+    buf[2] = '0' + hours % 10;
+    buf[3] = ':';
+    buf[4] = '0' + minutes / 10;
+    buf[5] = '0' + minutes % 10;
+    buf[6] = '\0';
+}
+
+bool hasInvalidLogfmtChar(const char *msg) {
+    if (msg == NULL) return false;
+
+    for (int i = 0; msg[i] != '\0'; i++) {
+        if (msg[i] == '"' || msg[i] == '\n' || msg[i] == '\r') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Modifies the input string by:
+ *      replacing \r and \n with whitespace
+ *      replacing " with '
+ *
+ * Parameters:
+ *   safemsg    - A char pointer where the modified message will be stored
+ *   safemsglen - size of safemsg
+ *   msg        - The original message */
+void filterInvalidLogfmtChar(char *safemsg, size_t safemsglen, const char *msg) {
+    serverAssert(safemsglen == LOG_MAX_LEN);
+    if (msg == NULL) return;
+
+    size_t index = 0;
+    while (index < safemsglen - 1 && msg[index] != '\0') {
+        if (msg[index] == '"') {
+            safemsg[index] = '\'';
+        } else if (msg[index] == '\n' || msg[index] == '\r') {
+            safemsg[index] = ' ';
+        } else {
+            safemsg[index] = msg[index];
+        }
+        index++;
+    }
+    safemsg[index] = '\0';
+}
+
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer. */
 void serverLogRaw(int level, const char *msg) {
     const int syslogLevelMap[] = {LOG_DEBUG, LOG_INFO, LOG_NOTICE, LOG_WARNING};
     const char *c = ".-*#";
+    const char *verbose_level[] = {"debug", "info", "notice", "warning"};
+    const char *roles[] = {"sentinel", "RDB/AOF", "replica", "primary"};
+    const char *role_chars = "XCSM";
     FILE *fp;
     char buf[64];
     int rawmode = (level & LL_RAW);
@@ -133,23 +191,54 @@ void serverLogRaw(int level, const char *msg) {
     } else {
         int off;
         struct timeval tv;
-        int role_char;
         pid_t pid = getpid();
         int daylight_active = atomic_load_explicit(&server.daylight_active, memory_order_relaxed);
 
         gettimeofday(&tv, NULL);
         struct tm tm;
         nolocks_localtime(&tm, tv.tv_sec, server.timezone, daylight_active);
-        off = strftime(buf, sizeof(buf), "%d %b %Y %H:%M:%S.", &tm);
-        snprintf(buf + off, sizeof(buf) - off, "%03d", (int)tv.tv_usec / 1000);
-        if (server.sentinel_mode) {
-            role_char = 'X'; /* Sentinel. */
-        } else if (pid != server.pid) {
-            role_char = 'C'; /* RDB / AOF writing child. */
-        } else {
-            role_char = (server.primary_host ? 'S' : 'M'); /* replica or Primary. */
+        switch (server.log_timestamp_format) {
+        case LOG_TIMESTAMP_LEGACY:
+            off = strftime(buf, sizeof(buf), "%d %b %Y %H:%M:%S.", &tm);
+            snprintf(buf + off, sizeof(buf) - off, "%03d", (int)tv.tv_usec / 1000);
+            break;
+
+        case LOG_TIMESTAMP_ISO8601:
+            off = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.", &tm);
+            char tzbuf[7];
+            formatTimezone(tzbuf, sizeof(tzbuf), server.timezone, server.daylight_active);
+            snprintf(buf + off, sizeof(buf) - off, "%03d%s", (int)tv.tv_usec / 1000, tzbuf);
+            break;
+
+        case LOG_TIMESTAMP_MILLISECONDS:
+            snprintf(buf, sizeof(buf), "%lld", (long long)tv.tv_sec * 1000 + (long long)tv.tv_usec / 1000);
+            break;
         }
-        fprintf(fp, "%d:%c %s %c %s\n", (int)getpid(), role_char, buf, c[level], msg);
+        int role_index;
+        if (server.sentinel_mode) {
+            role_index = 0; /* Sentinel. */
+        } else if (pid != server.pid) {
+            role_index = 1; /* RDB / AOF writing child. */
+        } else {
+            role_index = (server.primary_host ? 2 : 3); /* Replica or Primary. */
+        }
+        switch (server.log_format) {
+        case LOG_FORMAT_LOGFMT:
+            if (hasInvalidLogfmtChar(msg)) {
+                char safemsg[LOG_MAX_LEN];
+                filterInvalidLogfmtChar(safemsg, LOG_MAX_LEN, msg);
+                fprintf(fp, "pid=%d role=%s timestamp=\"%s\" level=%s message=\"%s\"\n", (int)getpid(), roles[role_index],
+                        buf, verbose_level[level], safemsg);
+            } else {
+                fprintf(fp, "pid=%d role=%s timestamp=\"%s\" level=%s message=\"%s\"\n", (int)getpid(), roles[role_index],
+                        buf, verbose_level[level], msg);
+            }
+            break;
+
+        case LOG_FORMAT_LEGACY:
+            fprintf(fp, "%d:%c %s %c %s\n", (int)getpid(), role_chars[role_index], buf, c[level], msg);
+            break;
+        }
     }
     fflush(fp);
 
@@ -1090,12 +1179,13 @@ void databasesCron(void) {
         /* Rehash */
         if (server.activerehashing) {
             uint64_t elapsed_us = 0;
+            uint64_t threshold_us = 1 * 1000000 / server.hz / 100;
             for (j = 0; j < dbs_per_call; j++) {
                 serverDb *db = &server.db[rehash_db % server.dbnum];
-                elapsed_us += kvstoreIncrementallyRehash(db->keys, INCREMENTAL_REHASHING_THRESHOLD_US - elapsed_us);
-                if (elapsed_us >= INCREMENTAL_REHASHING_THRESHOLD_US) break;
-                elapsed_us += kvstoreIncrementallyRehash(db->expires, INCREMENTAL_REHASHING_THRESHOLD_US - elapsed_us);
-                if (elapsed_us >= INCREMENTAL_REHASHING_THRESHOLD_US) break;
+                elapsed_us += kvstoreIncrementallyRehash(db->keys, threshold_us - elapsed_us);
+                if (elapsed_us >= threshold_us) break;
+                elapsed_us += kvstoreIncrementallyRehash(db->expires, threshold_us - elapsed_us);
+                if (elapsed_us >= threshold_us) break;
                 rehash_db++;
             }
         }
@@ -1257,7 +1347,7 @@ void cronUpdateMemoryStats(void) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
-int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+long long serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
     UNUSED(id);
@@ -1612,12 +1702,12 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         processed += connTypeProcessPendingData();
         if (server.aof_state == AOF_ON || server.aof_state == AOF_WAIT_REWRITE) flushAppendOnlyFile(0);
         processed += handleClientsWithPendingWrites();
-        int last_procssed = 0;
+        int last_processed = 0;
         do {
             /* Try to process all the pending IO events. */
-            last_procssed = processIOThreadsReadDone() + processIOThreadsWriteDone();
-            processed += last_procssed;
-        } while (last_procssed != 0);
+            last_processed = processIOThreadsReadDone() + processIOThreadsWriteDone();
+            processed += last_processed;
+        } while (last_processed != 0);
         processed += freeClientsInAsyncFreeQueue();
         server.events_processed_while_blocked += processed;
         return;
@@ -2756,7 +2846,9 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
+    /* Initialize the LUA scripting engine. */
     scriptingInit(1);
+    /* Initialize the functions engine based off of LUA initialization. */
     if (functionsInit() == C_ERR) {
         serverPanic("Functions initialization failed, check the server logs.");
         exit(1);
@@ -2815,8 +2907,7 @@ void initListeners(void) {
         listener->bindaddr = &server.unixsocket;
         listener->bindaddr_count = 1;
         listener->ct = connectionByType(CONN_TYPE_UNIX);
-        listener->priv1 = &server.unixsocketperm; /* Unix socket specified */
-        listener->priv2 = server.unixsocketgroup; /* Unix socket group specified */
+        listener->priv = &server.unix_ctx_config; /* Unix socket specified */
     }
 
     /* create all the configured listener, and add handler to start to accept */
@@ -3825,12 +3916,6 @@ int processCommand(client *c) {
         reqresAppendRequest(c);
     }
 
-    /* Handle possible security attacks. */
-    if (!strcasecmp(c->argv[0]->ptr, "host:") || !strcasecmp(c->argv[0]->ptr, "post")) {
-        securityWarningCommand(c);
-        return C_ERR;
-    }
-
     /* If we're inside a module blocked context yielding that wants to avoid
      * processing clients, postpone the command. */
     if (server.busy_module_yield_flags != BUSY_MODULE_YIELD_NONE &&
@@ -3845,6 +3930,13 @@ int processCommand(client *c) {
      * we do not have to repeat the same checks */
     if (!client_reprocessing_command) {
         struct serverCommand *cmd = c->io_parsed_cmd ? c->io_parsed_cmd : lookupCommand(c->argv, c->argc);
+        if (!cmd) {
+            /* Handle possible security attacks. */
+            if (!strcasecmp(c->argv[0]->ptr, "host:") || !strcasecmp(c->argv[0]->ptr, "post")) {
+                securityWarningCommand(c);
+                return C_ERR;
+            }
+        }
         c->cmd = c->lastcmd = c->realcmd = cmd;
         sds err;
         if (!commandCheckExistence(c, &err)) {
@@ -3889,7 +3981,7 @@ int processCommand(client *c) {
         (c->cmd->proc == execCommand && (c->mstate.cmd_flags & (CMD_WRITE | CMD_MAY_REPLICATE)));
     int is_deny_async_loading_command = (cmd_flags & CMD_NO_ASYNC_LOADING) ||
                                         (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_NO_ASYNC_LOADING));
-    int obey_client = mustObeyClient(c);
+    const int obey_client = mustObeyClient(c);
 
     if (authRequired(c)) {
         /* AUTH and HELLO and no auth commands are valid even in
@@ -3922,7 +4014,7 @@ int processCommand(client *c) {
      * However we don't perform the redirection if:
      * 1) The sender of this command is our primary.
      * 2) The command has no key arguments. */
-    if (server.cluster_enabled && !mustObeyClient(c) &&
+    if (server.cluster_enabled && !obey_client &&
         !(!(c->cmd->flags & CMD_MOVABLE_KEYS) && c->cmd->key_specs_num == 0 && c->cmd->proc != execCommand)) {
         int error_code;
         clusterNode *n = getNodeByQuery(c, c->cmd, c->argv, c->argc, &c->slot, &error_code);
@@ -3939,7 +4031,7 @@ int processCommand(client *c) {
         }
     }
 
-    if (!server.cluster_enabled && c->capa & CLIENT_CAPA_REDIRECT && server.primary_host && !mustObeyClient(c) &&
+    if (!server.cluster_enabled && c->capa & CLIENT_CAPA_REDIRECT && server.primary_host && !obey_client &&
         (is_write_command || (is_read_command && !c->flag.readonly))) {
         if (server.failover_state == FAILOVER_IN_PROGRESS) {
             /* During the FAILOVER process, when conditions are met (such as
@@ -4073,12 +4165,6 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Not allow several UNSUBSCRIBE commands executed under non-pubsub mode */
-    if (!c->flag.pubsub && (c->cmd->proc == unsubscribeCommand || c->cmd->proc == sunsubscribeCommand ||
-                            c->cmd->proc == punsubscribeCommand)) {
-        rejectCommandFormat(c, "-NOSUB '%s' command executed not in subscribed mode", c->cmd->fullname);
-        return C_OK;
-    }
     /* Only allow commands with flag "t", such as INFO, REPLICAOF and so on,
      * when replica-serve-stale-data is no and we are a replica with a broken
      * link with primary. */
@@ -4585,7 +4671,15 @@ void addReplyFlagsForKeyArgs(client *c, uint64_t flags) {
 
 /* Must match serverCommandArgType */
 const char *ARG_TYPE_STR[] = {
-    "string", "integer", "double", "key", "pattern", "unix-time", "pure-token", "oneof", "block",
+    "string",
+    "integer",
+    "double",
+    "key",
+    "pattern",
+    "unix-time",
+    "pure-token",
+    "oneof",
+    "block",
 };
 
 void addReplyFlagsForArg(client *c, uint64_t flags) {
@@ -5160,29 +5254,27 @@ void commandGetKeysCommand(client *c) {
 
 /* COMMAND HELP */
 void commandHelpCommand(client *c) {
-    /* clang-format off */
     const char *help[] = {
-"(no subcommand)",
-"    Return details about all commands.",
-"COUNT",
-"    Return the total number of commands in this server.",
-"LIST",
-"    Return a list of all commands in this server.",
-"INFO [<command-name> ...]",
-"    Return details about multiple commands.",
-"    If no command names are given, documentation details for all",
-"    commands are returned.",
-"DOCS [<command-name> ...]",
-"    Return documentation details about multiple commands.",
-"    If no command names are given, documentation details for all",
-"    commands are returned.",
-"GETKEYS <full-command>",
-"    Return the keys from a full command.",
-"GETKEYSANDFLAGS <full-command>",
-"    Return the keys and the access flags from a full command.",
-NULL
+        "(no subcommand)",
+        "    Return details about all commands.",
+        "COUNT",
+        "    Return the total number of commands in this server.",
+        "LIST",
+        "    Return a list of all commands in this server.",
+        "INFO [<command-name> ...]",
+        "    Return details about multiple commands.",
+        "    If no command names are given, documentation details for all",
+        "    commands are returned.",
+        "DOCS [<command-name> ...]",
+        "    Return documentation details about multiple commands.",
+        "    If no command names are given, documentation details for all",
+        "    commands are returned.",
+        "GETKEYS <full-command>",
+        "    Return the keys from a full command.",
+        "GETKEYSANDFLAGS <full-command>",
+        "    Return the keys and the access flags from a full command.",
+        NULL,
     };
-    /* clang-format on */
     addReplyHelp(c, help);
 }
 
@@ -5341,8 +5433,20 @@ void releaseInfoSectionDict(dict *sec) {
  * 'out_all' and 'out_everything' are optional.
  * The resulting dictionary should be released with releaseInfoSectionDict. */
 dict *genInfoSectionDict(robj **argv, int argc, char **defaults, int *out_all, int *out_everything) {
-    char *default_sections[] = {"server", "clients",     "memory",     "persistence", "stats",    "replication",
-                                "cpu",    "module_list", "errorstats", "cluster",     "keyspace", NULL};
+    char *default_sections[] = {
+        "server",
+        "clients",
+        "memory",
+        "persistence",
+        "stats",
+        "replication",
+        "cpu",
+        "module_list",
+        "errorstats",
+        "cluster",
+        "keyspace",
+        NULL,
+    };
     if (!defaults) defaults = default_sections;
 
     if (argc == 0) {
@@ -5434,38 +5538,38 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             call_uname = 0;
         }
 
-        /* clang-format off */
-        info = sdscatfmt(info, "# Server\r\n" FMTARGS(
-            "redis_version:%s\r\n", REDIS_VERSION,
-            "server_name:%s\r\n", SERVER_NAME,
-            "valkey_version:%s\r\n", VALKEY_VERSION,
-            "redis_git_sha1:%s\r\n", serverGitSHA1(),
-            "redis_git_dirty:%i\r\n", strtol(serverGitDirty(),NULL,10) > 0,
-            "redis_build_id:%s\r\n", serverBuildIdString(),
-            "%s_mode:", (server.extended_redis_compat ? "redis" : "server"),
-            "%s\r\n", mode,
-            "os:%s", name.sysname,
-            " %s", name.release,
-            " %s\r\n", name.machine,
-            "arch_bits:%i\r\n", server.arch_bits,
-            "monotonic_clock:%s\r\n", monotonicInfoString(),
-            "multiplexing_api:%s\r\n", aeGetApiName(),
-            "gcc_version:%s\r\n", GNUC_VERSION_STR,
-            "process_id:%I\r\n", (int64_t) getpid(),
-            "process_supervised:%s\r\n", supervised,
-            "run_id:%s\r\n", server.runid,
-            "tcp_port:%i\r\n", server.port ? server.port : server.tls_port,
-            "server_time_usec:%I\r\n", (int64_t)server.ustime,
-            "uptime_in_seconds:%I\r\n", (int64_t)uptime,
-            "uptime_in_days:%I\r\n", (int64_t)(uptime/(3600*24)),
-            "hz:%i\r\n", server.hz,
-            "configured_hz:%i\r\n", server.config_hz,
-            "lru_clock:%u\r\n", server.lruclock,
-            "executable:%s\r\n", server.executable ? server.executable : "",
-            "config_file:%s\r\n", server.configfile ? server.configfile : "",
-            "io_threads_active:%i\r\n", server.active_io_threads_num > 1,
-            "availability_zone:%s\r\n", server.availability_zone));
-        /* clang-format on */
+        info = sdscatfmt(
+            info,
+            "# Server\r\n" FMTARGS(
+                "redis_version:%s\r\n", REDIS_VERSION,
+                "server_name:%s\r\n", SERVER_NAME,
+                "valkey_version:%s\r\n", VALKEY_VERSION,
+                "redis_git_sha1:%s\r\n", serverGitSHA1(),
+                "redis_git_dirty:%i\r\n", strtol(serverGitDirty(), NULL, 10) > 0,
+                "redis_build_id:%s\r\n", serverBuildIdString(),
+                "%s_mode:", (server.extended_redis_compat ? "redis" : "server"),
+                "%s\r\n", mode,
+                "os:%s", name.sysname,
+                " %s", name.release,
+                " %s\r\n", name.machine,
+                "arch_bits:%i\r\n", server.arch_bits,
+                "monotonic_clock:%s\r\n", monotonicInfoString(),
+                "multiplexing_api:%s\r\n", aeGetApiName(),
+                "gcc_version:%s\r\n", GNUC_VERSION_STR,
+                "process_id:%I\r\n", (int64_t)getpid(),
+                "process_supervised:%s\r\n", supervised,
+                "run_id:%s\r\n", server.runid,
+                "tcp_port:%i\r\n", server.port ? server.port : server.tls_port,
+                "server_time_usec:%I\r\n", (int64_t)server.ustime,
+                "uptime_in_seconds:%I\r\n", (int64_t)uptime,
+                "uptime_in_days:%I\r\n", (int64_t)(uptime / (3600 * 24)),
+                "hz:%i\r\n", server.hz,
+                "configured_hz:%i\r\n", server.config_hz,
+                "lru_clock:%u\r\n", server.lruclock,
+                "executable:%s\r\n", server.executable ? server.executable : "",
+                "config_file:%s\r\n", server.configfile ? server.configfile : "",
+                "io_threads_active:%i\r\n", server.active_io_threads_num > 1,
+                "availability_zone:%s\r\n", server.availability_zone));
 
         /* Conditional properties */
         if (isShutdownInitiated()) {
@@ -5484,22 +5588,22 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         getExpansiveClientsInfo(&maxin, &maxout);
         totalNumberOfStatefulKeys(&blocking_keys, &blocking_keys_on_nokey, &watched_keys);
         if (sections++) info = sdscat(info, "\r\n");
-        /* clang-format off */
-        info = sdscatprintf(info, "# Clients\r\n" FMTARGS(
-            "connected_clients:%lu\r\n", listLength(server.clients) - listLength(server.replicas),
-            "cluster_connections:%lu\r\n", getClusterConnectionsCount(),
-            "maxclients:%u\r\n", server.maxclients,
-            "client_recent_max_input_buffer:%zu\r\n", maxin,
-            "client_recent_max_output_buffer:%zu\r\n", maxout,
-            "blocked_clients:%d\r\n", server.blocked_clients,
-            "tracking_clients:%d\r\n", server.tracking_clients,
-            "pubsub_clients:%d\r\n", server.pubsub_clients,
-            "watching_clients:%d\r\n", server.watching_clients,
-            "clients_in_timeout_table:%llu\r\n", (unsigned long long) raxSize(server.clients_timeout_table),
-            "total_watched_keys:%lu\r\n", watched_keys,
-            "total_blocking_keys:%lu\r\n", blocking_keys,
-            "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
-        /* clang-format on */
+        info = sdscatprintf(
+            info,
+            "# Clients\r\n" FMTARGS(
+                "connected_clients:%lu\r\n", listLength(server.clients) - listLength(server.replicas),
+                "cluster_connections:%lu\r\n", getClusterConnectionsCount(),
+                "maxclients:%u\r\n", server.maxclients,
+                "client_recent_max_input_buffer:%zu\r\n", maxin,
+                "client_recent_max_output_buffer:%zu\r\n", maxout,
+                "blocked_clients:%d\r\n", server.blocked_clients,
+                "tracking_clients:%d\r\n", server.tracking_clients,
+                "pubsub_clients:%d\r\n", server.pubsub_clients,
+                "watching_clients:%d\r\n", server.watching_clients,
+                "clients_in_timeout_table:%llu\r\n", (unsigned long long)raxSize(server.clients_timeout_table),
+                "total_watched_keys:%lu\r\n", watched_keys,
+                "total_blocking_keys:%lu\r\n", blocking_keys,
+                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
     }
 
     /* Memory */
@@ -5535,66 +5639,66 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         bytesToHuman(maxmemory_hmem, sizeof(maxmemory_hmem), server.maxmemory);
 
         if (sections++) info = sdscat(info, "\r\n");
-        /* clang-format off */
-        info = sdscatprintf(info, "# Memory\r\n" FMTARGS(
-            "used_memory:%zu\r\n", zmalloc_used,
-            "used_memory_human:%s\r\n", hmem,
-            "used_memory_rss:%zu\r\n", server.cron_malloc_stats.process_rss,
-            "used_memory_rss_human:%s\r\n", used_memory_rss_hmem,
-            "used_memory_peak:%zu\r\n", server.stat_peak_memory,
-            "used_memory_peak_human:%s\r\n", peak_hmem,
-            "used_memory_peak_perc:%.2f%%\r\n", mh->peak_perc,
-            "used_memory_overhead:%zu\r\n", mh->overhead_total,
-            "used_memory_startup:%zu\r\n", mh->startup_allocated,
-            "used_memory_dataset:%zu\r\n", mh->dataset,
-            "used_memory_dataset_perc:%.2f%%\r\n", mh->dataset_perc,
-            "allocator_allocated:%zu\r\n", server.cron_malloc_stats.allocator_allocated,
-            "allocator_active:%zu\r\n", server.cron_malloc_stats.allocator_active,
-            "allocator_resident:%zu\r\n", server.cron_malloc_stats.allocator_resident,
-            "allocator_muzzy:%zu\r\n", server.cron_malloc_stats.allocator_muzzy,
-            "total_system_memory:%lu\r\n", (unsigned long)total_system_mem,
-            "total_system_memory_human:%s\r\n", total_system_hmem,
-            "used_memory_lua:%lld\r\n", memory_lua, /* deprecated, renamed to used_memory_vm_eval */
-            "used_memory_vm_eval:%lld\r\n", memory_lua,
-            "used_memory_lua_human:%s\r\n", used_memory_lua_hmem, /* deprecated */
-            "used_memory_scripts_eval:%lld\r\n", (long long)mh->lua_caches,
-            "number_of_cached_scripts:%lu\r\n", dictSize(evalScriptsDict()),
-            "number_of_functions:%lu\r\n", functionsNum(),
-            "number_of_libraries:%lu\r\n", functionsLibNum(),
-            "used_memory_vm_functions:%lld\r\n", memory_functions,
-            "used_memory_vm_total:%lld\r\n", memory_functions + memory_lua,
-            "used_memory_vm_total_human:%s\r\n", used_memory_vm_total_hmem,
-            "used_memory_functions:%lld\r\n", (long long)mh->functions_caches,
-            "used_memory_scripts:%lld\r\n", (long long)mh->lua_caches + (long long)mh->functions_caches,
-            "used_memory_scripts_human:%s\r\n", used_memory_scripts_hmem,
-            "maxmemory:%lld\r\n", server.maxmemory,
-            "maxmemory_human:%s\r\n", maxmemory_hmem,
-            "maxmemory_policy:%s\r\n", evict_policy,
-            "allocator_frag_ratio:%.2f\r\n", mh->allocator_frag,
-            "allocator_frag_bytes:%zu\r\n", mh->allocator_frag_bytes,
-            "allocator_rss_ratio:%.2f\r\n", mh->allocator_rss,
-            "allocator_rss_bytes:%zd\r\n", mh->allocator_rss_bytes,
-            "rss_overhead_ratio:%.2f\r\n", mh->rss_extra,
-            "rss_overhead_bytes:%zd\r\n", mh->rss_extra_bytes,
-            /* The next field (mem_fragmentation_ratio) is the total RSS
-             * overhead, including fragmentation, but not just it. This field
-             * (and the next one) is named like that just for backward
-             * compatibility. */
-            "mem_fragmentation_ratio:%.2f\r\n", mh->total_frag,
-            "mem_fragmentation_bytes:%zd\r\n", mh->total_frag_bytes,
-            "mem_not_counted_for_evict:%zu\r\n", freeMemoryGetNotCountedMemory(),
-            "mem_replication_backlog:%zu\r\n", mh->repl_backlog,
-            "mem_total_replication_buffers:%zu\r\n", server.repl_buffer_mem,
-            "mem_clients_slaves:%zu\r\n", mh->clients_replicas,
-            "mem_clients_normal:%zu\r\n", mh->clients_normal,
-            "mem_cluster_links:%zu\r\n", mh->cluster_links,
-            "mem_aof_buffer:%zu\r\n", mh->aof_buffer,
-            "mem_allocator:%s\r\n", ZMALLOC_LIB,
-            "mem_overhead_db_hashtable_rehashing:%zu\r\n", mh->overhead_db_hashtable_rehashing,
-            "active_defrag_running:%d\r\n", server.active_defrag_running,
-            "lazyfree_pending_objects:%zu\r\n", lazyfreeGetPendingObjectsCount(),
-            "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount()));
-        /* clang-format on */
+        info = sdscatprintf(
+            info,
+            "# Memory\r\n" FMTARGS(
+                "used_memory:%zu\r\n", zmalloc_used,
+                "used_memory_human:%s\r\n", hmem,
+                "used_memory_rss:%zu\r\n", server.cron_malloc_stats.process_rss,
+                "used_memory_rss_human:%s\r\n", used_memory_rss_hmem,
+                "used_memory_peak:%zu\r\n", server.stat_peak_memory,
+                "used_memory_peak_human:%s\r\n", peak_hmem,
+                "used_memory_peak_perc:%.2f%%\r\n", mh->peak_perc,
+                "used_memory_overhead:%zu\r\n", mh->overhead_total,
+                "used_memory_startup:%zu\r\n", mh->startup_allocated,
+                "used_memory_dataset:%zu\r\n", mh->dataset,
+                "used_memory_dataset_perc:%.2f%%\r\n", mh->dataset_perc,
+                "allocator_allocated:%zu\r\n", server.cron_malloc_stats.allocator_allocated,
+                "allocator_active:%zu\r\n", server.cron_malloc_stats.allocator_active,
+                "allocator_resident:%zu\r\n", server.cron_malloc_stats.allocator_resident,
+                "allocator_muzzy:%zu\r\n", server.cron_malloc_stats.allocator_muzzy,
+                "total_system_memory:%lu\r\n", (unsigned long)total_system_mem,
+                "total_system_memory_human:%s\r\n", total_system_hmem,
+                "used_memory_lua:%lld\r\n", memory_lua, /* deprecated, renamed to used_memory_vm_eval */
+                "used_memory_vm_eval:%lld\r\n", memory_lua,
+                "used_memory_lua_human:%s\r\n", used_memory_lua_hmem, /* deprecated */
+                "used_memory_scripts_eval:%lld\r\n", (long long)mh->lua_caches,
+                "number_of_cached_scripts:%lu\r\n", dictSize(evalScriptsDict()),
+                "number_of_functions:%lu\r\n", functionsNum(),
+                "number_of_libraries:%lu\r\n", functionsLibNum(),
+                "used_memory_vm_functions:%lld\r\n", memory_functions,
+                "used_memory_vm_total:%lld\r\n", memory_functions + memory_lua,
+                "used_memory_vm_total_human:%s\r\n", used_memory_vm_total_hmem,
+                "used_memory_functions:%lld\r\n", (long long)mh->functions_caches,
+                "used_memory_scripts:%lld\r\n", (long long)mh->lua_caches + (long long)mh->functions_caches,
+                "used_memory_scripts_human:%s\r\n", used_memory_scripts_hmem,
+                "maxmemory:%lld\r\n", server.maxmemory,
+                "maxmemory_human:%s\r\n", maxmemory_hmem,
+                "maxmemory_policy:%s\r\n", evict_policy,
+                "allocator_frag_ratio:%.2f\r\n", mh->allocator_frag,
+                "allocator_frag_bytes:%zu\r\n", mh->allocator_frag_bytes,
+                "allocator_rss_ratio:%.2f\r\n", mh->allocator_rss,
+                "allocator_rss_bytes:%zd\r\n", mh->allocator_rss_bytes,
+                "rss_overhead_ratio:%.2f\r\n", mh->rss_extra,
+                "rss_overhead_bytes:%zd\r\n", mh->rss_extra_bytes,
+                /* The next field (mem_fragmentation_ratio) is the total RSS
+                 * overhead, including fragmentation, but not just it. This field
+                 * (and the next one) is named like that just for backward
+                 * compatibility. */
+                "mem_fragmentation_ratio:%.2f\r\n", mh->total_frag,
+                "mem_fragmentation_bytes:%zd\r\n", mh->total_frag_bytes,
+                "mem_not_counted_for_evict:%zu\r\n", freeMemoryGetNotCountedMemory(),
+                "mem_replication_backlog:%zu\r\n", mh->repl_backlog,
+                "mem_total_replication_buffers:%zu\r\n", server.repl_buffer_mem,
+                "mem_clients_slaves:%zu\r\n", mh->clients_replicas,
+                "mem_clients_normal:%zu\r\n", mh->clients_normal,
+                "mem_cluster_links:%zu\r\n", mh->cluster_links,
+                "mem_aof_buffer:%zu\r\n", mh->aof_buffer,
+                "mem_allocator:%s\r\n", ZMALLOC_LIB,
+                "mem_overhead_db_hashtable_rehashing:%zu\r\n", mh->overhead_db_hashtable_rehashing,
+                "active_defrag_running:%d\r\n", server.active_defrag_running,
+                "lazyfree_pending_objects:%zu\r\n", lazyfreeGetPendingObjectsCount(),
+                "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount()));
         freeMemoryOverheadData(mh);
     }
 
@@ -5609,55 +5713,50 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         }
         int aof_bio_fsync_status = atomic_load_explicit(&server.aof_bio_fsync_status, memory_order_relaxed);
 
-        /* clang-format off */
-        info = sdscatprintf(info, "# Persistence\r\n" FMTARGS(
-            "loading:%d\r\n", (int)(server.loading && !server.async_loading),
-            "async_loading:%d\r\n", (int)server.async_loading,
-            "current_cow_peak:%zu\r\n", server.stat_current_cow_peak,
-            "current_cow_size:%zu\r\n", server.stat_current_cow_bytes,
-            "current_cow_size_age:%lu\r\n", (server.stat_current_cow_updated ?
-                                             (unsigned long) elapsedMs(server.stat_current_cow_updated) / 1000 : 0),
-            "current_fork_perc:%.2f\r\n", fork_perc,
-            "current_save_keys_processed:%zu\r\n", server.stat_current_save_keys_processed,
-            "current_save_keys_total:%zu\r\n", server.stat_current_save_keys_total,
-            "rdb_changes_since_last_save:%lld\r\n", server.dirty,
-            "rdb_bgsave_in_progress:%d\r\n", server.child_type == CHILD_TYPE_RDB,
-            "rdb_last_save_time:%jd\r\n", (intmax_t)server.lastsave,
-            "rdb_last_bgsave_status:%s\r\n", (server.lastbgsave_status == C_OK) ? "ok" : "err",
-            "rdb_last_bgsave_time_sec:%jd\r\n", (intmax_t)server.rdb_save_time_last,
-            "rdb_current_bgsave_time_sec:%jd\r\n", (intmax_t)((server.child_type != CHILD_TYPE_RDB) ?
-                                                              -1 : time(NULL)-server.rdb_save_time_start),
-            "rdb_saves:%lld\r\n", server.stat_rdb_saves,
-            "rdb_last_cow_size:%zu\r\n", server.stat_rdb_cow_bytes,
-            "rdb_last_load_keys_expired:%lld\r\n", server.rdb_last_load_keys_expired,
-            "rdb_last_load_keys_loaded:%lld\r\n", server.rdb_last_load_keys_loaded,
-            "aof_enabled:%d\r\n", server.aof_state != AOF_OFF,
-            "aof_rewrite_in_progress:%d\r\n", server.child_type == CHILD_TYPE_AOF,
-            "aof_rewrite_scheduled:%d\r\n", server.aof_rewrite_scheduled,
-            "aof_last_rewrite_time_sec:%jd\r\n", (intmax_t)server.aof_rewrite_time_last,
-            "aof_current_rewrite_time_sec:%jd\r\n", (intmax_t)((server.child_type != CHILD_TYPE_AOF) ?
-                                                               -1 : time(NULL)-server.aof_rewrite_time_start),
-            "aof_last_bgrewrite_status:%s\r\n", (server.aof_lastbgrewrite_status == C_OK ?
-                                                 "ok" : "err"),
-            "aof_rewrites:%lld\r\n", server.stat_aof_rewrites,
-            "aof_rewrites_consecutive_failures:%lld\r\n", server.stat_aofrw_consecutive_failures,
-            "aof_last_write_status:%s\r\n", (server.aof_last_write_status == C_OK &&
-                                             aof_bio_fsync_status == C_OK) ? "ok" : "err",
-            "aof_last_cow_size:%zu\r\n", server.stat_aof_cow_bytes,
-            "module_fork_in_progress:%d\r\n", server.child_type == CHILD_TYPE_MODULE,
-            "module_fork_last_cow_size:%zu\r\n", server.stat_module_cow_bytes));
-        /* clang-format on */
+        info = sdscatprintf(
+            info,
+            "# Persistence\r\n" FMTARGS(
+                "loading:%d\r\n", (int)(server.loading && !server.async_loading),
+                "async_loading:%d\r\n", (int)server.async_loading,
+                "current_cow_peak:%zu\r\n", server.stat_current_cow_peak,
+                "current_cow_size:%zu\r\n", server.stat_current_cow_bytes,
+                "current_cow_size_age:%lu\r\n", (server.stat_current_cow_updated ? (unsigned long)elapsedMs(server.stat_current_cow_updated) / 1000 : 0),
+                "current_fork_perc:%.2f\r\n", fork_perc,
+                "current_save_keys_processed:%zu\r\n", server.stat_current_save_keys_processed,
+                "current_save_keys_total:%zu\r\n", server.stat_current_save_keys_total,
+                "rdb_changes_since_last_save:%lld\r\n", server.dirty,
+                "rdb_bgsave_in_progress:%d\r\n", server.child_type == CHILD_TYPE_RDB,
+                "rdb_last_save_time:%jd\r\n", (intmax_t)server.lastsave,
+                "rdb_last_bgsave_status:%s\r\n", (server.lastbgsave_status == C_OK) ? "ok" : "err",
+                "rdb_last_bgsave_time_sec:%jd\r\n", (intmax_t)server.rdb_save_time_last,
+                "rdb_current_bgsave_time_sec:%jd\r\n", (intmax_t)((server.child_type != CHILD_TYPE_RDB) ? -1 : time(NULL) - server.rdb_save_time_start),
+                "rdb_saves:%lld\r\n", server.stat_rdb_saves,
+                "rdb_last_cow_size:%zu\r\n", server.stat_rdb_cow_bytes,
+                "rdb_last_load_keys_expired:%lld\r\n", server.rdb_last_load_keys_expired,
+                "rdb_last_load_keys_loaded:%lld\r\n", server.rdb_last_load_keys_loaded,
+                "aof_enabled:%d\r\n", server.aof_state != AOF_OFF,
+                "aof_rewrite_in_progress:%d\r\n", server.child_type == CHILD_TYPE_AOF,
+                "aof_rewrite_scheduled:%d\r\n", server.aof_rewrite_scheduled,
+                "aof_last_rewrite_time_sec:%jd\r\n", (intmax_t)server.aof_rewrite_time_last,
+                "aof_current_rewrite_time_sec:%jd\r\n", (intmax_t)((server.child_type != CHILD_TYPE_AOF) ? -1 : time(NULL) - server.aof_rewrite_time_start),
+                "aof_last_bgrewrite_status:%s\r\n", (server.aof_lastbgrewrite_status == C_OK ? "ok" : "err"),
+                "aof_rewrites:%lld\r\n", server.stat_aof_rewrites,
+                "aof_rewrites_consecutive_failures:%lld\r\n", server.stat_aofrw_consecutive_failures,
+                "aof_last_write_status:%s\r\n", (server.aof_last_write_status == C_OK && aof_bio_fsync_status == C_OK) ? "ok" : "err",
+                "aof_last_cow_size:%zu\r\n", server.stat_aof_cow_bytes,
+                "module_fork_in_progress:%d\r\n", server.child_type == CHILD_TYPE_MODULE,
+                "module_fork_last_cow_size:%zu\r\n", server.stat_module_cow_bytes));
 
         if (server.aof_enabled) {
-            /* clang-format off */
-            info = sdscatprintf(info, FMTARGS(
-                "aof_current_size:%lld\r\n", (long long) server.aof_current_size,
-                "aof_base_size:%lld\r\n", (long long) server.aof_rewrite_base_size,
-                "aof_pending_rewrite:%d\r\n", server.aof_rewrite_scheduled,
-                "aof_buffer_length:%zu\r\n", sdslen(server.aof_buf),
-                "aof_pending_bio_fsync:%lu\r\n", bioPendingJobsOfType(BIO_AOF_FSYNC),
-                "aof_delayed_fsync:%lu\r\n", server.aof_delayed_fsync));
-            /* clang-format on */
+            info = sdscatprintf(
+                info,
+                FMTARGS(
+                    "aof_current_size:%lld\r\n", (long long)server.aof_current_size,
+                    "aof_base_size:%lld\r\n", (long long)server.aof_rewrite_base_size,
+                    "aof_pending_rewrite:%d\r\n", server.aof_rewrite_scheduled,
+                    "aof_buffer_length:%zu\r\n", sdslen(server.aof_buf),
+                    "aof_pending_bio_fsync:%lu\r\n", bioPendingJobsOfType(BIO_AOF_FSYNC),
+                    "aof_delayed_fsync:%lu\r\n", server.aof_delayed_fsync));
         }
 
         if (server.loading) {
@@ -5684,15 +5783,15 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 eta = (elapsed * remaining_bytes) / (server.loading_loaded_bytes + 1);
             }
 
-            /* clang-format off */
-            info = sdscatprintf(info, FMTARGS(
-                "loading_start_time:%jd\r\n", (intmax_t) server.loading_start_time,
-                "loading_total_bytes:%llu\r\n", (unsigned long long) server.loading_total_bytes,
-                "loading_rdb_used_mem:%llu\r\n", (unsigned long long) server.loading_rdb_used_mem,
-                "loading_loaded_bytes:%llu\r\n", (unsigned long long) server.loading_loaded_bytes,
-                "loading_loaded_perc:%.2f\r\n", perc,
-                "loading_eta_seconds:%jd\r\n", (intmax_t)eta));
-            /* clang-format on */
+            info = sdscatprintf(
+                info,
+                FMTARGS(
+                    "loading_start_time:%jd\r\n", (intmax_t)server.loading_start_time,
+                    "loading_total_bytes:%llu\r\n", (unsigned long long)server.loading_total_bytes,
+                    "loading_rdb_used_mem:%llu\r\n", (unsigned long long)server.loading_rdb_used_mem,
+                    "loading_loaded_bytes:%llu\r\n", (unsigned long long)server.loading_loaded_bytes,
+                    "loading_loaded_perc:%.2f\r\n", perc,
+                    "loading_eta_seconds:%jd\r\n", (intmax_t)eta));
         }
     }
 
@@ -5704,72 +5803,72 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             server.stat_last_active_defrag_time ? (long long)elapsedUs(server.stat_last_active_defrag_time) : 0;
 
         if (sections++) info = sdscat(info, "\r\n");
-        /* clang-format off */
-        info = sdscatprintf(info, "# Stats\r\n" FMTARGS(
-            "total_connections_received:%lld\r\n", server.stat_numconnections,
-            "total_commands_processed:%lld\r\n", server.stat_numcommands,
-            "instantaneous_ops_per_sec:%lld\r\n", getInstantaneousMetric(STATS_METRIC_COMMAND),
-            "total_net_input_bytes:%lld\r\n", server.stat_net_input_bytes + server.stat_net_repl_input_bytes,
-            "total_net_output_bytes:%lld\r\n", server.stat_net_output_bytes + server.stat_net_repl_output_bytes,
-            "total_net_repl_input_bytes:%lld\r\n", server.stat_net_repl_input_bytes,
-            "total_net_repl_output_bytes:%lld\r\n", server.stat_net_repl_output_bytes,
-            "instantaneous_input_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT)/1024,
-            "instantaneous_output_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT)/1024,
-            "instantaneous_input_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT_REPLICATION)/1024,
-            "instantaneous_output_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT_REPLICATION)/1024,
-            "rejected_connections:%lld\r\n", server.stat_rejected_conn,
-            "sync_full:%lld\r\n", server.stat_sync_full,
-            "sync_partial_ok:%lld\r\n", server.stat_sync_partial_ok,
-            "sync_partial_err:%lld\r\n", server.stat_sync_partial_err,
-            "expired_keys:%lld\r\n", server.stat_expiredkeys,
-            "expired_stale_perc:%.2f\r\n", server.stat_expired_stale_perc*100,
-            "expired_time_cap_reached_count:%lld\r\n", server.stat_expired_time_cap_reached_count,
-            "expire_cycle_cpu_milliseconds:%lld\r\n", server.stat_expire_cycle_time_used/1000,
-            "evicted_keys:%lld\r\n", server.stat_evictedkeys,
-            "evicted_clients:%lld\r\n", server.stat_evictedclients,
-            "evicted_scripts:%lld\r\n", server.stat_evictedscripts,
-            "total_eviction_exceeded_time:%lld\r\n", (server.stat_total_eviction_exceeded_time + current_eviction_exceeded_time) / 1000,
-            "current_eviction_exceeded_time:%lld\r\n", current_eviction_exceeded_time / 1000,
-            "keyspace_hits:%lld\r\n", server.stat_keyspace_hits,
-            "keyspace_misses:%lld\r\n", server.stat_keyspace_misses,
-            "pubsub_channels:%llu\r\n", kvstoreSize(server.pubsub_channels),
-            "pubsub_patterns:%lu\r\n", dictSize(server.pubsub_patterns),
-            "pubsubshard_channels:%llu\r\n", kvstoreSize(server.pubsubshard_channels),
-            "latest_fork_usec:%lld\r\n", server.stat_fork_time,
-            "total_forks:%lld\r\n", server.stat_total_forks,
-            "migrate_cached_sockets:%ld\r\n", dictSize(server.migrate_cached_sockets),
-            "slave_expires_tracked_keys:%zu\r\n", getReplicaKeyWithExpireCount(),
-            "active_defrag_hits:%lld\r\n", server.stat_active_defrag_hits,
-            "active_defrag_misses:%lld\r\n", server.stat_active_defrag_misses,
-            "active_defrag_key_hits:%lld\r\n", server.stat_active_defrag_key_hits,
-            "active_defrag_key_misses:%lld\r\n", server.stat_active_defrag_key_misses,
-            "total_active_defrag_time:%lld\r\n", (server.stat_total_active_defrag_time + current_active_defrag_time) / 1000,
-            "current_active_defrag_time:%lld\r\n", current_active_defrag_time / 1000,
-            "tracking_total_keys:%lld\r\n", (unsigned long long) trackingGetTotalKeys(),
-            "tracking_total_items:%lld\r\n", (unsigned long long) trackingGetTotalItems(),
-            "tracking_total_prefixes:%lld\r\n", (unsigned long long) trackingGetTotalPrefixes(),
-            "unexpected_error_replies:%lld\r\n", server.stat_unexpected_error_replies,
-            "total_error_replies:%lld\r\n", server.stat_total_error_replies,
-            "dump_payload_sanitizations:%lld\r\n", server.stat_dump_payload_sanitizations,
-            "total_reads_processed:%lld\r\n", server.stat_total_reads_processed,
-            "total_writes_processed:%lld\r\n", server.stat_total_writes_processed,
-            "io_threaded_reads_processed:%lld\r\n", server.stat_io_reads_processed,
-            "io_threaded_writes_processed:%lld\r\n", server.stat_io_writes_processed,
-            "io_threaded_freed_objects:%lld\r\n", server.stat_io_freed_objects,
-            "io_threaded_poll_processed:%lld\r\n", server.stat_poll_processed_by_io_threads,
-            "io_threaded_total_prefetch_batches:%lld\r\n", server.stat_total_prefetch_batches,
-            "io_threaded_total_prefetch_entries:%lld\r\n", server.stat_total_prefetch_entries,
-            "client_query_buffer_limit_disconnections:%lld\r\n", server.stat_client_qbuf_limit_disconnections,
-            "client_output_buffer_limit_disconnections:%lld\r\n", server.stat_client_outbuf_limit_disconnections,
-            "reply_buffer_shrinks:%lld\r\n", server.stat_reply_buffer_shrinks,
-            "reply_buffer_expands:%lld\r\n", server.stat_reply_buffer_expands,
-            "eventloop_cycles:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].cnt,
-            "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
-            "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
-            "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
-            "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
+        info = sdscatprintf(
+            info,
+            "# Stats\r\n" FMTARGS(
+                "total_connections_received:%lld\r\n", server.stat_numconnections,
+                "total_commands_processed:%lld\r\n", server.stat_numcommands,
+                "instantaneous_ops_per_sec:%lld\r\n", getInstantaneousMetric(STATS_METRIC_COMMAND),
+                "total_net_input_bytes:%lld\r\n", server.stat_net_input_bytes + server.stat_net_repl_input_bytes,
+                "total_net_output_bytes:%lld\r\n", server.stat_net_output_bytes + server.stat_net_repl_output_bytes,
+                "total_net_repl_input_bytes:%lld\r\n", server.stat_net_repl_input_bytes,
+                "total_net_repl_output_bytes:%lld\r\n", server.stat_net_repl_output_bytes,
+                "instantaneous_input_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT) / 1024,
+                "instantaneous_output_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT) / 1024,
+                "instantaneous_input_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT_REPLICATION) / 1024,
+                "instantaneous_output_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT_REPLICATION) / 1024,
+                "rejected_connections:%lld\r\n", server.stat_rejected_conn,
+                "sync_full:%lld\r\n", server.stat_sync_full,
+                "sync_partial_ok:%lld\r\n", server.stat_sync_partial_ok,
+                "sync_partial_err:%lld\r\n", server.stat_sync_partial_err,
+                "expired_keys:%lld\r\n", server.stat_expiredkeys,
+                "expired_stale_perc:%.2f\r\n", server.stat_expired_stale_perc * 100,
+                "expired_time_cap_reached_count:%lld\r\n", server.stat_expired_time_cap_reached_count,
+                "expire_cycle_cpu_milliseconds:%lld\r\n", server.stat_expire_cycle_time_used / 1000,
+                "evicted_keys:%lld\r\n", server.stat_evictedkeys,
+                "evicted_clients:%lld\r\n", server.stat_evictedclients,
+                "evicted_scripts:%lld\r\n", server.stat_evictedscripts,
+                "total_eviction_exceeded_time:%lld\r\n", (server.stat_total_eviction_exceeded_time + current_eviction_exceeded_time) / 1000,
+                "current_eviction_exceeded_time:%lld\r\n", current_eviction_exceeded_time / 1000,
+                "keyspace_hits:%lld\r\n", server.stat_keyspace_hits,
+                "keyspace_misses:%lld\r\n", server.stat_keyspace_misses,
+                "pubsub_channels:%llu\r\n", kvstoreSize(server.pubsub_channels),
+                "pubsub_patterns:%lu\r\n", dictSize(server.pubsub_patterns),
+                "pubsubshard_channels:%llu\r\n", kvstoreSize(server.pubsubshard_channels),
+                "latest_fork_usec:%lld\r\n", server.stat_fork_time,
+                "total_forks:%lld\r\n", server.stat_total_forks,
+                "migrate_cached_sockets:%ld\r\n", dictSize(server.migrate_cached_sockets),
+                "slave_expires_tracked_keys:%zu\r\n", getReplicaKeyWithExpireCount(),
+                "active_defrag_hits:%lld\r\n", server.stat_active_defrag_hits,
+                "active_defrag_misses:%lld\r\n", server.stat_active_defrag_misses,
+                "active_defrag_key_hits:%lld\r\n", server.stat_active_defrag_key_hits,
+                "active_defrag_key_misses:%lld\r\n", server.stat_active_defrag_key_misses,
+                "total_active_defrag_time:%lld\r\n", (server.stat_total_active_defrag_time + current_active_defrag_time) / 1000,
+                "current_active_defrag_time:%lld\r\n", current_active_defrag_time / 1000,
+                "tracking_total_keys:%lld\r\n", (unsigned long long)trackingGetTotalKeys(),
+                "tracking_total_items:%lld\r\n", (unsigned long long)trackingGetTotalItems(),
+                "tracking_total_prefixes:%lld\r\n", (unsigned long long)trackingGetTotalPrefixes(),
+                "unexpected_error_replies:%lld\r\n", server.stat_unexpected_error_replies,
+                "total_error_replies:%lld\r\n", server.stat_total_error_replies,
+                "dump_payload_sanitizations:%lld\r\n", server.stat_dump_payload_sanitizations,
+                "total_reads_processed:%lld\r\n", server.stat_total_reads_processed,
+                "total_writes_processed:%lld\r\n", server.stat_total_writes_processed,
+                "io_threaded_reads_processed:%lld\r\n", server.stat_io_reads_processed,
+                "io_threaded_writes_processed:%lld\r\n", server.stat_io_writes_processed,
+                "io_threaded_freed_objects:%lld\r\n", server.stat_io_freed_objects,
+                "io_threaded_poll_processed:%lld\r\n", server.stat_poll_processed_by_io_threads,
+                "io_threaded_total_prefetch_batches:%lld\r\n", server.stat_total_prefetch_batches,
+                "io_threaded_total_prefetch_entries:%lld\r\n", server.stat_total_prefetch_entries,
+                "client_query_buffer_limit_disconnections:%lld\r\n", server.stat_client_qbuf_limit_disconnections,
+                "client_output_buffer_limit_disconnections:%lld\r\n", server.stat_client_outbuf_limit_disconnections,
+                "reply_buffer_shrinks:%lld\r\n", server.stat_reply_buffer_shrinks,
+                "reply_buffer_expands:%lld\r\n", server.stat_reply_buffer_expands,
+                "eventloop_cycles:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].cnt,
+                "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
+                "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
+                "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
+                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
         info = genValkeyInfoStringACLStats(info);
-        /* clang-format on */
     }
 
     /* Replication */
@@ -5791,44 +5890,44 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 replica_read_repl_offset = server.cached_primary->read_reploff;
             }
 
-            /* clang-format off */
-            info = sdscatprintf(info, FMTARGS(
-                "master_host:%s\r\n", server.primary_host,
-                "master_port:%d\r\n", server.primary_port,
-                "master_link_status:%s\r\n", (server.repl_state == REPL_STATE_CONNECTED) ? "up" : "down",
-                "master_last_io_seconds_ago:%d\r\n", server.primary ? ((int)(server.unixtime-server.primary->last_interaction)) : -1,
-                "master_sync_in_progress:%d\r\n", server.repl_state == REPL_STATE_TRANSFER,
-                "slave_read_repl_offset:%lld\r\n", replica_read_repl_offset,
-                "slave_repl_offset:%lld\r\n", replica_repl_offset,
-                "replicas_repl_buffer_size:%zu\r\n", server.pending_repl_data.len,
-                "replicas_repl_buffer_peak:%zu\r\n", server.pending_repl_data.peak));
-            /* clang-format on */
+            info = sdscatprintf(
+                info,
+                FMTARGS(
+                    "master_host:%s\r\n", server.primary_host,
+                    "master_port:%d\r\n", server.primary_port,
+                    "master_link_status:%s\r\n", (server.repl_state == REPL_STATE_CONNECTED) ? "up" : "down",
+                    "master_last_io_seconds_ago:%d\r\n", server.primary ? ((int)(server.unixtime - server.primary->last_interaction)) : -1,
+                    "master_sync_in_progress:%d\r\n", server.repl_state == REPL_STATE_TRANSFER,
+                    "slave_read_repl_offset:%lld\r\n", replica_read_repl_offset,
+                    "slave_repl_offset:%lld\r\n", replica_repl_offset,
+                    "replicas_repl_buffer_size:%zu\r\n", server.pending_repl_data.len,
+                    "replicas_repl_buffer_peak:%zu\r\n", server.pending_repl_data.peak));
 
             if (server.repl_state == REPL_STATE_TRANSFER) {
                 double perc = 0;
                 if (server.repl_transfer_size) {
                     perc = ((double)server.repl_transfer_read / server.repl_transfer_size) * 100;
                 }
-                /* clang-format off */
-                info = sdscatprintf(info, FMTARGS(
-                    "master_sync_total_bytes:%lld\r\n", (long long) server.repl_transfer_size,
-                    "master_sync_read_bytes:%lld\r\n", (long long) server.repl_transfer_read,
-                    "master_sync_left_bytes:%lld\r\n", (long long) (server.repl_transfer_size - server.repl_transfer_read),
-                    "master_sync_perc:%.2f\r\n", perc,
-                    "master_sync_last_io_seconds_ago:%d\r\n", (int)(server.unixtime-server.repl_transfer_lastio)));
-                /* clang-format on */
+                info = sdscatprintf(
+                    info,
+                    FMTARGS(
+                        "master_sync_total_bytes:%lld\r\n", (long long)server.repl_transfer_size,
+                        "master_sync_read_bytes:%lld\r\n", (long long)server.repl_transfer_read,
+                        "master_sync_left_bytes:%lld\r\n", (long long)(server.repl_transfer_size - server.repl_transfer_read),
+                        "master_sync_perc:%.2f\r\n", perc,
+                        "master_sync_last_io_seconds_ago:%d\r\n", (int)(server.unixtime - server.repl_transfer_lastio)));
             }
 
             if (server.repl_state != REPL_STATE_CONNECTED) {
                 info = sdscatprintf(info, "master_link_down_since_seconds:%jd\r\n",
                                     server.repl_down_since ? (intmax_t)(server.unixtime - server.repl_down_since) : -1);
             }
-            /* clang-format off */
-            info = sdscatprintf(info, FMTARGS(
-                "slave_priority:%d\r\n", server.replica_priority,
-                "slave_read_only:%d\r\n", server.repl_replica_ro,
-                "replica_announced:%d\r\n", server.replica_announced));
-            /* clang-format on */
+            info = sdscatprintf(
+                info,
+                FMTARGS(
+                    "slave_priority:%d\r\n", server.replica_priority,
+                    "slave_read_only:%d\r\n", server.repl_replica_ro,
+                    "replica_announced:%d\r\n", server.replica_announced));
         }
 
         info = sdscatprintf(info, "connected_slaves:%lu\r\n", listLength(server.replicas));
@@ -5870,19 +5969,19 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 replica_id++;
             }
         }
-        /* clang-format off */
-        info = sdscatprintf(info, FMTARGS(
-            "replicas_waiting_psync:%llu\r\n", (unsigned long long)raxSize(server.replicas_waiting_psync),
-            "master_failover_state:%s\r\n", getFailoverStateString(),
-            "master_replid:%s\r\n", server.replid,
-            "master_replid2:%s\r\n", server.replid2,
-            "master_repl_offset:%lld\r\n", server.primary_repl_offset,
-            "second_repl_offset:%lld\r\n", server.second_replid_offset,
-            "repl_backlog_active:%d\r\n", server.repl_backlog != NULL,
-            "repl_backlog_size:%lld\r\n", server.repl_backlog_size,
-            "repl_backlog_first_byte_offset:%lld\r\n", server.repl_backlog ? server.repl_backlog->offset : 0,
-            "repl_backlog_histlen:%lld\r\n", server.repl_backlog ? server.repl_backlog->histlen : 0));
-        /* clang-format on */
+        info = sdscatprintf(
+            info,
+            FMTARGS(
+                "replicas_waiting_psync:%llu\r\n", (unsigned long long)raxSize(server.replicas_waiting_psync),
+                "master_failover_state:%s\r\n", getFailoverStateString(),
+                "master_replid:%s\r\n", server.replid,
+                "master_replid2:%s\r\n", server.replid2,
+                "master_repl_offset:%lld\r\n", server.primary_repl_offset,
+                "second_repl_offset:%lld\r\n", server.second_replid_offset,
+                "repl_backlog_active:%d\r\n", server.repl_backlog != NULL,
+                "repl_backlog_size:%lld\r\n", server.repl_backlog_size,
+                "repl_backlog_first_byte_offset:%lld\r\n", server.repl_backlog ? server.repl_backlog->offset : 0,
+                "repl_backlog_histlen:%lld\r\n", server.repl_backlog ? server.repl_backlog->histlen : 0));
     }
 
     /* CPU */
@@ -5993,13 +6092,13 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
 
     if (dictFind(section_dict, "debug") != NULL) {
         if (sections++) info = sdscat(info, "\r\n");
-        /* clang-format off */
-        info = sdscatprintf(info, "# Debug\r\n" FMTARGS(
-            "eventloop_duration_aof_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_AOF].sum,
-            "eventloop_duration_cron_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CRON].sum,
-            "eventloop_duration_max:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].max,
-            "eventloop_cmd_per_cycle_max:%lld\r\n", server.el_cmd_cnt_max));
-        /* clang-format on */
+        info = sdscatprintf(
+            info,
+            "# Debug\r\n" FMTARGS(
+                "eventloop_duration_aof_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_AOF].sum,
+                "eventloop_duration_cron_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CRON].sum,
+                "eventloop_duration_max:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].max,
+                "eventloop_cmd_per_cycle_max:%lld\r\n", server.el_cmd_cnt_max));
     }
 
     return info;
@@ -6291,7 +6390,7 @@ void closeChildUnusedResourceAfterFork(void) {
 int serverFork(int purpose) {
     if (isMutuallyExclusiveChildType(purpose)) {
         if (hasActiveChildProcess()) {
-            errno = EEXIST;
+            errno = EALREADY;
             return -1;
         }
 
@@ -6705,7 +6804,8 @@ serverTestProc *getTestProcByName(const char *name) {
 }
 #endif
 
-int main(int argc, char **argv) {
+/* Main is marked as weak so that unit tests can use their own main function. */
+__attribute__((weak)) int main(int argc, char **argv) {
     struct timeval tv;
     int j;
     char config_from_stdin = 0;
@@ -7048,5 +7148,4 @@ int main(int argc, char **argv) {
     aeDeleteEventLoop(server.el);
     return 0;
 }
-
 /* The End */

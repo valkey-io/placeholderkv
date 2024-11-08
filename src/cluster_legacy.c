@@ -144,7 +144,7 @@ static inline int defaultClientPort(void) {
     return server.tls_cluster ? server.tls_port : server.port;
 }
 
-#define isSlotUnclaimed(slot)                                                                                          \
+#define isSlotUnclaimed(slot) \
     (server.cluster->slots[slot] == NULL || bitmapTestBit(server.cluster->owner_not_claiming_slot, slot))
 
 #define RCVBUF_INIT_LEN 1024
@@ -191,7 +191,10 @@ dictType clusterSdsToListType = {
 };
 
 typedef struct {
-    enum { ITER_DICT, ITER_LIST } type;
+    enum {
+        ITER_DICT,
+        ITER_LIST
+    } type;
     union {
         dictIterator di;
         listIter li;
@@ -224,12 +227,8 @@ static clusterNode *clusterNodeIterNext(ClusterNodeIterator *iter) {
         /* Return the value associated with the node, or NULL if no more nodes */
         return ln ? listNodeValue(ln) : NULL;
     }
-    /* This line is unreachable but added to avoid compiler warnings */
-    default: {
-        serverPanic("bad type");
-        return NULL;
     }
-    }
+    serverPanic("Unknown iterator type %d", iter->type);
 }
 
 static void clusterNodeIterReset(ClusterNodeIterator *iter) {
@@ -1231,7 +1230,7 @@ void clusterReset(int hard) {
     if (nodeIsReplica(myself)) {
         clusterSetNodeAsPrimary(myself);
         replicationUnsetPrimary();
-        emptyData(-1, EMPTYDB_NO_FLAGS, NULL);
+        emptyData(-1, server.lazyfree_lazy_user_flush ? EMPTYDB_ASYNC : EMPTYDB_NO_FLAGS, NULL);
     }
 
     /* Close slots, reset manual failover state. */
@@ -2982,7 +2981,7 @@ int clusterIsValidPacket(clusterLink *link) {
         return 0;
     }
 
-    if (type == server.cluster_drop_packet_filter) {
+    if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
         serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
         return 0;
     }
@@ -3071,7 +3070,8 @@ int clusterProcessPacket(clusterLink *link) {
     if (!clusterIsValidPacket(link)) {
         clusterMsg *hdr = (clusterMsg *)link->rcvbuf;
         uint16_t type = ntohs(hdr->type);
-        if (server.debug_cluster_close_link_on_packet_drop && type == server.cluster_drop_packet_filter) {
+        if (server.debug_cluster_close_link_on_packet_drop &&
+            (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
             serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
             return 0;
@@ -4450,11 +4450,18 @@ int clusterGetReplicaRank(void) {
 void clusterLogCantFailover(int reason) {
     char *msg;
     static time_t lastlog_time = 0;
+    time_t now = time(NULL);
 
-    /* Don't log if we have the same reason for some time. */
-    if (reason == server.cluster->cant_failover_reason &&
-        time(NULL) - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD)
+    /* General logging suppression if the same reason has occurred recently. */
+    if (reason == server.cluster->cant_failover_reason && now - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
         return;
+    }
+
+    /* Special case: If the failure reason is due to data age, log 10 times less frequently. */
+    if (reason == server.cluster->cant_failover_reason && reason == CLUSTER_CANT_FAILOVER_DATA_AGE &&
+        now - lastlog_time < 10 * CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
+        return;
+    }
 
     server.cluster->cant_failover_reason = reason;
 
@@ -4592,7 +4599,7 @@ void clusterHandleReplicaFailover(void) {
      * elapsed, we can setup a new one. */
     if (auth_age > auth_retry_time) {
         server.cluster->failover_auth_time = mstime() +
-                                             500 + /* Fixed delay of 500 milliseconds, let FAIL msg propagate. */
+                                             500 +           /* Fixed delay of 500 milliseconds, let FAIL msg propagate. */
                                              random() % 500; /* Random delay between 0 and 500 milliseconds. */
         server.cluster->failover_auth_count = 0;
         server.cluster->failover_auth_sent = 0;
@@ -5525,10 +5532,14 @@ struct clusterNodeFlags {
 };
 
 static struct clusterNodeFlags clusterNodeFlagsTable[] = {
-    {CLUSTER_NODE_MYSELF, "myself,"}, {CLUSTER_NODE_PRIMARY, "master,"},
-    {CLUSTER_NODE_REPLICA, "slave,"}, {CLUSTER_NODE_PFAIL, "fail?,"},
-    {CLUSTER_NODE_FAIL, "fail,"},     {CLUSTER_NODE_HANDSHAKE, "handshake,"},
-    {CLUSTER_NODE_NOADDR, "noaddr,"}, {CLUSTER_NODE_NOFAILOVER, "nofailover,"}};
+    {CLUSTER_NODE_MYSELF, "myself,"},
+    {CLUSTER_NODE_PRIMARY, "master,"},
+    {CLUSTER_NODE_REPLICA, "slave,"},
+    {CLUSTER_NODE_PFAIL, "fail?,"},
+    {CLUSTER_NODE_FAIL, "fail,"},
+    {CLUSTER_NODE_HANDSHAKE, "handshake,"},
+    {CLUSTER_NODE_NOADDR, "noaddr,"},
+    {CLUSTER_NODE_NOFAILOVER, "nofailover,"}};
 
 /* Concatenate the comma separated list of node flags to the given SDS
  * string 'ci'. */
@@ -5818,6 +5829,8 @@ const char *clusterGetMessageTypeString(int type) {
     return "unknown";
 }
 
+/* Get the slot from robj and return it. If the slot is not valid,
+ * return -1 and send an error to the client. */
 int getSlotOrReply(client *c, robj *o) {
     long long slot;
 
@@ -6543,7 +6556,7 @@ int clusterCommandSpecial(client *c) {
         memset(slots, 0, CLUSTER_SLOTS);
         /* Check that all the arguments are parseable.*/
         for (j = 2; j < c->argc; j++) {
-            if ((slot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((slot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
@@ -6576,11 +6589,11 @@ int clusterCommandSpecial(client *c) {
         /* Check that all the arguments are parseable and that all the
          * slots are not already busy. */
         for (j = 2; j < c->argc; j += 2) {
-            if ((startslot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((startslot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
-            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == C_ERR) {
+            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == -1) {
                 zfree(slots);
                 return 1;
             }
@@ -6741,6 +6754,9 @@ int clusterCommandSpecial(client *c) {
              * it without coordination. */
             serverLog(LL_NOTICE, "Forced failover user request accepted (user request from '%s').", client);
             server.cluster->mf_can_start = 1;
+            /* We can start a manual failover as soon as possible, setting a flag
+             * here so that we don't need to waiting for the cron to kick in. */
+            clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_MANUALFAILOVER);
         } else {
             serverLog(LL_NOTICE, "Manual failover user request accepted (user request from '%s').", client);
             clusterSendMFStart(myself->replicaof);

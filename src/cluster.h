@@ -5,8 +5,8 @@
  * Cluster exported API.
  *----------------------------------------------------------------------------*/
 
-#define CLUSTER_SLOT_MASK_BITS 14                   /* Number of bits used for slot id. */
-#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS) /* Total number of slots in cluster mode, which is 16384. */
+#define CLUSTER_SLOT_MASK_BITS 14                                   /* Number of bits used for slot id. */
+#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS)                 /* Total number of slots in cluster mode, which is 16384. */
 #define CLUSTER_SLOT_MASK ((unsigned long long)(CLUSTER_SLOTS - 1)) /* Bit mask for slot id stored in LSB. */
 #define CLUSTER_OK 0                                                /* Everything looks ok */
 #define CLUSTER_FAIL 1                                              /* The cluster can't work */
@@ -96,7 +96,7 @@ int clusterNodeIsFailing(clusterNode *node);
 int clusterNodeIsNoFailover(clusterNode *node);
 char *clusterNodeGetShardId(clusterNode *node);
 int clusterNodeNumReplicas(clusterNode *node);
-clusterNode *clusterNodeGetReplica(clusterNode *node, int slave_idx);
+clusterNode *clusterNodeGetReplica(clusterNode *node, int replica_idx);
 clusterNode *getMigratingSlotDest(int slot);
 clusterNode *getImportingSlotSource(int slot);
 clusterNode *getNodeBySlot(int slot);
