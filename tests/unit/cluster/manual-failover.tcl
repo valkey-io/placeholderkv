@@ -207,7 +207,7 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
         R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
         R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
 
-        # Replica doing the manual failover agian.
+        # Replica doing the manual failover again.
         R 3 cluster failover
 
         # Make sure the election is reset.
