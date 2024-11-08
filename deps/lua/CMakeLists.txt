@@ -1,5 +1,7 @@
 project(lualib)
 
+include(CheckFunctionExists)
+
 set(LUA_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/src")
 set(LUA_SRCS
     ${LUA_SRC_DIR}/fpconv.c
@@ -42,3 +44,10 @@ set(LUA_SRCS
 add_library(lualib STATIC "${LUA_SRCS}")
 target_include_directories(lualib PUBLIC "${LUA_SRC_DIR}")
 target_compile_definitions(lualib PRIVATE ENABLE_CJSON_GLOBAL)
+
+# Use mkstemp if available
+check_function_exists(mkstemp HAVE_MKSTEMP)
+if (HAVE_MKSTEMP)
+    target_compile_definitions(lualib PRIVATE LUA_USE_MKSTEMP)
+endif ()
+unset(HAVE_MKSTEMP CACHE)
