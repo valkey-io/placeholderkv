@@ -402,7 +402,15 @@ void scanLaterZset(robj *ob, unsigned long *cursor) {
     *cursor = dictScanDefrag(d, *cursor, scanLaterZsetCallback, &defragfns, &data);
 }
 
-/* Used as scan callback when all the work is done in the dictDefragFunctions. */
+/* Used as hashset scan callback when all we need is to defrag the hashset
+ * internals (the allocated buckets) and not the elements. */
+void scanHashsetCallbackCountScanned(void *privdata, void *elemref) {
+    UNUSED(privdata);
+    UNUSED(elemref);
+    server.stat_active_defrag_scanned++;
+}
+
+/* Used as dict scan callback when all the work is done in the dictDefragFunctions. */
 void scanCallbackCountScanned(void *privdata, const dictEntry *de) {
     UNUSED(privdata);
     UNUSED(de);
@@ -793,8 +801,8 @@ void defragOtherGlobals(void) {
      * that remain static for a long time */
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
     moduleDefragGlobals();
-    kvstoreHashsetDefragInternals(server.pubsub_channels, activeDefragAlloc);
-    kvstoreHashsetDefragInternals(server.pubsubshard_channels, activeDefragAlloc);
+    kvstoreHashsetDefragTables(server.pubsub_channels, activeDefragAlloc);
+    kvstoreHashsetDefragTables(server.pubsubshard_channels, activeDefragAlloc);
 }
 
 /* returns 0 more work may or may not be needed (see non-zero cursor),
@@ -1025,8 +1033,8 @@ void activeDefragCycle(void) {
             }
 
             db = &server.db[current_db];
-            kvstoreHashsetDefragInternals(db->keys, activeDefragAlloc);
-            kvstoreHashsetDefragInternals(db->expires, activeDefragAlloc);
+            kvstoreHashsetDefragTables(db->keys, activeDefragAlloc);
+            kvstoreHashsetDefragTables(db->expires, activeDefragAlloc);
             defrag_stage = 0;
             defrag_cursor = 0;
             slot = -1;
@@ -1041,6 +1049,7 @@ void activeDefragCycle(void) {
         } defragStage;
         defragStage defrag_stages[] = {
             {db->keys, defragScanCallback, db},
+            {db->expires, scanHashsetCallbackCountScanned, NULL},
             {server.pubsub_channels, defragPubsubScanCallback,
              &(defragPubSubCtx){server.pubsub_channels, getClientPubSubChannels}},
             {server.pubsubshard_channels, defragPubsubScanCallback,
@@ -1061,8 +1070,13 @@ void activeDefragCycle(void) {
                 /* Continue defragmentation from the previous stage.
                  * If slot is -1, it means this stage starts from the first non-empty slot. */
                 if (slot == -1) slot = kvstoreGetFirstNonEmptyHashsetIndex(current_stage->kvs);
-                defrag_cursor = kvstoreHashsetScan(current_stage->kvs, slot, defrag_cursor, current_stage->scanfn,
-                                                   &(defragCtx){current_stage->privdata, slot}, HASHSET_SCAN_EMIT_REF);
+                defrag_cursor = kvstoreHashsetScanDefrag(current_stage->kvs,
+                                                         slot,
+                                                         defrag_cursor,
+                                                         current_stage->scanfn,
+                                                         &(defragCtx){current_stage->privdata, slot},
+                                                         activeDefragAlloc,
+                                                         HASHSET_SCAN_EMIT_REF);
             }
 
             if (!defrag_cursor) {

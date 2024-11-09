@@ -406,7 +406,7 @@ start_server {tags {"other external:skip"}} {
         # need to be updated accordingly.
         #
         # TODO: Find a better way to detect the limit where resize happens.
-        set MAX_FILL_PERCENT_SOFT 77
+        set MAX_FILL_PERCENT_SOFT 100
 
         # Populate some, then check table size and populate more up to the soft
         # maximum fill factor.

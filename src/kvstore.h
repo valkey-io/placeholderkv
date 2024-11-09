@@ -24,8 +24,7 @@ unsigned long long kvstoreScan(kvstore *kvs,
                                int onlydidx,
                                hashsetScanFunction scan_cb,
                                kvstoreScanShouldSkipHashset *skip_cb,
-                               void *privdata,
-                               int flags);
+                               void *privdata);
 int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandShouldSkipHashsetIndex *skip_cb);
 int kvstoreGetFairRandomHashsetIndex(kvstore *kvs);
 void kvstoreGetStats(kvstore *kvs, char *buf, size_t bufsize, int full);
@@ -40,6 +39,7 @@ uint64_t kvstoreGetHash(kvstore *kvs, const void *key);
 
 void kvstoreHashsetRehashingStarted(hashset *d);
 void kvstoreHashsetRehashingCompleted(hashset *d);
+void kvstoreHashsetTrackMemUsage(hashset *s, ssize_t delta);
 size_t kvstoreHashsetMetadataSize(void);
 
 /* kvstore iterator specific functions */
@@ -65,23 +65,23 @@ int kvstoreHashsetRandomElement(kvstore *kvs, int didx, void **found);
 int kvstoreHashsetFairRandomElement(kvstore *kvs, int didx, void **found);
 unsigned int kvstoreHashsetSampleElements(kvstore *kvs, int didx, void **dst, unsigned int count);
 int kvstoreHashsetExpand(kvstore *kvs, int didx, unsigned long size);
-unsigned long kvstoreHashsetScan(kvstore *kvs,
-                                 int didx,
-                                 unsigned long v,
-                                 hashsetScanFunction fn,
-                                 void *privdata,
-                                 int flags);
-void kvstoreHashsetDefragInternals(kvstore *kvs, void *(*defragfn)(void *));
-/* void *kvstoreHashsetFetchElement(kvstore *kvs, int didx, const void *key); */
+unsigned long kvstoreHashsetScanDefrag(kvstore *kvs,
+                                       int didx,
+                                       unsigned long v,
+                                       hashsetScanFunction fn,
+                                       void *privdata,
+                                       void *(*defragfn)(void *),
+                                       int flags);
+void kvstoreHashsetDefragTables(kvstore *kvs, void *(*defragfn)(void *));
 int kvstoreHashsetFind(kvstore *kvs, int didx, void *key, void **found);
 void **kvstoreHashsetFindRef(kvstore *kvs, int didx, const void *key);
 int kvstoreHashsetAddOrFind(kvstore *kvs, int didx, void *key, void **existing);
 int kvstoreHashsetAdd(kvstore *kvs, int didx, void *element);
 
-void *kvstoreHashsetFindPositionForInsert(kvstore *kvs, int didx, void *key, void **existing);
+int kvstoreHashsetFindPositionForInsert(kvstore *kvs, int didx, void *key, hashsetPosition *position, void **existing);
 void kvstoreHashsetInsertAtPosition(kvstore *kvs, int didx, void *elem, void *position);
 
-void **kvstoreHashsetTwoPhasePopFindRef(kvstore *kvs, int didx, const void *key, void **position);
+void **kvstoreHashsetTwoPhasePopFindRef(kvstore *kvs, int didx, const void *key, void *position);
 void kvstoreHashsetTwoPhasePopDelete(kvstore *kvs, int didx, void *position);
 int kvstoreHashsetPop(kvstore *kvs, int didx, const void *key, void **popped);
 int kvstoreHashsetDelete(kvstore *kvs, int didx, const void *key);

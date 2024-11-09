@@ -286,7 +286,7 @@ void activeExpireCycle(int type) {
 
             while (data.sampled < num && checked_buckets < max_buckets) {
                 db->expires_cursor = kvstoreScan(db->expires, db->expires_cursor, -1, expireScanCallback,
-                                                 isExpiryTableValidForSamplingCb, &data, HASHSET_SCAN_SINGLE_STEP);
+                                                 isExpiryTableValidForSamplingCb, &data);
                 if (db->expires_cursor == 0) {
                     db_done = 1;
                     break;

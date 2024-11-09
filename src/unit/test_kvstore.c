@@ -21,6 +21,7 @@ hashsetType KvstoreHashsetTestType = {
     .elementDestructor = freeTestCallback,
     .rehashingStarted = kvstoreHashsetRehashingStarted,
     .rehashingCompleted = kvstoreHashsetRehashingCompleted,
+    .trackMemUsage = kvstoreHashsetTrackMemUsage,
     .getMetadataSize = kvstoreHashsetMetadataSize,
 };
 

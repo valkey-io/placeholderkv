@@ -64,8 +64,9 @@ struct _kvstore {
     unsigned long long key_count;           /* Total number of keys in this kvstore. */
     unsigned long long bucket_count;        /* Total number of buckets in this kvstore across hash tables. */
     unsigned long long *hashset_size_index; /* Binary indexed tree (BIT) that describes cumulative key frequencies up until
-                                            given hashset-index. */
-    size_t overhead_hashtable_rehashing;    /* Num buckets overhead of hash tables rehashing. */
+                                             * given hashset-index. */
+    size_t overhead_hashtable_lut;          /* Overhead of all hashsets in bytes. */
+    size_t overhead_hashtable_rehashing;    /* Overhead of hash tables rehashing in bytes. */
 };
 
 /* Structure for kvstore iterator that allows iterating across multiple hashsets. */
@@ -167,12 +168,17 @@ static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
 
 /* Create the hashset if it does not exist and return it. */
 static hashset *createHashsetIfNeeded(kvstore *kvs, int didx) {
-    hashset *d = kvstoreGetHashset(kvs, didx);
-    if (d) return d;
+    hashset *s = kvstoreGetHashset(kvs, didx);
+    if (s) return s;
 
     kvs->hashsets[didx] = hashsetCreate(kvs->dtype);
     kvstoreHashsetMetadata *metadata = (kvstoreHashsetMetadata *)hashsetMetadata(kvs->hashsets[didx]);
     metadata->kvs = kvs;
+    /* Memory is counted by kvstoreHashsetTrackMemUsage, but when it's invoked
+     * by hashsetCreate above, we don't know which hashset it is for, because
+     * the metadata has yet been initialized. Account for the newly created
+     * hashset here instead. */
+    kvs->overhead_hashtable_lut += hashsetMemUsage(kvs->hashsets[didx]);
     kvs->allocated_hashsets++;
     return kvs->hashsets[didx];
 }
@@ -212,7 +218,7 @@ void kvstoreHashsetRehashingStarted(hashset *d) {
     size_t from, to;
     hashsetRehashingInfo(d, &from, &to);
     kvs->bucket_count += to; /* Started rehashing (Add the new ht size) */
-    kvs->overhead_hashtable_rehashing += from;
+    kvs->overhead_hashtable_rehashing += from * HASHSET_BUCKET_SIZE;
 }
 
 /* Remove hash table from the rehashing list.
@@ -230,7 +236,18 @@ void kvstoreHashsetRehashingCompleted(hashset *d) {
     size_t from, to;
     hashsetRehashingInfo(d, &from, &to);
     kvs->bucket_count -= from; /* Finished rehashing (Remove the old ht size) */
-    kvs->overhead_hashtable_rehashing -= from;
+    kvs->overhead_hashtable_rehashing -= from * HASHSET_BUCKET_SIZE;
+}
+
+/* Hashset callback to keep track of memory usage. */
+void kvstoreHashsetTrackMemUsage(hashset *s, ssize_t delta) {
+    kvstoreHashsetMetadata *metadata = (kvstoreHashsetMetadata *)hashsetMetadata(s);
+    if (metadata->kvs == NULL) {
+        /* This is the initial allocation by hashsetCreate, when the metadata
+         * hasn't been initialized yet. */
+        return;
+    }
+    metadata->kvs->overhead_hashtable_lut += delta;
 }
 
 /* Returns the size of the DB hashset metadata in bytes. */
@@ -255,6 +272,7 @@ kvstore *kvstoreCreate(hashsetType *type, int num_hashsets_bits, int flags) {
      * If there are any changes in the future, it will need to be modified. */
     assert(type->rehashingStarted == kvstoreHashsetRehashingStarted);
     assert(type->rehashingCompleted == kvstoreHashsetRehashingCompleted);
+    assert(type->trackMemUsage == kvstoreHashsetTrackMemUsage);
     assert(type->getMetadataSize == kvstoreHashsetMetadataSize);
 
     kvstore *kvs = zcalloc(sizeof(*kvs));
@@ -274,6 +292,7 @@ kvstore *kvstoreCreate(hashsetType *type, int num_hashsets_bits, int flags) {
     kvs->resize_cursor = 0;
     kvs->hashset_size_index = kvs->num_hashsets > 1 ? zcalloc(sizeof(unsigned long long) * (kvs->num_hashsets + 1)) : NULL;
     kvs->bucket_count = 0;
+    kvs->overhead_hashtable_lut = 0;
     kvs->overhead_hashtable_rehashing = 0;
 
     return kvs;
@@ -307,6 +326,7 @@ void kvstoreRelease(kvstore *kvs) {
         if (metadata->rehashing_node) metadata->rehashing_node = NULL;
         hashsetRelease(d);
     }
+    assert(kvs->overhead_hashtable_lut == 0);
     zfree(kvs->hashsets);
 
     listRelease(kvs->rehashing);
@@ -335,10 +355,7 @@ unsigned long kvstoreBuckets(kvstore *kvs) {
 
 size_t kvstoreMemUsage(kvstore *kvs) {
     size_t mem = sizeof(*kvs);
-
-    size_t HASHSET_FIXED_SIZE = 42; /* dummy; FIXME: Define in hashset.h */
-    mem += kvstoreBuckets(kvs) * HASHSET_BUCKET_SIZE;
-    mem += kvs->allocated_hashsets * (HASHSET_FIXED_SIZE + kvstoreHashsetMetadataSize());
+    mem += kvs->overhead_hashtable_lut;
 
     /* Values are hashset* shared with kvs->hashsets */
     mem += listLength(kvs->rehashing) * sizeof(listNode);
@@ -366,8 +383,7 @@ unsigned long long kvstoreScan(kvstore *kvs,
                                int onlydidx,
                                hashsetScanFunction scan_cb,
                                kvstoreScanShouldSkipHashset *skip_cb,
-                               void *privdata,
-                               int flags) {
+                               void *privdata) {
     unsigned long long next_cursor = 0;
     /* During hash table traversal, 48 upper bits in the cursor are used for positioning in the HT.
      * Following lower bits are used for the hashset index number, ranging from 0 to 2^num_hashsets_bits-1.
@@ -390,7 +406,7 @@ unsigned long long kvstoreScan(kvstore *kvs,
 
     int skip = !d || (skip_cb && skip_cb(d));
     if (!skip) {
-        next_cursor = hashsetScan(d, cursor, scan_cb, privdata, flags);
+        next_cursor = hashsetScan(d, cursor, scan_cb, privdata);
         /* In hashsetScan, scan_cb may delete entries (e.g., in active expire case). */
         freeHashsetIfNeeded(kvs, didx);
     }
@@ -654,11 +670,11 @@ uint64_t kvstoreIncrementallyRehash(kvstore *kvs, uint64_t threshold_us) {
 
 /* Size in bytes of hash tables used by the hashsets. */
 size_t kvstoreOverheadHashtableLut(kvstore *kvs) {
-    return kvs->bucket_count * HASHSET_BUCKET_SIZE;
+    return kvs->overhead_hashtable_lut;
 }
 
 size_t kvstoreOverheadHashtableRehashing(kvstore *kvs) {
-    return kvs->overhead_hashtable_rehashing * HASHSET_BUCKET_SIZE;
+    return kvs->overhead_hashtable_rehashing;
 }
 
 unsigned long kvstoreHashsetRehashingCount(kvstore *kvs) {
@@ -731,15 +747,16 @@ int kvstoreHashsetExpand(kvstore *kvs, int didx, unsigned long size) {
     return hashsetExpand(d, size);
 }
 
-unsigned long kvstoreHashsetScan(kvstore *kvs,
-                                 int didx,
-                                 unsigned long v,
-                                 hashsetScanFunction fn,
-                                 void *privdata,
-                                 int flags) {
+unsigned long kvstoreHashsetScanDefrag(kvstore *kvs,
+                                       int didx,
+                                       unsigned long v,
+                                       hashsetScanFunction fn,
+                                       void *privdata,
+                                       void *(*defragfn)(void *),
+                                       int flags) {
     hashset *d = kvstoreGetHashset(kvs, didx);
     if (!d) return 0;
-    return hashsetScan(d, v, fn, privdata, flags);
+    return hashsetScanDefrag(d, v, fn, privdata, defragfn, flags);
 }
 
 /* This function doesn't defrag the data (keys and values) within hashset. It
@@ -749,11 +766,11 @@ unsigned long kvstoreHashsetScan(kvstore *kvs,
  *
  * The provided defragfn callback should either return NULL (if reallocation is
  * not necessary) or reallocate the memory like realloc() would do. */
-void kvstoreHashsetDefragInternals(kvstore *kvs, void *(*defragfn)(void *)) {
+void kvstoreHashsetDefragTables(kvstore *kvs, void *(*defragfn)(void *)) {
     for (int didx = 0; didx < kvs->num_hashsets; didx++) {
         hashset **ref = kvstoreGetHashsetRef(kvs, didx), *new;
         if (!*ref) continue;
-        new = hashsetDefragInternals(*ref, defragfn);
+        new = hashsetDefragTables(*ref, defragfn);
         if (new) {
             *ref = new;
             kvstoreHashsetMetadata *metadata = hashsetMetadata(new);
@@ -765,12 +782,6 @@ void kvstoreHashsetDefragInternals(kvstore *kvs, void *(*defragfn)(void *)) {
 uint64_t kvstoreGetHash(kvstore *kvs, const void *key) {
     return kvs->dtype->hashFunction(key);
 }
-
-/* void *kvstoreHashsetFetchElement(kvstore *kvs, int didx, const void *key) { */
-/*     hashset *t = kvstoreGetHashset(kvs, didx); */
-/*     if (!t) return NULL; */
-/*     return hashsetFetchElement(t, key); */
-/* } */
 
 int kvstoreHashsetFind(kvstore *kvs, int didx, void *key, void **found) {
     hashset *t = kvstoreGetHashset(kvs, didx);
@@ -799,9 +810,9 @@ int kvstoreHashsetAdd(kvstore *kvs, int didx, void *element) {
     return ret;
 }
 
-void *kvstoreHashsetFindPositionForInsert(kvstore *kvs, int didx, void *key, void **existing) {
+int kvstoreHashsetFindPositionForInsert(kvstore *kvs, int didx, void *key, hashsetPosition *position, void **existing) {
     hashset *t = createHashsetIfNeeded(kvs, didx);
-    return hashsetFindPositionForInsert(t, key, existing);
+    return hashsetFindPositionForInsert(t, key, position, existing);
 }
 
 /* Must be used together with kvstoreHashsetFindPositionForInsert, with returned
@@ -812,7 +823,7 @@ void kvstoreHashsetInsertAtPosition(kvstore *kvs, int didx, void *elem, void *po
     cumulativeKeyCountAdd(kvs, didx, 1);
 }
 
-void **kvstoreHashsetTwoPhasePopFindRef(kvstore *kvs, int didx, const void *key, void **position) {
+void **kvstoreHashsetTwoPhasePopFindRef(kvstore *kvs, int didx, const void *key, void *position) {
     hashset *s = kvstoreGetHashset(kvs, didx);
     if (!s) return NULL;
     return hashsetTwoPhasePopFindRef(s, key, position);

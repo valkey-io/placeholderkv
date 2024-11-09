@@ -523,6 +523,7 @@ hashsetType kvstoreKeysHashsetType = {
     .resizeAllowed = hashsetResizeAllowed,
     .rehashingStarted = kvstoreHashsetRehashingStarted,
     .rehashingCompleted = kvstoreHashsetRehashingCompleted,
+    .trackMemUsage = kvstoreHashsetTrackMemUsage,
     .getMetadataSize = kvstoreHashsetMetadataSize,
 };
 
@@ -535,6 +536,7 @@ hashsetType kvstoreExpiresHashsetType = {
     .resizeAllowed = hashsetResizeAllowed,
     .rehashingStarted = kvstoreHashsetRehashingStarted,
     .rehashingCompleted = kvstoreHashsetRehashingCompleted,
+    .trackMemUsage = kvstoreHashsetTrackMemUsage,
     .getMetadataSize = kvstoreHashsetMetadataSize,
 };
 
@@ -619,6 +621,7 @@ hashsetType kvstoreChannelHashsetType = {
     .elementDestructor = hashsetChannelsDictDestructor,
     .rehashingStarted = kvstoreHashsetRehashingStarted,
     .rehashingCompleted = kvstoreHashsetRehashingCompleted,
+    .trackMemUsage = kvstoreHashsetTrackMemUsage,
     .getMetadataSize = kvstoreHashsetMetadataSize,
 };
 

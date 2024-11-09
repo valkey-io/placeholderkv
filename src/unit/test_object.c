@@ -8,7 +8,7 @@
 #include <math.h>
 
 
-int test_valkey_from_embstr(int argc, char **argv, int flags) {
+int test_object_with_key(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
     UNUSED(flags);

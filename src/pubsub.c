@@ -271,10 +271,9 @@ int pubsubSubscribeChannel(client *c, robj *channel, pubsubtype type) {
             slot = getKeySlot(channel->ptr);
         }
 
+        hashsetPosition pos;
         void *existing;
-        void *pos = kvstoreHashsetFindPositionForInsert(*type.serverPubSubChannels, slot, channel, &existing);
-
-        if (pos == NULL) {
+        if (!kvstoreHashsetFindPositionForInsert(*type.serverPubSubChannels, slot, channel, &pos, &existing)) {
             clients = existing;
             channel = *(robj **)clients->metadata;
         } else {
@@ -283,7 +282,7 @@ int pubsubSubscribeChannel(client *c, robj *channel, pubsubtype type) {
             memcpy(clients->metadata, (void *)&channel, sizeof(void *));
             incrRefCount(channel);
             /* Insert this dict in the kvstore at the position returned above. */
-            kvstoreHashsetInsertAtPosition(*type.serverPubSubChannels, slot, clients, pos);
+            kvstoreHashsetInsertAtPosition(*type.serverPubSubChannels, slot, clients, &pos);
         }
 
         serverAssert(dictAdd(clients, c, NULL) != DICT_ERR);

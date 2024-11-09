@@ -111,9 +111,8 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        /* FIXME: The objectGetExpire check below is a quick-and-dirty
-         * optimization. TODO: Come up with a better abstraction, like passing
-         * val to expireIfNeeded or a new variant of it. */
+        /* TODO: Use a better design for expireIfNeeded, now that the expire is
+         * stored in the value, for example passing val to expireIfNeeded. */
         if (objectGetExpire(val) != -1 && expireIfNeeded(db, key, expire_flags) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
@@ -128,11 +127,8 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
             server.current_client->cmd->proc != touchCommand)
             flags |= LOOKUP_NOTOUCH;
         if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)) {
-            if (!canUseSharedObject() && val->refcount == OBJ_SHARED_REFCOUNT) {
-                serverPanic("FIXME dup object with key not implemented");
-                /* val = dupStringObject(val); */
-                /* kvstoreDictSetVal(db->keys, getKVStoreIndexForKey(key->ptr), de, val); */
-            }
+            /* Shared objects can't be stored in the database. */
+            serverAssert(val->refcount != OBJ_SHARED_REFCOUNT);
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
             } else {
@@ -286,10 +282,12 @@ int getKeySlot(sds key) {
  */
 valkey *dbAddRDBLoad(serverDb *db, sds key, robj *val) {
     int dict_index = getKVStoreIndexForKey(key);
-    void *pos = kvstoreHashsetFindPositionForInsert(db->keys, dict_index, key, NULL);
-    if (pos == NULL) return NULL;
+    hashsetPosition pos;
+    if (!kvstoreHashsetFindPositionForInsert(db->keys, dict_index, key, &pos, NULL)) {
+        return NULL;
+    }
     val = objectSetKeyAndExpire(val, key, -1);
-    kvstoreHashsetInsertAtPosition(db->keys, dict_index, val, pos);
+    kvstoreHashsetInsertAtPosition(db->keys, dict_index, val, &pos);
     initObjectLRUOrLFU(val);
     return val;
 }
@@ -440,8 +438,8 @@ robj *dbRandomKey(serverDb *db) {
 }
 
 int dbGenericDeleteWithDictIndex(serverDb *db, robj *key, int async, int flags, int dict_index) {
-    void *plink;
-    void **ref = kvstoreHashsetTwoPhasePopFindRef(db->keys, dict_index, key->ptr, &plink);
+    hashsetPosition pos;
+    void **ref = kvstoreHashsetTwoPhasePopFindRef(db->keys, dict_index, key->ptr, &pos);
     if (ref != NULL) {
         valkey *val = *ref;
         /* VM_StringDMA may call dbUnshareStringValue which may free val, so we
@@ -458,7 +456,7 @@ int dbGenericDeleteWithDictIndex(serverDb *db, robj *key, int async, int flags, 
 
         /* Delete from keys and expires tables. This will not free the object.
          * (The expires table has no destructor callback.) */
-        kvstoreHashsetTwoPhasePopDelete(db->keys, dict_index, plink);
+        kvstoreHashsetTwoPhasePopDelete(db->keys, dict_index, &pos);
         if (objectGetExpire(val) != -1) {
             int deleted = kvstoreHashsetDelete(db->expires, dict_index, key->ptr);
             serverAssert(deleted);
@@ -1190,7 +1188,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
             /* In cluster mode there is a separate dictionary for each slot.
              * If cursor is empty, we should try exploring next non-empty slot. */
             if (o == NULL) {
-                cursor = kvstoreScan(c->db->keys, cursor, onlydidx, keysScanCallback, NULL, &data, 0);
+                cursor = kvstoreScan(c->db->keys, cursor, onlydidx, keysScanCallback, NULL, &data);
             } else {
                 cursor = dictScan(ht, cursor, scanCallback, &data);
             }
@@ -2039,7 +2037,7 @@ unsigned long long dbSize(serverDb *db) {
 }
 
 unsigned long long dbScan(serverDb *db, unsigned long long cursor, hashsetScanFunction scan_cb, void *privdata) {
-    return kvstoreScan(db->keys, cursor, -1, scan_cb, NULL, privdata, 0);
+    return kvstoreScan(db->keys, cursor, -1, scan_cb, NULL, privdata);
 }
 
 /* -----------------------------------------------------------------------------
