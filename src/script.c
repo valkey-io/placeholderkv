@@ -373,6 +373,33 @@ static int scriptVerifyWriteCommandAllow(scriptRunCtx *run_ctx, char **err) {
      * of this script. */
     int deny_write_type = writeCommandsDeniedByDiskError();
 
+    /*
+     * If client is readonly and server is a replica, we should not allow write-commands.
+     * we should redirect the client.
+     */
+    if (run_ctx->original_client->flag.readonly && server.primary_host) {
+        client *c = run_ctx->c;
+        client *original_c = run_ctx->original_client;
+
+        /*
+         * Duplicate relevant flags in the script client.
+         */
+        c->flag.readonly = original_c->flag.readonly;
+        c->flag.asking = original_c->flag.asking;
+
+        int error_code;
+        int hashslot = -1;
+        clusterNode *n = getNodeByQuery(c, c->cmd, c->argv, c->argc, &hashslot, &error_code);
+        if (n == NULL || !clusterNodeIsMyself(n)) {
+            if (error_code == CLUSTER_REDIR_MOVED || error_code == CLUSTER_REDIR_ASK) {
+                int port = clusterNodeClientPort(n, connIsTLS(original_c->conn));
+                *err = sdscatprintf(sdsempty(), "-%s %d %s:%d", (error_code == CLUSTER_REDIR_ASK) ? "ASK" : "MOVED",
+                                    hashslot, clusterNodePreferredEndpoint(n, c), port);
+                return C_ERR;
+            }
+        }
+    }
+
     if (server.primary_host && server.repl_replica_ro && !mustObeyClient(run_ctx->original_client)) {
         *err = sdsdup(shared.roreplicaerr->ptr);
         return C_ERR;
