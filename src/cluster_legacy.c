@@ -6519,7 +6519,7 @@ int clusterCommandSpecial(client *c) {
             addReplyErrorFormat(c, "Invalid node address specified: %s:%s", (char *)c->argv[2]->ptr,
                                 (char *)c->argv[3]->ptr);
         } else {
-            sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+            sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
             serverLog(LL_NOTICE, "Cluster meet %s:%lld (user request from '%s').", (char *)c->argv[2]->ptr, port,
                       client);
             sdsfree(client);
@@ -6637,7 +6637,7 @@ int clusterCommandSpecial(client *c) {
             addReplyError(c, "Can't forget my master!");
             return 1;
         }
-        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
         serverLog(LL_NOTICE, "Cluster forget %s (user request from '%s').", (char *)c->argv[2]->ptr, client);
         sdsfree(client);
         clusterBlacklistAddNode(n);
@@ -6729,7 +6729,7 @@ int clusterCommandSpecial(client *c) {
         }
         resetManualFailover();
         server.cluster->mf_end = mstime() + CLUSTER_MF_TIMEOUT;
-        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
 
         if (takeover) {
             /* A takeover does not perform any initial check. It just
@@ -6808,7 +6808,7 @@ int clusterCommandSpecial(client *c) {
                              "master nodes containing keys");
             return 1;
         }
-        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
         serverLog(LL_NOTICE, "Cluster reset (user request from '%s').", client);
         sdsfree(client);
         clusterReset(hard);
