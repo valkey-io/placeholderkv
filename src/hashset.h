@@ -30,6 +30,7 @@
 #include "fmacros.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <unistd.h>
 
 /* --- Opaque types --- */
 
@@ -62,6 +63,10 @@ typedef struct {
     /* Invoked at the end of rehashing. Both tables still exist and are cleaned
      * up after this callback. */
     void (*rehashingCompleted)(hashset *s);
+    /* Track memory usage using this callback. It is called with a positive
+     * number when the hashset allocates some memory and with a negative number
+     * when freeing. */
+    void (*trackMemUsage)(hashset *s, ssize_t delta);
     /* Allow a hashset to carry extra caller-defined metadata. The extra memory
      * is initialized to 0. */
     size_t (*getMetadataSize)(void);
@@ -141,7 +146,7 @@ int hashsetExpand(hashset *s, size_t size);
 int hashsetTryExpand(hashset *s, size_t size);
 int hashsetExpandIfNeeded(hashset *s);
 int hashsetShrinkIfNeeded(hashset *s);
-hashset *hashsetDefragInternals(hashset *s, void *(*defragfn)(void *));
+hashset *hashsetDefragTables(hashset *s, void *(*defragfn)(void *));
 
 /* Elements */
 int hashsetFind(hashset *s, const void *key, void **found);

@@ -214,8 +214,7 @@ static_assert(MAX_FILL_PERCENT_SOFT <= MAX_FILL_PERCENT_HARD, "Soft vs hard fill
  * Bucket chaining
  * ---------------
  *
- * Each key hashes to a bucket in the hash table. A bucket has space for 7
- * unordered elements (on 64-bit platforms). If a bucket is full, the last
+ * Each key hashes to a bucket in the hash table. If a bucket is full, the last
  * element is replaced by a pointer to a separately allocated child bucket.
  * Child buckets form a bucket chain.
  *
@@ -234,12 +233,13 @@ static_assert(MAX_FILL_PERCENT_SOFT <= MAX_FILL_PERCENT_HARD, "Soft vs hard fill
  *                                  | x x x x x x x |
  *                                  +---------------+
  *
+ * Bucket layout
+ * -------------
+ *
  * Within each bucket chain, the elements are unordered. To avoid false
  * positives when looking up an element, a few bits of the hash value is stored
- * in a bucket metadata section in each bucket. The bucket metadata contains a
- * bit that is set when the bucket is full and more elements need to be stored
- * in another bucket. When this bit is set, the last element of the bucket is
- * replaced by pointer to another, separately allocated, child bucket.
+ * in a bucket metadata section in each bucket. The bucket metadata also
+ * contains a bit that indicates that the bucket has a child bucket.
  *
  *         +-------------------------------------------------------+
  *         | Meta | Ele- | Ele- | Ele- | Ele- | Ele- | Ele- | Ele- | Bucket
@@ -254,23 +254,17 @@ static_assert(MAX_FILL_PERCENT_SOFT <= MAX_FILL_PERCENT_HARD, "Soft vs hard fill
  *      |    |       |
  *      |    |      One byte of hash for each element position in the bucket.
  *      |    |
- *      |   Presence bits. One bit for each element position.
+ *      |   Presence bits. One bit for each element position, indicating if an
+ *      |   element present or not.
  *      |
  *     Chained? One bit. If set, the last element is a child bucket pointer.
  *
- * Bucket layout, 64-bit version, 7 elements per bucket
- * ----------------------------------------------------
+ * 64-bit version, 7 elements per bucket:
  *
  *     1 bit     7 bits    [1 byte] x 7  [8 bytes] x 7 = 64 bytes
  *     chained   presence  hashes        elements
  *
- *     chained: when set, the last element a pointer to a child bucket
- *     presence: an bit per element slot indicating if an element present or not
- *     hashes: some bits of hash of each element to rule out false positives
- *     elements: the actual elements, typically pointers (pointer-sized)
- *
- * The 32-bit version has 12 elements and 19 unused bits per bucket
- * ----------------------------------------------------------------
+ * 32-bit version, 12 elements per bucket:
  *
  *     1 bit     12 bits   3 bits  [1 byte] x 12  2 bytes  [4 bytes] x 12
  *     chained   presence  unused  hashes         unused   elements
@@ -401,7 +395,12 @@ static signed char nextBucketExp(size_t min_capacity) {
 /* Swaps the tables and frees the old table. */
 static void rehashingCompleted(hashset *s) {
     if (s->type->rehashingCompleted) s->type->rehashingCompleted(s);
-    if (s->tables[0]) zfree(s->tables[0]);
+    if (s->tables[0]) {
+        zfree(s->tables[0]);
+        if (s->type->trackMemUsage) {
+            s->type->trackMemUsage(s, -sizeof(bucket) * numBuckets(s->bucket_exp[0]));
+        }
+    }
     s->bucket_exp[0] = s->bucket_exp[1];
     s->tables[0] = s->tables[1];
     s->used[0] = s->used[1];
@@ -503,6 +502,7 @@ static void rehashStep(hashset *s) {
             rehashBucket(s, b);
             next = bucketNext(b);
             zfree(b);
+            if (s->type->trackMemUsage) s->type->trackMemUsage(s, -sizeof(bucket));
             s->child_buckets[0]--;
             b = next;
         }
@@ -592,6 +592,7 @@ static int resize(hashset *s, size_t min_capacity, int *malloc_failed) {
     } else {
         new_table = zcalloc(alloc_size);
     }
+    if (s->type->trackMemUsage) s->type->trackMemUsage(s, alloc_size);
     s->bucket_exp[1] = exp;
     s->tables[1] = new_table;
     s->used[1] = 0;
@@ -677,12 +678,13 @@ static void moveElement(bucket *bucket_to, int pos_to, bucket *bucket_from, int 
 
 /* Converts a full bucket b to a chained bucket and adds a new child bucket. The
  * new child bucket is returned. */
-static void bucketConvertToChained(bucket *b) {
+static void bucketConvertToChained(hashset *s, bucket *b) {
     assert(!b->chained);
     /* We'll move the last element from the bucket to the new child bucket. */
     int pos = ELEMENTS_PER_BUCKET - 1;
     assert(isPositionFilled(b, pos));
     bucket *child = zcalloc(sizeof(bucket));
+    if (s->type->trackMemUsage) s->type->trackMemUsage(s, sizeof(bucket));
     moveElement(child, 0, b, pos);
     b->chained = 1;
     b->elements[pos] = child;
@@ -715,6 +717,7 @@ static void pruneLastBucket(hashset *s, bucket *before_last, bucket *last, int t
         moveElement(before_last, ELEMENTS_PER_BUCKET - 1, last, pos_in_last);
     }
     zfree(last);
+    if (s->type->trackMemUsage) s->type->trackMemUsage(s, -sizeof(bucket));
     s->child_buckets[table_index]--;
 }
 
@@ -756,6 +759,7 @@ static void compactBucketChain(hashset *s, size_t bucket_index, int table_index)
             bucket *next_next = bucketNext(next);
             b->elements[ELEMENTS_PER_BUCKET - 1] = next_next;
             zfree(next);
+            if (s->type->trackMemUsage) s->type->trackMemUsage(s, -sizeof(bucket));
             s->child_buckets[table_index]--;
             continue;
         }
@@ -792,7 +796,7 @@ static bucket *findBucketForInsert(hashset *s, uint64_t hash, int *pos_in_bucket
     /* Find bucket that's not full, or create one. */
     while (bucketIsFull(b)) {
         if (!b->chained) {
-            bucketConvertToChained(b);
+            bucketConvertToChained(s, b);
             s->child_buckets[table]++;
         }
         b = bucketNext(b);
@@ -865,7 +869,8 @@ static void sampleElementsScanFn(void *privdata, void *element) {
 /* Allocates and initializes a new hashtable specified by the given type. */
 hashset *hashsetCreate(hashsetType *type) {
     size_t metasize = type->getMetadataSize ? type->getMetadataSize() : 0;
-    hashset *s = zmalloc(sizeof(*s) + metasize);
+    size_t alloc_size = sizeof(hashset) + metasize;
+    hashset *s = zmalloc(alloc_size);
     if (metasize > 0) {
         memset(&s->metadata, 0, metasize);
     }
@@ -875,6 +880,7 @@ hashset *hashsetCreate(hashsetType *type) {
     s->pause_auto_shrink = 0;
     resetTable(s, 0);
     resetTable(s, 1);
+    if (type->trackMemUsage) type->trackMemUsage(s, alloc_size);
     return s;
 }
 
@@ -908,12 +914,18 @@ void hashsetEmpty(hashset *s, void(callback)(hashset *)) {
                     /* Free allocated bucket. */
                     if (b != &s->tables[table_index][idx]) {
                         zfree(b);
+                        if (s->type->trackMemUsage) {
+                            s->type->trackMemUsage(s, -sizeof(bucket));
+                        }
                     }
                     b = next;
                 } while (b != NULL);
             }
         }
         zfree(s->tables[table_index]);
+        if (s->type->trackMemUsage) {
+            s->type->trackMemUsage(s, -sizeof(bucket) * numBuckets(s->bucket_exp[table_index]));
+        }
         resetTable(s, table_index);
     }
 }
@@ -921,6 +933,12 @@ void hashsetEmpty(hashset *s, void(callback)(hashset *)) {
 /* Deletes all the elements and frees the table. */
 void hashsetRelease(hashset *s) {
     hashsetEmpty(s, NULL);
+    /* Call trackMemUsage before zfree, so trackMemUsage can access s. */
+    if (s->type->trackMemUsage) {
+        size_t alloc_size = sizeof(hashset);
+        if (s->type->getMetadataSize) alloc_size += s->type->getMetadataSize();
+        s->type->trackMemUsage(s, -alloc_size);
+    }
     zfree(s);
 }
 
@@ -1067,14 +1085,17 @@ int hashsetShrinkIfNeeded(hashset *s) {
     return resize(s, s->used[0], NULL);
 }
 
-/* Defragment the internal allocations of the hashset by reallocating them. The
+/* Defragment the main allocations of the hashset by reallocating them. The
  * provided defragfn callback should either return NULL (if reallocation is not
  * necessary) or reallocate the memory like realloc() would do.
+ *
+ * Note that this doesn't cover allocated chained buckets. To defragment them,
+ * you need to do a scan using hashsetScanDefrag with the same 'defragfn'.
  *
  * Returns NULL if the hashset's top-level struct hasn't been reallocated.
  * Returns non-NULL if the top-level allocation has been allocated and thus
  * making the 's' pointer invalid. */
-hashset *hashsetDefragInternals(hashset *s, void *(*defragfn)(void *)) {
+hashset *hashsetDefragTables(hashset *s, void *(*defragfn)(void *)) {
     /* The hashset struct */
     hashset *s1 = defragfn(s);
     if (s1 != NULL) s = s1;
