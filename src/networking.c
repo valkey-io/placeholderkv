@@ -888,8 +888,11 @@ void setDeferredAggregateLen(client *c, void *node, long length, char prefix) {
     }
 
     char lenstr[128];
-    size_t lenstr_len = snprintf(lenstr, sizeof(lenstr), "%c%ld\r\n", prefix, length);
-    setDeferredReply(c, node, lenstr, lenstr_len);
+    lenstr[0] = prefix;
+    size_t lenstr_len = ll2string(lenstr + 1, sizeof(lenstr) - 1, length);
+    lenstr[lenstr_len + 1] = '\r';
+    lenstr[lenstr_len + 2] = '\n';
+    setDeferredReply(c, node, lenstr, lenstr_len + 3);
 }
 
 void setDeferredArrayLen(client *c, void *node, long length) {
@@ -2669,6 +2672,8 @@ void processInlineBuffer(client *c) {
 
     /* Create an Object for all arguments. */
     for (c->argc = 0, j = 0; j < argc; j++) {
+        /* Strings returned from sdssplitargs() may have unused capacity that we can trim. */
+        argv[j] = sdsRemoveFreeSpace(argv[j], 1);
         c->argv[c->argc] = createObject(OBJ_STRING, argv[j]);
         c->argc++;
         c->argv_len_sum += sdslen(argv[j]);

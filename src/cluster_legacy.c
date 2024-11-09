@@ -1230,7 +1230,7 @@ void clusterReset(int hard) {
     if (nodeIsReplica(myself)) {
         clusterSetNodeAsPrimary(myself);
         replicationUnsetPrimary();
-        emptyData(-1, EMPTYDB_NO_FLAGS, NULL);
+        emptyData(-1, server.lazyfree_lazy_user_flush ? EMPTYDB_ASYNC : EMPTYDB_NO_FLAGS, NULL);
     }
 
     /* Close slots, reset manual failover state. */
@@ -2981,7 +2981,7 @@ int clusterIsValidPacket(clusterLink *link) {
         return 0;
     }
 
-    if (type == server.cluster_drop_packet_filter) {
+    if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
         serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
         return 0;
     }
@@ -3070,7 +3070,8 @@ int clusterProcessPacket(clusterLink *link) {
     if (!clusterIsValidPacket(link)) {
         clusterMsg *hdr = (clusterMsg *)link->rcvbuf;
         uint16_t type = ntohs(hdr->type);
-        if (server.debug_cluster_close_link_on_packet_drop && type == server.cluster_drop_packet_filter) {
+        if (server.debug_cluster_close_link_on_packet_drop &&
+            (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
             serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
             return 0;
@@ -4433,11 +4434,18 @@ int clusterGetReplicaRank(void) {
 void clusterLogCantFailover(int reason) {
     char *msg;
     static time_t lastlog_time = 0;
+    time_t now = time(NULL);
 
-    /* Don't log if we have the same reason for some time. */
-    if (reason == server.cluster->cant_failover_reason &&
-        time(NULL) - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD)
+    /* General logging suppression if the same reason has occurred recently. */
+    if (reason == server.cluster->cant_failover_reason && now - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
         return;
+    }
+
+    /* Special case: If the failure reason is due to data age, log 10 times less frequently. */
+    if (reason == server.cluster->cant_failover_reason && reason == CLUSTER_CANT_FAILOVER_DATA_AGE &&
+        now - lastlog_time < 10 * CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
+        return;
+    }
 
     server.cluster->cant_failover_reason = reason;
 
@@ -5805,6 +5813,8 @@ const char *clusterGetMessageTypeString(int type) {
     return "unknown";
 }
 
+/* Get the slot from robj and return it. If the slot is not valid,
+ * return -1 and send an error to the client. */
 int getSlotOrReply(client *c, robj *o) {
     long long slot;
 
@@ -6530,7 +6540,7 @@ int clusterCommandSpecial(client *c) {
         memset(slots, 0, CLUSTER_SLOTS);
         /* Check that all the arguments are parseable.*/
         for (j = 2; j < c->argc; j++) {
-            if ((slot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((slot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
@@ -6563,11 +6573,11 @@ int clusterCommandSpecial(client *c) {
         /* Check that all the arguments are parseable and that all the
          * slots are not already busy. */
         for (j = 2; j < c->argc; j += 2) {
-            if ((startslot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((startslot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
-            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == C_ERR) {
+            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == -1) {
                 zfree(slots);
                 return 1;
             }

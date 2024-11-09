@@ -110,6 +110,7 @@ struct hdr_histogram;
 /* Error codes */
 #define C_OK 0
 #define C_ERR -1
+#define C_RETRY -2
 
 /* Static server configuration */
 #define CONFIG_DEFAULT_HZ 10 /* Time interrupt calls/sec. */
@@ -565,6 +566,15 @@ typedef enum {
 #define PAUSE_ACTION_EXPIRE (1 << 2)
 #define PAUSE_ACTION_EVICT (1 << 3)
 #define PAUSE_ACTION_REPLICA (1 << 4) /* pause replica traffic */
+
+/* Sets log format */
+typedef enum { LOG_FORMAT_LEGACY = 0,
+               LOG_FORMAT_LOGFMT } log_format_type;
+
+/* Sets log timestamp format */
+typedef enum { LOG_TIMESTAMP_LEGACY = 0,
+               LOG_TIMESTAMP_ISO8601,
+               LOG_TIMESTAMP_MILLISECONDS } log_timestamp_type;
 
 /* common sets of actions to pause/unpause */
 #define PAUSE_ACTIONS_CLIENT_WRITE_SET \
@@ -1593,6 +1603,15 @@ typedef struct serverTLSContextConfig {
 } serverTLSContextConfig;
 
 /*-----------------------------------------------------------------------------
+ * Unix Context Configuration
+ *----------------------------------------------------------------------------*/
+
+typedef struct serverUnixContextConfig {
+    char *group;       /* UNIX socket group */
+    unsigned int perm; /* UNIX socket permission (see mode_t) */
+} serverUnixContextConfig;
+
+/*-----------------------------------------------------------------------------
  * AOF manifest definition
  *----------------------------------------------------------------------------*/
 typedef enum {
@@ -1703,8 +1722,6 @@ struct valkeyServer {
     int bindaddr_count;                    /* Number of addresses in server.bindaddr[] */
     char *bind_source_addr;                /* Source address to bind on for outgoing connections */
     char *unixsocket;                      /* UNIX socket path */
-    char *unixsocketgroup;                 /* UNIX socket group */
-    unsigned int unixsocketperm;           /* UNIX socket permission (see mode_t) */
     connListener listeners[CONN_TYPE_MAX]; /* TCP/Unix/TLS even more types */
     uint32_t socket_mark_id;               /* ID for listen socket marking */
     connListener clistener;                /* Cluster bus listener */
@@ -1970,17 +1987,19 @@ struct valkeyServer {
     serverOpArray also_propagate; /* Additional command to propagate. */
     int replication_allowed;      /* Are we allowed to replicate? */
     /* Logging */
-    char *logfile;         /* Path of log file */
-    int syslog_enabled;    /* Is syslog enabled? */
-    char *syslog_ident;    /* Syslog ident */
-    int syslog_facility;   /* Syslog facility */
-    int crashlog_enabled;  /* Enable signal handler for crashlog.
-                            * disable for clean core dumps. */
-    int crashed;           /* True if the server has crashed, used in catClientInfoString
-                            * to indicate that no wait for IO threads is needed. */
-    int memcheck_enabled;  /* Enable memory check on crash. */
-    int use_exit_on_panic; /* Use exit() on panic and assert rather than
-                            * abort(). useful for Valgrind. */
+    char *logfile;            /* Path of log file */
+    int syslog_enabled;       /* Is syslog enabled? */
+    char *syslog_ident;       /* Syslog ident */
+    int syslog_facility;      /* Syslog facility */
+    int crashlog_enabled;     /* Enable signal handler for crashlog.
+                               * disable for clean core dumps. */
+    int crashed;              /* True if the server has crashed, used in catClientInfoString
+                               * to indicate that no wait for IO threads is needed. */
+    int memcheck_enabled;     /* Enable memory check on crash. */
+    int use_exit_on_panic;    /* Use exit() on panic and assert rather than
+                               * abort(). useful for Valgrind. */
+    int log_format;           /* Print log in specific format */
+    int log_timestamp_format; /* Timestamp format in log */
     /* Shutdown */
     int shutdown_timeout;    /* Graceful shutdown time limit in seconds. */
     int shutdown_on_sigint;  /* Shutdown flags configured for SIGINT. */
@@ -2201,6 +2220,7 @@ struct valkeyServer {
     int tls_replication;
     int tls_auth_clients;
     serverTLSContextConfig tls_ctx_config;
+    serverUnixContextConfig unix_ctx_config;
     /* cpu affinity */
     char *server_cpulist;      /* cpu affinity list of server main/io thread. */
     char *bio_cpulist;         /* cpu affinity list of bio thread. */
