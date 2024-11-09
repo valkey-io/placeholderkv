@@ -308,7 +308,7 @@ struct hashsetStats {
 
 typedef struct {
     unsigned size;   /* Size of the elements array. */
-    unsigned count;  /* Number of elements already sampled. */
+    unsigned seen;   /* Number of elements seen. */
     void **elements; /* Array of sampled elements. */
 } scan_samples;
 
@@ -859,8 +859,14 @@ static uint64_t hashsetFingerprint(hashset *s) {
  * using scan. */
 static void sampleElementsScanFn(void *privdata, void *element) {
     scan_samples *samples = privdata;
-    if (samples->count < samples->size) {
-        samples->elements[samples->count++] = element;
+    if (samples->seen < samples->size) {
+        samples->elements[samples->seen++] = element;
+    } else {
+        /* More elements than we wanted. This can happen if there are long
+         * bucket chains. Replace random elements using reservoir sampling. */
+        samples->seen++;
+        unsigned idx = random() % samples->seen;
+        if (idx < samples->size) samples->elements[idx] = element;
     }
 }
 
@@ -1717,14 +1723,16 @@ unsigned hashsetSampleElements(hashset *s, void **dst, unsigned count) {
     if (count > hashsetSize(s)) count = hashsetSize(s);
     scan_samples samples;
     samples.size = count;
-    samples.count = 0;
+    samples.seen = 0;
     samples.elements = dst;
     size_t cursor = randomSizeT();
-    while (samples.count < count) {
+    while (samples.seen < count) {
         cursor = hashsetScan(s, cursor, sampleElementsScanFn, &samples);
     }
     rehashStepOnReadIfNeeded(s);
-    return count;
+    /* samples.seen is the number of elements scanned. It may be greater than
+     * the requested count and the size of the dst array. */
+    return samples.seen <= count ? samples.seen : count;
 }
 
 /* --- Stats --- */
