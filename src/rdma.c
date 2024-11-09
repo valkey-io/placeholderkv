@@ -1199,6 +1199,14 @@ static void connRdmaClose(connection *conn) {
         conn->fd = -1;
     }
 
+    /* If called from within a handler, schedule the close but
+     * keep the connection until the handler returns.
+     */
+    if (connHasRefs(conn)) {
+        conn->flags |= CONN_FLAG_CLOSE_SCHEDULED;
+        return;
+    }
+
     if (!cm_id) {
         return;
     }
@@ -1689,7 +1697,6 @@ static int rdmaProcessPendingData(void) {
     listNode *ln;
     rdma_connection *rdma_conn;
     connection *conn;
-    listNode *node;
     int processed;
 
     processed = listLength(pending_list);
@@ -1697,17 +1704,17 @@ static int rdmaProcessPendingData(void) {
     while ((ln = listNext(&li))) {
         rdma_conn = listNodeValue(ln);
         conn = &rdma_conn->c;
-        node = rdma_conn->pending_list_node;
 
         /* a connection can be disconnected by remote peer, CM event mark state as CONN_STATE_CLOSED, kick connection
          * read/write handler to close connection */
         if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
-            listDelNode(pending_list, node);
-            /* do NOT call callHandler(conn, conn->read_handler) here, conn is freed in handler! */
-            if (conn->read_handler) {
-                conn->read_handler(conn);
-            } else if (conn->write_handler) {
-                conn->write_handler(conn);
+            listDelNode(pending_list, rdma_conn->pending_list_node);
+            rdma_conn->pending_list_node = NULL;
+            /* Invoke both read_handler and write_handler, unless read_handler
+               returns 0, indicating the connection has closed, in which case
+               write_handler will be skipped. */
+            if (callHandler(conn, conn->read_handler)) {
+                callHandler(conn, conn->write_handler);
             }
 
             continue;

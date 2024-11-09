@@ -830,11 +830,6 @@ void keysCommand(client *c) {
     kvstoreDictIterator *kvs_di = NULL;
     kvstoreIterator *kvs_it = NULL;
     if (pslot != -1) {
-        if (!kvstoreDictSize(c->db->keys, pslot)) {
-            /* Requested slot is empty */
-            setDeferredArrayLen(c, replylen, 0);
-            return;
-        }
         kvs_di = kvstoreGetDictSafeIterator(c->db->keys, pslot);
     } else {
         kvs_it = kvstoreIteratorInit(c->db->keys);
