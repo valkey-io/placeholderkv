@@ -359,18 +359,10 @@ robj *createStringObjectFromLongLong(long long value) {
     return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
 }
 
-/* The function avoids returning a shared integer when LFU/LRU info
- * are needed, that is, when the object is used as a value in the key
- * space(for instance when the INCR command is used), and the server is
- * configured to evict based on LFU/LRU, so we want LFU/LRU values
- * specific for each key. */
+/* The function doesn't return a shared integer when the object is used as a
+ * value in the key space (for instance when the INCR command is used). */
 robj *createStringObjectFromLongLongForValue(long long value) {
-    if (canUseSharedObject()) {
-        /* If the maxmemory policy permits, we can still return shared integers */
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
-    } else {
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
-    }
+    return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
 }
 
 /* Create a string object that contains an sds inside it. That means it can't be
@@ -830,23 +822,15 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
      * representable as a 32 nor 64 bit integer. */
     len = sdslen(s);
     if (len <= 20 && string2l(s, len, &value)) {
-        /* This object is encodable as a long. Try to use a shared object.
-         * Note that we avoid using shared integers when maxmemory is used
-         * because every object needs to have a private LRU field for the LRU
-         * algorithm to work well. */
-        if (canUseSharedObject() && value >= 0 && value < OBJ_SHARED_INTEGERS) {
+        /* This object is encodable as a long. */
+        if (o->encoding == OBJ_ENCODING_RAW) {
+            sdsfree(o->ptr);
+            o->encoding = OBJ_ENCODING_INT;
+            o->ptr = (void *)value;
+            return o;
+        } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
             decrRefCount(o);
-            return shared.integers[value];
-        } else {
-            if (o->encoding == OBJ_ENCODING_RAW) {
-                sdsfree(o->ptr);
-                o->encoding = OBJ_ENCODING_INT;
-                o->ptr = (void *)value;
-                return o;
-            } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
-                decrRefCount(o);
-                return createStringObjectFromLongLongForValue(value);
-            }
+            return createStringObjectFromLongLongForValue(value);
         }
     }
 

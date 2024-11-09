@@ -3012,10 +3012,6 @@ int collateStringObjects(const robj *a, const robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long long estimateObjectIdleTime(robj *o);
 void trimStringObjectIfNeeded(robj *o, int trim_small_values);
-static inline int canUseSharedObject(void) {
-    /* We can't use shared objects because we embed the key in the value (robj). */
-    return 0;
-}
 #define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
 
 /* Objects with key attached, AKA valkey objects */

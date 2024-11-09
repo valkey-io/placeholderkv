@@ -635,7 +635,6 @@ void incrDecrCommand(client *c, long long incr) {
     value += incr;
 
     if (o && o->refcount == 1 && o->encoding == OBJ_ENCODING_INT &&
-        (!canUseSharedObject() || value < 0 || value >= OBJ_SHARED_INTEGERS) &&
         value >= LONG_MIN && value <= LONG_MAX) {
         new = o;
         o->ptr = (void *)((long)value);
