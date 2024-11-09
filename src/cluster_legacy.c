@@ -2697,7 +2697,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
     }
 
     if (delete_dirty_slots) {
-        for (j = 0; j < dirty_slots_count; j++) {
+        for (int j = 0; j < dirty_slots_count; j++) {
             serverLog(LL_NOTICE, "Deleting keys in dirty slot %d on node %.40s (%s) in shard %.40s", dirty_slots[j],
                       myself->name, myself->human_nodename, myself->shard_id);
             delKeysInSlot(dirty_slots[j]);
