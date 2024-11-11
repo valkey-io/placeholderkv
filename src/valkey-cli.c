@@ -65,9 +65,9 @@
 #include "mt19937-64.h"
 #include "cli_commands.h"
 
-#ifdef USE_FAST_FLOAt
+#ifdef USE_FAST_FLOAT
 #include "../deps/fast_float/fast_float_strtod.h"
-#endif 
+#endif
 
 #define UNUSED(V) ((void)V)
 
@@ -2545,12 +2545,12 @@ static int parseOptions(int argc, char **argv) {
                 exit(1);
             }
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
-            double seconds; 
+            double seconds;
             errno = 0;
 #ifdef USE_FAST_FLOAT
             const char *eptr = fast_float_strtod(argv[++i], &seconds);
 #else
-            char *eptr; 
+            char *eptr;
             seconds = strtod(argv[++i], &eptr);
 #endif
             if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {

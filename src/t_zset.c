@@ -60,9 +60,9 @@
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
 
-#ifdef USE_FAST_FLOAT 
+#ifdef USE_FAST_FLOAT
 #include "../deps/fast_float/fast_float_strtod.h"
-#endif 
+#endif
 
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API
@@ -552,7 +552,7 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         if (((char *)min->ptr)[0] == '(') {
 #ifdef USE_FAST_FLOAT
             eptr = fast_float_strtod((char *)min->ptr + 1, &(spec->min));
-#else 
+#else
             spec->min = strtod((char *)min->ptr + 1, &eptr);
 #endif
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
@@ -560,9 +560,9 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         } else {
 #ifdef USE_FAST_FLOAT
             eptr = fast_float_strtod((char *)min->ptr, &(spec->min));
-#else 
+#else
             spec->min = strtod((char *)min->ptr, &eptr);
-#endif 
+#endif
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
         }
     }
@@ -572,15 +572,15 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         if (((char *)max->ptr)[0] == '(') {
 #ifdef USE_FAST_FLOAT
             eptr = fast_float_strtod((char *)max->ptr + 1, &(spec->max));
-#else 
+#else
             spec->max = strtod((char *)max->ptr + 1, &eptr);
-#endif 
+#endif
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
             spec->maxex = 1;
         } else {
 #ifdef USE_FAST_FLOAT
             eptr = fast_float_strtod((char *)max->ptr, &(spec->max));
-#else 
+#else
             spec->max = strtod((char *)max->ptr, &eptr);
 #endif
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
@@ -778,7 +778,7 @@ double zzlStrtod(unsigned char *vstr, unsigned int vlen) {
     memcpy(buf, vstr, vlen);
     buf[vlen] = '\0';
 #ifdef USE_FAST_FLOAT
-    double d; 
+    double d;
     fast_float_strtod(buf, &d);
     return d;
 #else

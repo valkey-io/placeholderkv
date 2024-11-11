@@ -51,9 +51,9 @@
 #include "sha256.h"
 #include "config.h"
 
-#ifdef USE_FAST_FLOAT 
+#ifdef USE_FAST_FLOAT
 #include "../deps/fast_float/fast_float_strtod.h"
-#endif 
+#endif
 
 #define UNUSED(x) ((void)(x))
 
@@ -600,13 +600,12 @@ int string2d(const char *s, size_t slen, double *dp) {
     errno = 0;
 #ifdef USE_FAST_FLOAT
     const char *eptr = fast_float_strtod(s, dp);
-#else 
-    char *eptr; 
+#else
+    char *eptr;
     *dp = strtod(s, &eptr);
 #endif
     if (slen == 0 || isspace(((const char *)s)[0]) || (size_t)(eptr - (char *)s) != slen ||
-        (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) 
-        || isnan(*dp) || errno == EINVAL) {
+        (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp) || errno == EINVAL) {
         fprintf(stderr, "UNIQUE %s %d", s, errno);
         errno = 0;
         return 0;

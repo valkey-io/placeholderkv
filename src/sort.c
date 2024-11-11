@@ -484,9 +484,9 @@ void sortCommandGeneric(client *c, int readonly) {
                 if (sdsEncodedObject(byval)) {
                     char *eptr;
 #ifdef USE_FAST_FLOAT
-                    errno = 0; 
+                    errno = 0;
                     eptr = fast_float_strtod(byval->ptr, &(vector[j].u.score));
-#else 
+#else
                     vector[j].u.score = strtod(byval->ptr, &eptr);
 #endif
                     if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {

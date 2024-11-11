@@ -846,11 +846,11 @@ void debugCommand(client *c) {
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "sleep") && c->argc == 3) {
         double dtime;
-#ifdef USE_FAST_FLOAT 
+#ifdef USE_FAST_FLOAT
         fast_float_strtod(c->argv[2]->ptr, &dtime);
-#else 
+#else
         dtime = strtod(c->argv[2]->ptr, NULL);
-#endif 
+#endif
         long long utime = dtime * 1000000;
         struct timespec tv;
 

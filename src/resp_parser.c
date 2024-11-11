@@ -158,11 +158,11 @@ static int parseDouble(ReplyParser *parser, void *p_ctx) {
     if (len <= MAX_LONG_DOUBLE_CHARS) {
         memcpy(buf, proto + 1, len);
         buf[len] = '\0';
-#ifdef USE_FAST_FLOAT 
+#ifdef USE_FAST_FLOAT
         fast_float_strtod(buf, &d);
-#else 
+#else
         d = strtod(buf, NULL); /* We expect a valid representation. */
-#endif 
+#endif
     }
     parser->callbacks.double_callback(p_ctx, d, proto, parser->curr_location - proto);
     return C_OK;
