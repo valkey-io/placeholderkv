@@ -34,6 +34,10 @@
 #include <math.h>   /* isnan() */
 #include "cluster.h"
 
+#ifdef USE_FAST_FLOAT
+#include "../deps/fast_float/fast_float_strtod.h"
+#endif
+
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
 serverSortOperation *createSortOperation(int type, robj *pattern) {
@@ -479,9 +483,13 @@ void sortCommandGeneric(client *c, int readonly) {
             } else {
                 if (sdsEncodedObject(byval)) {
                     char *eptr;
-
+#ifdef USE_FAST_FLOAT
+                    errno = 0; 
+                    eptr = fast_float_strtod(byval->ptr, &(vector[j].u.score));
+#else 
                     vector[j].u.score = strtod(byval->ptr, &eptr);
-                    if (eptr[0] != '\0' || errno == ERANGE || isnan(vector[j].u.score)) {
+#endif
+                    if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }
                 } else if (byval->encoding == OBJ_ENCODING_INT) {

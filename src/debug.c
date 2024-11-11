@@ -46,6 +46,10 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#ifdef USE_FAST_FLOAT
+#include "../deps/fast_float/fast_float_strtod.h"
+#endif
+
 #ifdef HAVE_BACKTRACE
 #include <execinfo.h>
 #ifndef __OpenBSD__
@@ -841,7 +845,12 @@ void debugCommand(client *c) {
                              "string|integer|double|bignum|null|array|set|map|attrib|push|verbatim|true|false");
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "sleep") && c->argc == 3) {
-        double dtime = strtod(c->argv[2]->ptr, NULL);
+        double dtime;
+#ifdef USE_FAST_FLOAT 
+        fast_float_strtod(c->argv[2]->ptr, &dtime);
+#else 
+        dtime = strtod(c->argv[2]->ptr, NULL);
+#endif 
         long long utime = dtime * 1000000;
         struct timespec tv;
 

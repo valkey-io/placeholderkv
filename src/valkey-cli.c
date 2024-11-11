@@ -65,6 +65,10 @@
 #include "mt19937-64.h"
 #include "cli_commands.h"
 
+#ifdef USE_FAST_FLOAt
+#include "../deps/fast_float/fast_float_strtod.h"
+#endif 
+
 #define UNUSED(V) ((void)V)
 
 #define OUTPUT_STANDARD 0
@@ -2541,9 +2545,15 @@ static int parseOptions(int argc, char **argv) {
                 exit(1);
             }
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
-            char *eptr;
-            double seconds = strtod(argv[++i], &eptr);
-            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0) {
+            double seconds; 
+            errno = 0;
+#ifdef USE_FAST_FLOAT
+            const char *eptr = fast_float_strtod(argv[++i], &seconds);
+#else
+            char *eptr; 
+            seconds = strtod(argv[++i], &eptr);
+#endif
+            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {
                 fprintf(stderr, "Invalid connection timeout for -t.\n");
                 exit(1);
             }

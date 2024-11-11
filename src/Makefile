@@ -384,15 +384,15 @@ else
 endif
 
 # Determine whether to use fast_float as a library or not. 
-BUILD_FAST_FLOAT:=yes
-ifeq ($(BUILD_FAST_FLOAT),yes)
+USE_FAST_FLOAT?=no
+ifeq ($(USE_FAST_FLOAT),yes)
 	DEPENDENCY_TARGETS+= fast_float
+	FINAL_CFLAGS += -D USE_FAST_FLOAT
         FINAL_LIBS += ../deps/fast_float/fast_float_strtod.o
-	# Mac uses Clang and the standard c++ library is named libc++. For others, it is named libstdc++. 
+	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc. 
 	ifeq (clang,$(CLANG))
   		FINAL_LIBS+= -lc++
 	else
-		# We also need to account for both 32-bit and 64 bit locations of this library. 
 		FINAL_LIBS+= -lstdc++
 	endif
 endif
