@@ -4607,9 +4607,9 @@ void clusterHandleReplicaFailover(void) {
          * if our offset is better. */
         clusterBroadcastPong(CLUSTER_BROADCAST_LOCAL_REPLICAS);
 
-        /* Return ASAP if we can't start the election. Doing this allow us to, for example,
-         * a manual failover, we can get it to the next state ASAP instead of waiting for
-         * the next beforeSleep to kick in. */
+        /* Return ASAP if we can't start the election now. In a manual failover,
+         * we can start the election immediately, so in this case we continue to
+         * the next state without waiting for the next beforeSleep. */
         if (now < server.cluster->failover_auth_time) return;
     }
 
