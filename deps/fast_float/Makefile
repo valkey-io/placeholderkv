@@ -27,7 +27,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-CXX?=g++
+CXX?=c++
 CXXFLAGS=-std=c++11 -O3 -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 SOURCES=fast_float_strtod.cpp
