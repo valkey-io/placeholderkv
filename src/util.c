@@ -606,7 +606,6 @@ int string2d(const char *s, size_t slen, double *dp) {
 #endif
     if (slen == 0 || isspace(((const char *)s)[0]) || (size_t)(eptr - (char *)s) != slen ||
         (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp) || errno == EINVAL) {
-        fprintf(stderr, "UNIQUE %s %d", s, errno);
         errno = 0;
         return 0;
     }

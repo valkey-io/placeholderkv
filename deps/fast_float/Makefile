@@ -28,15 +28,13 @@
 
 
 CXX?=c++
-CXXFLAGS=-std=c++11 -O3 -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
-
-SOURCES=fast_float_strtod.cpp
-
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -c $< -o $@
+# We want -O3 and -flto, so that compiler can inline the function if possible. 
+CXXFLAGS+=-std=c++11 -O3 -fPIC -flto -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 .PHONY: all clean test
 
+# We don't need explicit target for fast_float_strtod.o as Makefile will use 
+# CXXFLAGS and CXX variables to auto-generate it for us. 
 all: fast_float_strtod.o
 
 clean:
@@ -45,5 +43,5 @@ clean:
 
 test: fast_float_strtod.o
 	$(CC) test_fast_float.c -c -o test_fast_float.o	
-	$(CXX) test_fast_float.o fast_float_strtod.o -o test
+	$(CXX) test_fast_float.o fast_float_strtod.o -o test $(CXXFLAGS)
 	./test
