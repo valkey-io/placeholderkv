@@ -58,9 +58,9 @@
 #include "resp_parser.h"
 #include "server.h"
 
-#ifdef USE_FAST_FLOAT 
+#ifdef USE_FAST_FLOAT
 #include "../deps/fast_float/fast_float_strtod.h"
-#endif 
+#endif
 
 static int parseBulk(ReplyParser *parser, void *p_ctx) {
     const char *proto = parser->curr_location;
