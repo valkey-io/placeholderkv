@@ -4855,8 +4855,10 @@ void manualFailoverCanStart(void) {
          * will pause the primary and replica can not do anything to advance the
          * manual failover, and then the manual failover eventually times out. */
         server.cluster->failover_auth_time = 0;
-        serverLog(LL_WARNING, "Failover election in progress for epoch %llu, but received a new manual failover. "
-                              "Resetting the election.", (unsigned long long)server.cluster->failover_auth_epoch);
+        serverLog(LL_WARNING,
+                  "Failover election in progress for epoch %llu, but received a new manual failover. "
+                  "Resetting the election.",
+                  (unsigned long long)server.cluster->failover_auth_epoch);
     }
 
     server.cluster->mf_can_start = 1;
