@@ -400,3 +400,23 @@ start_cluster 4 4 {tags {external:skip cluster} overrides {cluster-node-timeout 
 start_cluster 4 4 {tags {external:skip cluster} overrides {cluster-node-timeout 1000 cluster-migration-barrier 999}} {
     test_cluster_setslot "setslot"
 } my_slot_allocation cluster_allocate_replicas ;# start_cluster
+
+start_cluster 3 0 {tags {external:skip cluster} overrides {cluster-node-timeout 1000 cluster-migration-barrier 999}} {
+    test "Empty primary will check and delete the dirty slots" {
+        R 2 config set cluster-allow-replica-migration no
+
+        # Write a key to slot 0.
+        R 2 incr key_977613
+
+        # Move slot 0 from primary 2 to primary 0.
+        R 0 cluster bumpepoch
+        R 0 cluster setslot 0 node [R 0 cluster myid]
+
+        # Wait for R 2 to report that it is an empty primary (cluster-allow-replica-migration no)
+        wait_for_log_messages -2 {"*I am now an empty primary*"} 0 1000 50
+
+        # Make sure primary 0 will delete the dirty slots.
+        verify_log_message -2 "*Deleting keys in dirty slot 0*" 0
+        assert_equal [R 2 dbsize] 0
+    }
+} my_slot_allocation cluster_allocate_replicas ;# start_cluster
