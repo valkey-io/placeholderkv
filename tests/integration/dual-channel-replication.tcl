@@ -24,7 +24,7 @@ proc get_client_id_by_last_cmd {r cmd} {
 }
 
 # Wait until the process enters a paused state.
-proc wait_process_pause idx {
+proc wait_process_paused idx {
     set pid [srv $idx pid]
     wait_for_condition 50 1000 {
         [string match "T*" [exec ps -o state= -p $pid]]
@@ -36,7 +36,7 @@ proc wait_process_pause idx {
 # Wait until the process enters a paused state, then resume the process.
 proc wait_and_resume_process idx {
     set pid [srv $idx pid]
-    wait_process_pause $idx
+    wait_process_paused $idx
     resume_process $pid
 }
 
@@ -805,7 +805,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             set loglines [lindex $res 1]
         }
         # Waiting for the primary to enter the paused state, that is, make sure that bgsave is triggered.
-        wait_process_pause -1
+        wait_process_paused -1
         $replica replicaof no one
         # Resume the primary and make sure the sync is dropped.
         resume_process [srv -1 pid]
