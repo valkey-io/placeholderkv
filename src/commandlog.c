@@ -134,6 +134,33 @@ void commandlogReset(int type) {
     while (listLength(server.commandlog[type].entries) > 0) listDelNode(server.commandlog[type].entries, listLast(server.commandlog[type].entries));
 }
 
+/* Reply command logs to client. */
+void commandlogGetReply(client *c, int type, long count) {
+    listIter li;
+    listNode *ln;
+    commandlogEntry *ce;
+
+    if (count > (long)listLength(server.commandlog[type].entries)) {
+        count = listLength(server.commandlog[type].entries);
+    }
+    addReplyArrayLen(c, count);
+    listRewind(server.commandlog[type].entries, &li);
+    while (count--) {
+        int j;
+
+        ln = listNext(&li);
+        ce = ln->value;
+        addReplyArrayLen(c, 6);
+        addReplyLongLong(c, ce->id);
+        addReplyLongLong(c, ce->time);
+        addReplyLongLong(c, ce->value);
+        addReplyArrayLen(c, ce->argc);
+        for (j = 0; j < ce->argc; j++) addReplyBulk(c, ce->argv[j]);
+        addReplyBulkCBuffer(c, ce->peerid, sdslen(ce->peerid));
+        addReplyBulkCBuffer(c, ce->cname, sdslen(ce->cname));
+    }
+}
+
 /* The SLOWLOG command. Implements all the subcommands needed to handle the
  * slow log. */
 void slowlogCommand(client *c) {
@@ -158,9 +185,6 @@ void slowlogCommand(client *c) {
         addReplyLongLong(c, listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries));
     } else if ((c->argc == 2 || c->argc == 3) && !strcasecmp(c->argv[1]->ptr, "get")) {
         long count = 10;
-        listIter li;
-        listNode *ln;
-        commandlogEntry *ce;
 
         if (c->argc == 3) {
             /* Consume count arg. */
@@ -175,25 +199,66 @@ void slowlogCommand(client *c) {
             }
         }
 
-        if (count > (long)listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries)) {
-            count = listLength(server.commandlog[COMMANDLOG_TYPE_SLOW].entries);
-        }
-        addReplyArrayLen(c, count);
-        listRewind(server.commandlog[COMMANDLOG_TYPE_SLOW].entries, &li);
-        while (count--) {
-            int j;
+        commandlogGetReply(c, COMMANDLOG_TYPE_SLOW, count);
+    } else {
+        addReplySubcommandSyntaxError(c);
+    }
+}
 
-            ln = listNext(&li);
-            ce = ln->value;
-            addReplyArrayLen(c, 6);
-            addReplyLongLong(c, ce->id);
-            addReplyLongLong(c, ce->time);
-            addReplyLongLong(c, ce->value);
-            addReplyArrayLen(c, ce->argc);
-            for (j = 0; j < ce->argc; j++) addReplyBulk(c, ce->argv[j]);
-            addReplyBulkCBuffer(c, ce->peerid, sdslen(ce->peerid));
-            addReplyBulkCBuffer(c, ce->cname, sdslen(ce->cname));
+int commandlogGetTypeOrReply(client *c, robj *o) {
+    if (!strcasecmp(o->ptr, "slow")) return COMMANDLOG_TYPE_SLOW;
+    if (!strcasecmp(o->ptr, "heavytraffic-input")) return COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT;
+    if (!strcasecmp(o->ptr, "heavytraffic-output")) return COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT;
+    addReplyError(c, "type should be one of the following: slow, heavytraffic-input, heavytraffic-output");
+    return -1;
+}
+
+/* The COMMANDLOG command. Implements all the subcommands needed to handle the
+ * command log. */
+void commandlogCommand(client *c) {
+    int type;
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
+        const char *help[] = {
+            "GET <count> <type>",
+            "    Return top <count> entries of the specified <type> from the commandlog (-1 mean all).",
+            "    Entries are made of:",
+            "    id, timestamp,",
+            "        time in microseconds for type of slow,",
+            "        or size in bytes for type of heavytraffic-input,",
+            "        or size in bytes for type of heavytraffic-output",
+            "    arguments array, client IP and port,",
+            "    client name",
+            "LEN <type>",
+            "    Return the length of the specified type of commandlog.",
+            "RESET <type>",
+            "    Reset the specified type of commandlog.",
+            NULL,
+        };
+        addReplyHelp(c, help);
+    } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr, "reset")) {
+        if ((type = commandlogGetTypeOrReply(c, c->argv[2])) == -1) return;
+        commandlogReset(type);
+        addReply(c, shared.ok);
+    } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr, "len")) {
+        if ((type = commandlogGetTypeOrReply(c, c->argv[2])) == -1) return;
+        addReplyLongLong(c, listLength(server.commandlog[type].entries));
+    } else if (c->argc == 4 && !strcasecmp(c->argv[1]->ptr, "get")) {
+        long count;
+
+        /* Consume count arg. */
+        if (getRangeLongFromObjectOrReply(c, c->argv[2], -1, LONG_MAX, &count,
+                                          "count should be greater than or equal to -1") != C_OK)
+            return;
+
+        if (count == -1) {
+            /* We treat -1 as a special value, which means to get all command logs.
+             * Simply set count to the length of server.commandlog. */
+            count = listLength(server.commandlog[type].entries);
         }
+
+        if ((type = commandlogGetTypeOrReply(c, c->argv[3])) == -1) return;
+
+        commandlogGetReply(c, type, count);
     } else {
         addReplySubcommandSyntaxError(c);
     }
