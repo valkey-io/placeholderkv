@@ -75,6 +75,50 @@ start_server {tags {"modules"}} {
         r function list
     } {{library_name mylib engine HELLO functions {{name foobar description {} flags {}}}}}
 
+    test {Load a second library and call a function} {
+        r function load "#!hello name=mylib2\nFUNCTION getarg\nARGS 0\nRETURN"
+        set result [r fcall getarg 0 456]
+        assert_equal $result 456
+    }
+
+    test {Delete all libraries and functions} {
+        set result [r function flush]
+        assert_equal $result {OK}
+        r function list
+    } {}
+
+    test {Test the deletion of a single library} {
+        r function load $HELLO_PROGRAM
+        r function load "#!hello name=mylib2\nFUNCTION getarg\nARGS 0\nRETURN"
+
+        set result [r function delete mylib]
+        assert_equal $result {OK}
+
+        set result [r fcall getarg 0 446]
+        assert_equal $result 446
+    }
+
+    test {Test dump and restore function library} {
+        r function load $HELLO_PROGRAM
+
+        set result [r fcall bar 0]
+        assert_equal $result 432
+
+        set dump [r function dump]
+
+        set result [r function flush]
+        assert_equal $result {OK}
+
+        set result [r function restore $dump]
+        assert_equal $result {OK}
+
+        set result [r fcall getarg 0 436]
+        assert_equal $result 436
+
+        set result [r fcall bar 0]
+        assert_equal $result 432
+    }
+
     test {Unload scripting engine module} {
         set result [r module unload helloengine]
         assert_equal $result "OK"
