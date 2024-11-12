@@ -18,13 +18,16 @@
  * Example of a program:
  *
  * ```
- * FUNCTION foo
+ * FUNCTION foo  # declaration of function 'foo'
  * ARGS 0        # pushes the value in the first argument to the top of the
- * stack RETURN        # returns the current value on the top of the stack
+ *               # stack
+ * RETURN        # returns the current value on the top of the stack and marks
+ *               # the end of the function declaration
  *
- * FUNCTION bar
+ * FUNCTION bar  # declaration of function 'bar'
  * CONSTI 432    # pushes the value 432 to the top of the stack
- * RETURN        # returns the current value on the top of the stack
+ * RETURN        # returns the current value on the top of the stack and marks
+ *               # the end of the function declaration.
  * ```
  */
 
