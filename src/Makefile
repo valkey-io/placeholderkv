@@ -442,10 +442,15 @@ ENGINE_TEST_OBJ:=$(sort $(patsubst unit/%.c,unit/%.o,$(ENGINE_TEST_FILES)))
 ENGINE_UNIT_TESTS:=$(ENGINE_NAME)-unit-tests$(PROG_SUFFIX)
 ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(ENGINE_BENCHMARK_OBJ)))
 
-# If USE_FAST_FLOAT is yes, then add fast_float libraries as requirements to build server and cli object.
 ifeq ($(USE_FAST_FLOAT),yes)
-	ENGINE_SERVER_OBJ+= fast_float/fast_float_strtod.o
-	ENGINE_CLI_OBJ+= fast_float/fast_float_strtod.o
+	ENGINE_SERVER_OBJ += fast_float/fast_float_strtod.o
+	ENGINE_CLI_OBJ += fast_float/fast_float_strtod.o
+	FINAL_CFLAGS += -D USE_FAST_FLOAT
+	ifeq (clang,$(CLANG))
+		FINAL_LIBS += -lc++
+	else
+		FINAL_LIBS += -lstdc++
+	endif
 endif
 
 
