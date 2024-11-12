@@ -3302,7 +3302,7 @@ void preventCommandReplication(client *c) {
 /* Log the last command a client executed into the commandlog. */
 void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
     /* Some commands may contain sensitive data that should not be available in the commandlog.
-*/
+     */
     if (cmd->flags & CMD_SKIP_COMMANDLOG) return;
 
     /* If command argument vector was rewritten, use the original

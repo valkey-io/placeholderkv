@@ -39,11 +39,11 @@
 typedef struct commandlogEntry {
     robj **argv;
     int argc;
-    long long id;       /* Unique entry identifier. */
-    long long value;    /* The meaning is determined by the type of command log. */
-    time_t time;        /* Unix time at which the query was executed. */
-    sds cname;          /* Client name. */
-    sds peerid;         /* Client network address. */
+    long long id;    /* Unique entry identifier. */
+    long long value; /* The meaning is determined by the type of command log. */
+    time_t time;     /* Unix time at which the query was executed. */
+    sds cname;       /* Client name. */
+    sds peerid;      /* Client network address. */
 } commandlogEntry;
 
 /* Exported API */
