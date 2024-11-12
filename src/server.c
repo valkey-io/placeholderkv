@@ -3303,7 +3303,7 @@ void preventCommandReplication(client *c) {
 void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
     /* Some commands may contain sensitive data that should not be available in the commandlog.
 */
-    if (cmd->flags & CMD_SKIP_SLOWLOG) return;
+    if (cmd->flags & CMD_SKIP_COMMANDLOG) return;
 
     /* If command argument vector was rewritten, use the original
      * arguments. */
@@ -4550,7 +4550,7 @@ void addReplyFlagsForCommand(client *c, struct serverCommand *cmd) {
                                   {CMD_LOADING, "loading"},
                                   {CMD_STALE, "stale"},
                                   {CMD_SKIP_MONITOR, "skip_monitor"},
-                                  {CMD_SKIP_SLOWLOG, "skip_slowlog"},
+                                  {CMD_SKIP_COMMANDLOG, "skip_commandlog"},
                                   {CMD_ASKING, "asking"},
                                   {CMD_FAST, "fast"},
                                   {CMD_NO_AUTH, "no_auth"},

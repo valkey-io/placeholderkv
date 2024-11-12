@@ -224,7 +224,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CMD_LOADING (1ULL << 9)
 #define CMD_STALE (1ULL << 10)
 #define CMD_SKIP_MONITOR (1ULL << 11)
-#define CMD_SKIP_SLOWLOG (1ULL << 12)
+#define CMD_SKIP_COMMANDLOG (1ULL << 12)
 #define CMD_ASKING (1ULL << 13)
 #define CMD_FAST (1ULL << 14)
 #define CMD_NO_AUTH (1ULL << 15)
