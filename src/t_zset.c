@@ -537,7 +537,7 @@ zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank) {
 
 /* Populate the rangespec according to the objects min and max. */
 static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
-    char *eptr;
+    const char *eptr;
     spec->minex = spec->maxex = 0;
 
     /* Parse the min-max interval. If one of the values is prefixed
