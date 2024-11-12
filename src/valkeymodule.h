@@ -951,6 +951,7 @@ VALKEYMODULE_API int (*ValkeyModule_CreateCommand)(ValkeyModuleCtx *ctx,
                                                    int keystep) VALKEYMODULE_ATTR;
 VALKEYMODULE_API ValkeyModuleCommand *(*ValkeyModule_GetCommand)(ValkeyModuleCtx *ctx,
                                                                  const char *name)VALKEYMODULE_ATTR;
+VALKEYMODULE_API int (*ValkeyModule_GetClientConnectedPort)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_CreateSubcommand)(ValkeyModuleCommand *parent,
                                                       const char *name,
                                                       ValkeyModuleCmdFunc cmdfunc,
@@ -1667,6 +1668,7 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(Strdup);
     VALKEYMODULE_GET_API(CreateCommand);
     VALKEYMODULE_GET_API(GetCommand);
+    VALKEYMODULE_GET_API(GetClientConnectedPort);
     VALKEYMODULE_GET_API(CreateSubcommand);
     VALKEYMODULE_GET_API(SetCommandInfo);
     VALKEYMODULE_GET_API(SetCommandACLCategories);

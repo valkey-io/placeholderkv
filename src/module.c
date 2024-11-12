@@ -2331,6 +2331,10 @@ int VM_IsModuleNameBusy(const char *name) {
     return de != NULL;
 }
 
+int VM_GetClientConnectedPort(ValkeyModuleCtx *ctx) {
+    return getClientConnectedPort(ctx->client);
+}
+
 /* Return the current UNIX time in milliseconds. */
 mstime_t VM_Milliseconds(void) {
     return mstime();
@@ -13576,6 +13580,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(Strdup);
     REGISTER_API(CreateCommand);
     REGISTER_API(GetCommand);
+    REGISTER_API(GetClientConnectedPort);
     REGISTER_API(CreateSubcommand);
     REGISTER_API(SetCommandInfo);
     REGISTER_API(SetCommandACLCategories);
