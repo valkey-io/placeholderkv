@@ -60,9 +60,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
 
-#ifdef USE_FAST_FLOAT
 #include "fast_float/fast_float_strtod.h"
-#endif
 
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API

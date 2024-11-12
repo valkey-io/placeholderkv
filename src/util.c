@@ -51,9 +51,7 @@
 #include "sha256.h"
 #include "config.h"
 
-#ifdef USE_FAST_FLOAT
 #include "fast_float/fast_float_strtod.h"
-#endif
 
 #define UNUSED(x) ((void)(x))
 
