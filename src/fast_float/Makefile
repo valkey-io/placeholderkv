@@ -32,10 +32,11 @@ CXX?=c++
 # Currently -flto fails 32-bit build, therefore removing it. 
 CXXFLAGS+=-std=c++11 -O3 -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) $(CFLAGS) $(LDFLAGS) -c $< -o $@
+
 .PHONY: all clean test
 
-# We don't need explicit target for fast_float_strtod.o as Makefile will use 
-# CXXFLAGS and CXX variables to auto-generate it for us. 
 all: fast_float_strtod.o
 
 clean:
