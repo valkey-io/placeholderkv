@@ -3,7 +3,7 @@
         "summary": "Mark this client as an import source when server is in import mode.",
         "complexity": "O(1)",
         "group": "connection",
-        "since": "8.2.0",
+        "since": "8.1.0",
         "arity": 3,
         "container": "CLIENT",
         "function": "clientCommand",
