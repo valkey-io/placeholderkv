@@ -482,13 +482,9 @@ void sortCommandGeneric(client *c, int readonly) {
                 if (sortby) vector[j].u.cmpobj = getDecodedObject(byval);
             } else {
                 if (sdsEncodedObject(byval)) {
-                    char *eptr;
-#ifdef USE_FAST_FLOAT
+                    const char *eptr;
                     errno = 0;
-                    eptr = fast_float_strtod(byval->ptr, &(vector[j].u.score));
-#else
-                    vector[j].u.score = strtod(byval->ptr, &eptr);
-#endif
+                    eptr = valkey_strtod(byval->ptr, &(vector[j].u.score));
                     if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }

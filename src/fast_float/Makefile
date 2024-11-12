@@ -28,8 +28,9 @@
 
 
 CXX?=c++
-# We want -O3 and -flto, so that compiler can inline the function if possible. 
-CXXFLAGS+=-std=c++11 -O3 -fPIC -flto -D FASTFLOAT_ALLOWS_LEADING_PLUS
+# We want -O3 and -flto so that compiler can inline the function. 
+# Currently -flto fails 32-bit build, therefore removing it. 
+CXXFLAGS+=-std=c++11 -O3 -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 .PHONY: all clean test
 

@@ -2547,12 +2547,7 @@ static int parseOptions(int argc, char **argv) {
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
             double seconds;
             errno = 0;
-#ifdef USE_FAST_FLOAT
-            const char *eptr = fast_float_strtod(argv[++i], &seconds);
-#else
-            char *eptr;
-            seconds = strtod(argv[++i], &eptr);
-#endif
+            const char *eptr = valkey_strtod(argv[++i], &seconds);
             if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {
                 fprintf(stderr, "Invalid connection timeout for -t.\n");
                 exit(1);

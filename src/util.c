@@ -598,12 +598,7 @@ int string2ld(const char *s, size_t slen, long double *dp) {
  * representing the number are accepted. */
 int string2d(const char *s, size_t slen, double *dp) {
     errno = 0;
-#ifdef USE_FAST_FLOAT
-    const char *eptr = fast_float_strtod(s, dp);
-#else
-    char *eptr;
-    *dp = strtod(s, &eptr);
-#endif
+    const char *eptr = valkey_strtod(s, dp);
     if (slen == 0 || isspace(((const char *)s)[0]) || (size_t)(eptr - (char *)s) != slen ||
         (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp) || errno == EINVAL) {
         errno = 0;

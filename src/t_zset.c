@@ -550,19 +550,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->min = (long)min->ptr;
     } else {
         if (((char *)min->ptr)[0] == '(') {
-#ifdef USE_FAST_FLOAT
-            eptr = fast_float_strtod((char *)min->ptr + 1, &(spec->min));
-#else
-            spec->min = strtod((char *)min->ptr + 1, &eptr);
-#endif
+            eptr = valkey_strtod((char *)min->ptr + 1, &(spec->min));
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
             spec->minex = 1;
         } else {
-#ifdef USE_FAST_FLOAT
-            eptr = fast_float_strtod((char *)min->ptr, &(spec->min));
-#else
-            spec->min = strtod((char *)min->ptr, &eptr);
-#endif
+            eptr = valkey_strtod((char *)min->ptr, &(spec->min));
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
         }
     }
@@ -570,19 +562,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->max = (long)max->ptr;
     } else {
         if (((char *)max->ptr)[0] == '(') {
-#ifdef USE_FAST_FLOAT
-            eptr = fast_float_strtod((char *)max->ptr + 1, &(spec->max));
-#else
-            spec->max = strtod((char *)max->ptr + 1, &eptr);
-#endif
+            eptr = valkey_strtod((char *)max->ptr + 1, &(spec->max));
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
             spec->maxex = 1;
         } else {
-#ifdef USE_FAST_FLOAT
-            eptr = fast_float_strtod((char *)max->ptr, &(spec->max));
-#else
-            spec->max = strtod((char *)max->ptr, &eptr);
-#endif
+            eptr = valkey_strtod((char *)max->ptr, &(spec->max));
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
         }
     }
@@ -777,13 +761,9 @@ double zzlStrtod(unsigned char *vstr, unsigned int vlen) {
     if (vlen > sizeof(buf) - 1) vlen = sizeof(buf) - 1;
     memcpy(buf, vstr, vlen);
     buf[vlen] = '\0';
-#ifdef USE_FAST_FLOAT
     double d;
-    fast_float_strtod(buf, &d);
+    valkey_strtod(buf, &d);
     return d;
-#else
-    return strtod(buf, NULL);
-#endif
 }
 
 double zzlGetScore(unsigned char *sptr) {
