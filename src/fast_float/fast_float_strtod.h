@@ -65,6 +65,8 @@ static inline const char *valkey_strtod(const char *str, double *value) {
 
 #else
 
+#include <stdlib.h>
+
 static inline const char *valkey_strtod(const char *str, double *value) {
     char *endptr;
     *value = strtod(str, &endptr);
