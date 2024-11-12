@@ -47,7 +47,7 @@
 #include <unistd.h>
 
 #ifdef USE_FAST_FLOAT
-#include "../deps/fast_float/fast_float_strtod.h"
+#include "fast_float/fast_float_strtod.h"
 #endif
 
 #ifdef HAVE_BACKTRACE

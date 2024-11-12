@@ -66,7 +66,7 @@
 #include "cli_commands.h"
 
 #ifdef USE_FAST_FLOAT
-#include "../deps/fast_float/fast_float_strtod.h"
+#include "fast_float/fast_float_strtod.h"
 #endif
 
 #define UNUSED(V) ((void)V)
