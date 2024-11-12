@@ -167,6 +167,7 @@ static HelloProgram *helloLangParseCode(const char *code,
         case FUNCTION:
             ValkeyModule_Assert(currentFunc == NULL);
             currentFunc = ValkeyModule_Alloc(sizeof(HelloFunc));
+            memset(currentFunc, 0, sizeof(HelloFunc));
             program->functions[program->num_functions++] = currentFunc;
             helloLangParseFunction(currentFunc);
             break;
@@ -289,6 +290,8 @@ static int createHelloLangEngine(void *engine_ctx,
             // We need to cleanup all parsed functions that were not registered.
             for (uint32_t j = i; j < ctx->program->num_functions; j++) {
                 engineFreeFunction(NULL, ctx->program->functions[j]);
+                ctx->program->functions[j] = NULL;
+                ctx->program->num_functions--;
             }
             return ret;
         }
