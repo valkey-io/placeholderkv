@@ -28,31 +28,37 @@
  */
 
 
-#include "fast_float_strtod.h"
+#include "../fast_float/valkey_strtod.h"
 #include "assert.h"
-#include "string.h"
-#include "stdio.h"
 #include "errno.h"
 #include "math.h"
 
-void test1() {
+int test_valkey_strtod(int argc, char **argv, int flags) {
+    UNUSED(argc);
+    UNUSED(argv);
+    UNUSED(flags);
+
     double value = 0;
-    fast_float_strtod("231.2341234", &value);
+    errno = 0;
+    valkey_strtod("231.2341234", &value);
     assert(value == 231.2341234);
     assert(errno == 0);
-    value = 0;
-    fast_float_strtod("+inf", &value);
-    assert(isinf(value));
-    value = 0;
-    fast_float_strtod("-inf", &value);
-    assert(isinf(value));
-    value = 0;
-    fast_float_strtod("inf", &value);
-    assert(isinf(value));
-    printf("fast_float test succeeded");
-}
 
-int main() {
-    test1();
+    value = 0;
+    valkey_strtod("+inf", &value);
+    assert(isinf(value));
+    assert(errno == 0);
+    
+    value = 0;
+    valkey_strtod("-inf", &value);
+    assert(isinf(value));
+    assert(errno == 0);
+
+    value = 0;
+    valkey_strtod("inf", &value);
+    assert(isinf(value));
+    assert(errno == 0);
+
     return 0;
 }
+

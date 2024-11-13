@@ -46,7 +46,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "fast_float/fast_float_strtod.h"
+#include "fast_float/valkey_strtod.h"
 
 #ifdef HAVE_BACKTRACE
 #include <execinfo.h>
