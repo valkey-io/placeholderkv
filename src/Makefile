@@ -383,21 +383,6 @@ else
 	MAYBE_UNINSTALL_REDIS_SYMLINK=
 endif
 
-fast_float/fast_float_strtod.o: 
-	cd fast_float && $(MAKE) CFLAGS=" $(CFLAGS) " LDFLAGS=" $(LDFLAGS) "
-
-# Determine whether to use fast_float as a library or not. 
-USE_FAST_FLOAT?=no
-ifeq ($(USE_FAST_FLOAT),yes)
-	FINAL_CFLAGS += -D USE_FAST_FLOAT
-	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc. 
-	ifeq (clang,$(CLANG))
-  		FINAL_LIBS+= -lc++
-	else
-		FINAL_LIBS+= -lstdc++
-	endif
-endif
-
 SERVER_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
 SERVER_AR=$(QUIET_AR)$(AR)
 SERVER_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
@@ -442,10 +427,12 @@ ENGINE_TEST_OBJ:=$(sort $(patsubst unit/%.c,unit/%.o,$(ENGINE_TEST_FILES)))
 ENGINE_UNIT_TESTS:=$(ENGINE_NAME)-unit-tests$(PROG_SUFFIX)
 ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(ENGINE_BENCHMARK_OBJ)))
 
+USE_FAST_FLOAT?=no
 ifeq ($(USE_FAST_FLOAT),yes)
+	FINAL_CFLAGS += -D USE_FAST_FLOAT
 	ENGINE_SERVER_OBJ += fast_float/fast_float_strtod.o
 	ENGINE_CLI_OBJ += fast_float/fast_float_strtod.o
-	FINAL_CFLAGS += -D USE_FAST_FLOAT
+	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
 	ifeq (clang,$(CLANG))
 		FINAL_LIBS += -lc++
 	else
@@ -453,11 +440,13 @@ ifeq ($(USE_FAST_FLOAT),yes)
 	endif
 endif
 
-
 all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
+
+fast_float/fast_float_strtod.o:
+	cd fast_float && $(MAKE) CFLAGS=" $(CFLAGS) " LDFLAGS=" $(LDFLAGS) "
 
 Makefile.dep:
 	-$(SERVER_CC) -MM $(ALL_SOURCES) > Makefile.dep 2> /dev/null || true
