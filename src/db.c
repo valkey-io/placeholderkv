@@ -830,11 +830,6 @@ void keysCommand(client *c) {
     kvstoreDictIterator *kvs_di = NULL;
     kvstoreIterator *kvs_it = NULL;
     if (pslot != -1) {
-        if (!kvstoreDictSize(c->db->keys, pslot)) {
-            /* Requested slot is empty */
-            setDeferredArrayLen(c, replylen, 0);
-            return;
-        }
         kvs_di = kvstoreGetDictSafeIterator(c->db->keys, pslot);
     } else {
         kvs_it = kvstoreIteratorInit(c->db->keys);
@@ -2418,9 +2413,9 @@ int bzmpopGetKeys(struct serverCommand *cmd, robj **argv, int argc, getKeysResul
 
 /* Helper function to extract keys from the SORT RO command.
  *
- * SORT <sort-key>
+ * SORT_RO <sort-key>
  *
- * The second argument of SORT is always a key, however an arbitrary number of
+ * The second argument of SORT_RO is always a key, however an arbitrary number of
  * keys may be accessed while doing the sort (the BY and GET args), so the
  * key-spec declares incomplete keys which is why we have to provide a concrete
  * implementation to fetch the keys.

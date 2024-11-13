@@ -888,8 +888,11 @@ void setDeferredAggregateLen(client *c, void *node, long length, char prefix) {
     }
 
     char lenstr[128];
-    size_t lenstr_len = snprintf(lenstr, sizeof(lenstr), "%c%ld\r\n", prefix, length);
-    setDeferredReply(c, node, lenstr, lenstr_len);
+    lenstr[0] = prefix;
+    size_t lenstr_len = ll2string(lenstr + 1, sizeof(lenstr) - 1, length);
+    lenstr[lenstr_len + 1] = '\r';
+    lenstr[lenstr_len + 2] = '\n';
+    setDeferredReply(c, node, lenstr, lenstr_len + 3);
 }
 
 void setDeferredArrayLen(client *c, void *node, long length) {
@@ -1728,6 +1731,7 @@ void freeClient(client *c) {
     /* UNWATCH all the keys */
     unwatchAllKeys(c);
     listRelease(c->watched_keys);
+    c->watched_keys = NULL;
 
     /* Unsubscribe from all the pubsub channels */
     pubsubUnsubscribeAllChannels(c, 0);
@@ -1735,16 +1739,22 @@ void freeClient(client *c) {
     pubsubUnsubscribeAllPatterns(c, 0);
     unmarkClientAsPubSub(c);
     dictRelease(c->pubsub_channels);
+    c->pubsub_channels = NULL;
     dictRelease(c->pubsub_patterns);
+    c->pubsub_patterns = NULL;
     dictRelease(c->pubsubshard_channels);
+    c->pubsubshard_channels = NULL;
 
     /* Free data structures. */
     listRelease(c->reply);
+    c->reply = NULL;
     zfree(c->buf);
+    c->buf = NULL;
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
     freeClientOriginalArgv(c);
     if (c->deferred_reply_errors) listRelease(c->deferred_reply_errors);
+    c->deferred_reply_errors = NULL;
 #ifdef LOG_REQ_RES
     reqresReset(c, 1);
 #endif
@@ -2669,6 +2679,8 @@ void processInlineBuffer(client *c) {
 
     /* Create an Object for all arguments. */
     for (c->argc = 0, j = 0; j < argc; j++) {
+        /* Strings returned from sdssplitargs() may have unused capacity that we can trim. */
+        argv[j] = sdsRemoveFreeSpace(argv[j], 1);
         c->argv[c->argc] = createObject(OBJ_STRING, argv[j]);
         c->argc++;
         c->argv_len_sum += sdslen(argv[j]);
