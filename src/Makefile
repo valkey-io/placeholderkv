@@ -27,6 +27,7 @@ ifeq ($(OPTIMIZATION),-O3)
 	else
 		OPTIMIZATION+=-flto=auto
 	endif
+	OPTIMIZATION += -ffat-lto-objects
 endif
 ifneq ($(OPTIMIZATION),-O0)
 	OPTIMIZATION+=-fno-omit-frame-pointer
