@@ -1832,9 +1832,9 @@ keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int di
          * the key expiration is controlled by the import source that will
          * send us synthesized DEL operations for expired keys. The
          * exception is when write operations are performed on this server
-         * because it's a primary. 
-         * 
-         * Notice: other clients, apart from the import source, should not access 
+         * because it's a primary.
+         *
+         * Notice: other clients, apart from the import source, should not access
          * the data imported by import source.
          *
          * Still we try to return the right information to the caller,

@@ -521,8 +521,8 @@ int checkAlreadyExpired(long long when) {
      *
      * Instead we add the already expired key to the database with expire time
      * (possibly in the past) and wait for an explicit DEL from the primary.
-     *  
-     * If the server is a primary and in the import mode, we also add the already 
+     *
+     * If the server is a primary and in the import mode, we also add the already
      * expired key and wait for an explicit DEL from the import source. */
     return (when <= commandTimeSnapshot() && !server.loading && !server.primary_host && !server.import_mode);
 }
