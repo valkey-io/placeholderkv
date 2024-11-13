@@ -25,7 +25,7 @@ ifeq ($(OPTIMIZATION),-O3)
 	ifeq (clang,$(CLANG))
 		OPTIMIZATION+=-flto
 	else
-		OPTIMIZATION+=-flto=auto
+		OPTIMIZATION+=-flto=auto -ffat-lto-objects
 	endif
 endif
 ifneq ($(OPTIMIZATION),-O0)
@@ -430,9 +430,9 @@ ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(E
 USE_FAST_FLOAT?=no
 ifeq ($(USE_FAST_FLOAT),yes)
 	FINAL_CFLAGS += -D USE_FAST_FLOAT
-	ENGINE_SERVER_OBJ += fast_float/fast_float_strtod.o
-	ENGINE_CLI_OBJ += fast_float/fast_float_strtod.o
-	ENGINE_TEST_OBJ += fast_float/fast_float_strtod.o
+	ENGINE_SERVER_OBJ += fast_float/valkey_strtod.o
+	ENGINE_CLI_OBJ += fast_float/valkey_strtod.o
+	ENGINE_TEST_OBJ += fast_float/valkey_strtod.o
 	CXX ?= c++
 	CXXFLAGS += -Wall -W $(OPT) $(DEBUG)
 	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
@@ -448,7 +448,7 @@ all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMAR
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
 
-fast_float/fast_float_strtod.o: fast_float/fast_float_strtod.cpp ../deps/fast_float/fast_float.h
+fast_float/valkey_strtod.o: fast_float/valkey_strtod.cpp ../deps/fast_float/fast_float.h
 	$(QUIET_CXX)$(CXX) $(CXXFLAGS) $(CFLAGS) $(SERVER_CFLAGS) $(LDFLAGS) -D FASTFLOAT_ALLOWS_LEADING_PLUS -c $< -o $@
 
 Makefile.dep:

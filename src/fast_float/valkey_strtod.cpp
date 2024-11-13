@@ -28,7 +28,7 @@
  */
 
 #include "../../deps/fast_float/fast_float.h"
-#include "fast_float_strtod.h"
+#include "valkey_strtod.h"
 #include <cerrno>
 
 extern "C"

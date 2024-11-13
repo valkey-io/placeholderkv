@@ -32,12 +32,14 @@
 #include "assert.h"
 #include "errno.h"
 #include "math.h"
+#include "test_help.h"
 
 int test_valkey_strtod(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
     UNUSED(flags);
 
+#ifdef USE_FAST_FLOAT
     double value = 0;
     errno = 0;
     valkey_strtod("231.2341234", &value);
@@ -58,6 +60,7 @@ int test_valkey_strtod(int argc, char **argv, int flags) {
     valkey_strtod("inf", &value);
     assert(isinf(value));
     assert(errno == 0);
+#endif
 
     return 0;
 }
