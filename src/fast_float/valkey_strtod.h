@@ -45,13 +45,13 @@ extern "C" {
  *
  * str: A pointer to the null-terminated byte string to be converted.
  * value: A pointer to the double variable where the function stores converted double value.
- *        On success, the function stores the converted double value. On failure, it stores 0.0 and 
-          stores error code in errno to ERANGE or EINVAL.
+ *        On success, the function stores the converted double value. On failure, it stores 0.0 and
+ *        stores error code in errno to ERANGE or EINVAL.
  *
  * return value: On success, returns char pointer pointing to '\0' at the end of the string.
  *               On failure, returns char pointer pointing to first invalid character in the string.
  *
- * note: This function uses the fast_float library (https://github.com/fastfloat/fast_float) for 
+ * note: This function uses the fast_float library (https://github.com/fastfloat/fast_float) for
  * the actual conversion, which can be significantly faster than standard library functions.
  *
  * Refer to https://github.com/fastfloat/fast_float for more information on the underlying library.

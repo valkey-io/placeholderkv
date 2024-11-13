@@ -50,7 +50,7 @@ int test_valkey_strtod(int argc, char **argv, int flags) {
     valkey_strtod("+inf", &value);
     assert(isinf(value));
     assert(errno == 0);
-    
+ 
     value = 0;
     valkey_strtod("-inf", &value);
     assert(isinf(value));
@@ -64,4 +64,3 @@ int test_valkey_strtod(int argc, char **argv, int flags) {
 
     return 0;
 }
-
