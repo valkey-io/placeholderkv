@@ -1827,6 +1827,22 @@ keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int di
         if (server.current_client && (server.current_client->flag.primary)) return KEY_VALID;
         if (!(flags & EXPIRE_FORCE_DELETE_EXPIRED)) return KEY_EXPIRED;
     } else if (server.import_mode) {
+        /* If we are running in the import mode on a primary, instead of
+         * evicting the expired key from the database, we return ASAP:
+         * the key expiration is controlled by the import source that will
+         * send us synthesized DEL operations for expired keys. The
+         * exception is when write operations are performed on this server
+         * because it's a primary. 
+         * 
+         * Notice: other clients, apart from the import source, should not access 
+         * the data imported by import source.
+         *
+         * Still we try to return the right information to the caller,
+         * that is, KEY_VALID if we think the key should still be valid,
+         * KEY_EXPIRED if we think the key is expired but don't want to delete it at this time.
+         *
+         * When receiving commands from the import source, keys are never considered
+         * expired. */
         if (server.current_client && (server.current_client->flag.import_source)) return KEY_VALID;
         if (!(flags & EXPIRE_FORCE_DELETE_EXPIRED)) return KEY_EXPIRED;
     }
