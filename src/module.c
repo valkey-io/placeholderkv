@@ -1055,6 +1055,11 @@ void VM_KeyAtPos(ValkeyModuleCtx *ctx, int pos) {
     VM_KeyAtPosWithFlags(ctx, pos, flags);
 }
 
+/* Return the connected server port of current client */
+int VM_GetClientConnectedPort(ValkeyModuleCtx *ctx) {
+    return getClientConnectedPort(ctx->client);
+}
+
 /* Return non-zero if a module command, that was declared with the
  * flag "getchannels-api", is called in a special way to get the channel positions
  * and not to get executed. Otherwise zero is returned. */
@@ -2329,10 +2334,6 @@ int VM_IsModuleNameBusy(const char *name) {
     dictEntry *de = dictFind(modules, modulename);
     sdsfree(modulename);
     return de != NULL;
-}
-
-int VM_GetClientConnectedPort(ValkeyModuleCtx *ctx) {
-    return getClientConnectedPort(ctx->client);
 }
 
 /* Return the current UNIX time in milliseconds. */

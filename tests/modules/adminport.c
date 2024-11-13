@@ -7,6 +7,7 @@ int testadminport_runspecificcommand(ValkeyModuleCtx *ctx,
   VALKEYMODULE_NOT_USED(argv);
   VALKEYMODULE_NOT_USED(argc);
   int port = ValkeyModule_GetClientConnectedPort(ctx);
+  /* Here we assume port 7001 is the admin-port */
   if (port == 7001) {
     ValkeyModule_ReplyWithSimpleString(ctx, "You can execute this command");
   } else {
