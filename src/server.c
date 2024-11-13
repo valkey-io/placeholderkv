@@ -7064,7 +7064,12 @@ __attribute__((weak)) int main(int argc, char **argv) {
     /* Daemonize if needed */
     server.supervised = serverIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
-    if (background) daemonize();
+    if (background) {
+        /* We need to reset server.pid after daemonize(), otherwise the
+         * log printing role will always be the child. */
+        daemonize();
+        server.pid = getpid();
+    }
 
     serverLog(LL_NOTICE, "oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo");
     serverLog(LL_NOTICE, "Valkey version=%s, bits=%d, commit=%s, modified=%d, pid=%d, just started", VALKEY_VERSION,
