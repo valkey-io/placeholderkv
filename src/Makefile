@@ -16,18 +16,33 @@ release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not')
 CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
+# Extract clang version using grep and then trim the spaces around it 
+# using firstword to get clean version number.  
+CLANG_VERSION := $(firstword $(shell clang --version | grep -o " [0-9].[0-9].[0-9] "))
 
 # Optimization flags. To override, the OPTIMIZATION variable can be passed, but
 # some automatic defaults are added to it. To specify optimization flags
 # explicitly without any defaults added, pass the OPT variable instead.
 OPTIMIZATION?=-O3
 ifeq ($(OPTIMIZATION),-O3)
+	# Clang does not support -ffat-lto-objects before 17.0.0. It also
+	# only supports it for ELF(i.e. linux) binary format only. Therefore,
+	# we will only enable this for linux and clang version >= 17. 
+	# More info at https://gcc.gnu.org/onlinedocs/gccint/LTO-Overview.html
+	# and https://llvm.org/docs/FatLTO.html
 	ifeq (clang,$(CLANG))
-		OPTIMIZATION+=-flto
+		OPTIMIZATION += -flto
+		CLANG_GTE_17 := $(shell expr $(CLANG_VERSION) \>= 17)
+		ifeq (1, $(CLANG_GTE_17))
+			ifeq (Linux, $(uname_S))
+				OPTIMIZATION += -ffat-lto-objects
+			endif
+		endif
 	else
-		OPTIMIZATION+=-flto=auto -ffat-lto-objects
+		OPTIMIZATION += -flto=auto -ffat-lto-objects
 	endif
 endif
+
 ifneq ($(OPTIMIZATION),-O0)
 	OPTIMIZATION+=-fno-omit-frame-pointer
 endif
