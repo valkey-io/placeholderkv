@@ -250,13 +250,13 @@ void commandlogCommand(client *c) {
                                           "count should be greater than or equal to -1") != C_OK)
             return;
 
+        if ((type = commandlogGetTypeOrReply(c, c->argv[3])) == -1) return;
+
         if (count == -1) {
             /* We treat -1 as a special value, which means to get all command logs.
              * Simply set count to the length of server.commandlog. */
             count = listLength(server.commandlog[type].entries);
         }
-
-        if ((type = commandlogGetTypeOrReply(c, c->argv[3])) == -1) return;
 
         commandlogGetReply(c, type, count);
     } else {
