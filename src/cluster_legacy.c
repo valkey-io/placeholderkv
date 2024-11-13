@@ -6648,11 +6648,6 @@ int clusterCommandSpecial(client *c) {
             return 1;
         }
 
-        if (server.import_mode) {
-            addReplyError(c, "CLUSTER REPLICATE not allowed in import mode.");
-            return 1;
-        }
-
         /* If the instance is currently a primary, it should have no assigned
          * slots nor keys to accept to replicate some other node.
          * Replicas can switch to another primary without issues. */

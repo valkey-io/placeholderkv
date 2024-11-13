@@ -1054,9 +1054,11 @@ void clientsCron(void) {
 void databasesCron(void) {
     /* Expire keys by random sampling. Not required for replicas
      * as primary will synthesize DELs for us. */
-    if (server.active_expire_enabled && !server.import_mode) {
+    if (server.active_expire_enabled) {
         if (iAmPrimary()) {
-            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
+            if (!server.import_mode) {
+                activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
+            }
         } else {
             expireReplicaKeys();
         }
