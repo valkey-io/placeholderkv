@@ -211,6 +211,7 @@ void *zmalloc_usable(size_t size, size_t *usable) {
  * and go straight to the allocator arena bins.
  * Currently implemented only for jemalloc. Used for online defragmentation. */
 #ifdef HAVE_DEFRAG
+#if defined(USE_JEMALLOC)
 void *zmalloc_no_tcache(size_t size) {
     if (size >= SIZE_MAX / 2) zmalloc_oom_handler(size);
     void *ptr = mallocx(size + PREFIX_SIZE, MALLOCX_TCACHE_NONE);
@@ -224,6 +225,21 @@ void zfree_no_tcache(void *ptr) {
     update_zmalloc_stat_free(zmalloc_size(ptr));
     dallocx(ptr, MALLOCX_TCACHE_NONE);
 }
+#else
+void *zmalloc_no_tcache(size_t size) {
+    if (size >= SIZE_MAX / 2) zmalloc_oom_handler(size);
+    void *ptr = malloc(size + PREFIX_SIZE);
+    if (!ptr) zmalloc_oom_handler(size);
+    update_zmalloc_stat_alloc(zmalloc_size(ptr));
+    return ptr;
+}
+
+void zfree_no_tcache(void *ptr) {
+    if (ptr == NULL) return;
+    update_zmalloc_stat_free(zmalloc_size(ptr));
+    free(ptr);
+}
+#endif
 #endif
 
 /* Try allocating memory and zero it, and return NULL if failed.

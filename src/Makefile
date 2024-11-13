@@ -143,6 +143,12 @@ FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(SERVER_CFLAGS)
 ifeq ($(SERVER_TEST),yes)
 	FINAL_CFLAGS +=-DSERVER_TEST=1
 endif
+
+# Special case of forcing defrag to run even though we have no Jemlloc support
+ifeq ($(FORCE_DEFRAG), yes)
+	FINAL_CFLAGS +=-DHAVE_DEFRAG -DFORCE_DEFRAG
+endif
+
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(SERVER_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
