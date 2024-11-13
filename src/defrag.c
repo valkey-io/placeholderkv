@@ -755,6 +755,15 @@ void defragScanCallback(void *privdata, const dictEntry *de) {
  * or not, a false detection can cause the defragmenter to waste a lot of CPU
  * without the possibility of getting any results. */
 float getAllocatorFragmentation(size_t *out_frag_bytes) {
+    /* In case we are forcing defrag to run without Jemalloc support we cannot get any 
+     * good statistics from the allocator regarding extarnal fragmentation. 
+     * This is why we are forcing the report to reflect fragmented system conditions based on the existing configurations. */
+#if !defined(USE_JEMALLOC) && defined(FORCE_DEFRAG) 
+     
+        *out_frag_bytes = server.active_defrag_ignore_bytes+1;
+        return server.active_defrag_threshold_upper;
+#else
+
     size_t resident, active, allocated, frag_smallbins_bytes;
     zmalloc_get_allocator_info(&allocated, &active, &resident, NULL, NULL, &frag_smallbins_bytes);
 
@@ -769,6 +778,7 @@ float getAllocatorFragmentation(size_t *out_frag_bytes) {
     serverLog(LL_DEBUG, "allocated=%zu, active=%zu, resident=%zu, frag=%.2f%% (%.2f%% rss), frag_bytes=%zu (%zu rss)",
               allocated, active, resident, frag_pct, rss_pct, frag_smallbins_bytes, rss_bytes);
     return frag_pct;
+#endif
 }
 
 /* Defrag scan callback for the pubsub dictionary. */
@@ -1133,6 +1143,13 @@ update_metrics:
         server.stat_last_active_defrag_time = 0;
     }
 }
+
+#if !(defined(USE_JEMALLOC) && defined(JEMALLOC_FRAG_HINT))
+int je_get_defrag_hint(void *ptr) {
+    UNUSED(ptr);
+    return 1;
+}
+#endif
 
 #else /* HAVE_DEFRAG */
 
