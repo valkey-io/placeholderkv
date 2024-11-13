@@ -75,7 +75,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -121,7 +121,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -245,7 +245,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -506,7 +506,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind SERVER_CFLAGS='-Werror'
+        run: make all-with-unit-tests valgrind SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -517,7 +517,7 @@ jobs:
       - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: |
-          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-server test all --valgrind
+          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-unit-tests --valgrind
           if grep -q 0x err.txt; then cat err.txt; exit 1; fi
 
   test-valgrind-no-malloc-usable-size-test:
@@ -575,7 +575,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
+        run: make all-with-unit-tests valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -586,7 +586,7 @@ jobs:
       - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: |
-          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-server test all --valgrind
+          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-unit-tests --valgrind
           if grep -q 0x err.txt; then cat err.txt; exit 1; fi
 
   test-sanitizer-address:
@@ -635,7 +635,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests
 
@@ -685,7 +685,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 

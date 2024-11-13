@@ -2,14 +2,12 @@
 #include <limits.h>
 #include <string.h>
 #include "test_help.h"
-#include <stdint.h>
 #include <sys/time.h>
 #include <stdlib.h>
 
 #include "../zmalloc.h"
 #include "../listpack.h"
 #include "../quicklist.c"
-#include "../util.h"
 
 static int options[] = {0, 1, 2, 3, 4, 5, 6, 10};
 static int option_count = 8;
@@ -71,9 +69,6 @@ __attribute__((unused)) static void randstring(unsigned char *target, size_t sz)
 }
 
 #define TEST(name) printf("test — %s\n", name);
-/*-----------------------------------------------------------------------------
- * Quicklist verify Function
- *----------------------------------------------------------------------------*/
 
 #define QL_TEST_VERBOSE 0
 static void ql_info(quicklist *ql) {
