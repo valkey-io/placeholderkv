@@ -65,7 +65,7 @@
 #include "mt19937-64.h"
 #include "cli_commands.h"
 
-#include "fast_float/valkey_strtod.h"
+#include "../deps/fast_float_c_interface/valkey_strtod.h"
 
 #define UNUSED(V) ((void)V)
 

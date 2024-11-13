@@ -28,7 +28,7 @@
  */
 
 
-#include "../fast_float/valkey_strtod.h"
+#include "../../deps/fast_float_c_interface/valkey_strtod.h"
 #include "assert.h"
 #include "errno.h"
 #include "math.h"
@@ -50,7 +50,7 @@ int test_valkey_strtod(int argc, char **argv, int flags) {
     valkey_strtod("+inf", &value);
     assert(isinf(value));
     assert(errno == 0);
- 
+
     value = 0;
     valkey_strtod("-inf", &value);
     assert(isinf(value));

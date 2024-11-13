@@ -60,7 +60,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
 
-#include "fast_float/valkey_strtod.h"
+#include "../deps/fast_float_c_interface/valkey_strtod.h"
 
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API

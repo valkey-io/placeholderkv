@@ -431,11 +431,11 @@ ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(E
 USE_FAST_FLOAT?=no
 ifeq ($(USE_FAST_FLOAT),yes)
 	FINAL_CFLAGS += -D USE_FAST_FLOAT
-	ENGINE_SERVER_OBJ += fast_float/valkey_strtod.o
-	ENGINE_CLI_OBJ += fast_float/valkey_strtod.o
-	ENGINE_TEST_OBJ += fast_float/valkey_strtod.o
-	CXX ?= c++
-	CXXFLAGS += -Wall -W $(OPT) $(DEBUG)
+	DEPENDENCY_TARGETS += fast_float_c_interface
+	VALKEY_STRTOD_OBJECT = ../deps/fast_float_c_interface/valkey_strtod.o
+	ENGINE_SERVER_OBJ += $(VALKEY_STRTOD_OBJECT)
+	ENGINE_CLI_OBJ += $(VALKEY_STRTOD_OBJECT)
+	ENGINE_TEST_OBJ += $(VALKEY_STRTOD_OBJECT)
 	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
 	ifeq (clang,$(CLANG))
 		FINAL_LIBS += -lc++
@@ -448,9 +448,6 @@ all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMAR
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
-
-fast_float/valkey_strtod.o: fast_float/valkey_strtod.cpp ../deps/fast_float/fast_float.h
-	$(QUIET_CXX)$(CXX) $(CXXFLAGS) $(CFLAGS) $(SERVER_CFLAGS) $(LDFLAGS) -D FASTFLOAT_ALLOWS_LEADING_PLUS -c $< -o $@
 
 Makefile.dep:
 	-$(SERVER_CC) -MM $(ALL_SOURCES) > Makefile.dep 2> /dev/null || true
@@ -478,7 +475,7 @@ persist-settings: distclean
 	echo SERVER_LDFLAGS=$(SERVER_LDFLAGS) >> .make-settings
 	echo PREV_FINAL_CFLAGS=$(FINAL_CFLAGS) >> .make-settings
 	echo PREV_FINAL_LDFLAGS=$(FINAL_LDFLAGS) >> .make-settings
-	-(cd ../deps && $(MAKE) $(DEPENDENCY_TARGETS))
+	-(cd ../deps && $(MAKE) $(DEPENDENCY_TARGETS) OPT="$(OPT)" STD="$(STD)" WARN="$(WARN)")
 
 .PHONY: persist-settings
 

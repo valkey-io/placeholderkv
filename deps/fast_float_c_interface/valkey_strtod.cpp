@@ -27,7 +27,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../../deps/fast_float/fast_float.h"
+#include "../fast_float/fast_float.h"
 #include "valkey_strtod.h"
 #include <cerrno>
 
