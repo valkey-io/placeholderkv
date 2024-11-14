@@ -3389,7 +3389,6 @@ sds catClientInfoShortString(sds s, client *client, int hide_user_data) {
             " laddr=%s", getClientSockname(client),
             " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
             " name=%s", hide_user_data ? "*redacted*" : (client->name ? (char *)client->name->ptr : ""),
-            " cmd=%s", client->lastcmd ? client->lastcmd->fullname : "NULL",
             " user=%s", hide_user_data ? "*redacted*" : (client->user ? client->user->name : "(superuser)"),
             " lib-name=%s", client->lib_name ? (char *)client->lib_name->ptr : "",
             " lib-ver=%s", client->lib_ver ? (char *)client->lib_ver->ptr : ""));
