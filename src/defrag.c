@@ -758,7 +758,7 @@ float getAllocatorFragmentation(size_t *out_frag_bytes) {
     /* In case we are forcing defrag to run without Jemalloc support we cannot get any 
      * good statistics from the allocator regarding extarnal fragmentation. 
      * This is why we are forcing the report to reflect fragmented system conditions based on the existing configurations. */
-#if !defined(USE_JEMALLOC) && defined(FORCE_DEFRAG) 
+#if defined(FORCE_DEFRAG) || !defined(USE_JEMALLOC)
      
         *out_frag_bytes = server.active_defrag_ignore_bytes+1;
         return server.active_defrag_threshold_upper;
@@ -1147,7 +1147,7 @@ update_metrics:
     }
 }
 
-#if !(defined(USE_JEMALLOC) && defined(JEMALLOC_FRAG_HINT))
+#if defined(FORCE_DEFRAG) || !defined(JEMALLOC_FRAG_HINT)
 int je_get_defrag_hint(void *ptr) {
     UNUSED(ptr);
     return 1;
