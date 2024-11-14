@@ -186,13 +186,13 @@ test "Wait for instance #0 to return back alive" {
 
 start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 15000}} {
     test "Manual failover will reset the on-going election" {
-        set CLUSTER_PACKET_AUTH_REQUEST 5
+        set CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST 5
         set CLUSTER_PACKET_TYPE_NONE -1
 
-        # Let other primaries drop AUTH_REQUEST so that the election won't
+        # Let other primaries drop FAILOVER_AUTH_REQUEST so that the election won't
         # get the enough votes and the election will time out.
-        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_AUTH_REQUEST
-        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_AUTH_REQUEST
+        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
+        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
 
         # Replica doing the manual failover.
         R 3 cluster failover
