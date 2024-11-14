@@ -53,10 +53,10 @@ typedef struct dict dict;
 typedef struct dictType {
     /* Callbacks */
     uint64_t (*hashFunction)(const void *key);
-    void *(*keyDup)(dict *d, const void *key);
-    int (*keyCompare)(dict *d, const void *key1, const void *key2);
-    void (*keyDestructor)(dict *d, void *key);
-    void (*valDestructor)(dict *d, void *obj);
+    void *(*keyDup)(const void *key);
+    int (*keyCompare)(const void *key1, const void *key2);
+    void (*keyDestructor)(void *key);
+    void (*valDestructor)(void *obj);
     int (*resizeAllowed)(size_t moreMem, double usedRatio);
     /* Invoked at the start of dict initialization/rehashing (old and new ht are already created) */
     void (*rehashingStarted)(dict *d);
@@ -144,16 +144,13 @@ typedef struct {
 #define DICT_HT_INITIAL_SIZE (1 << (DICT_HT_INITIAL_EXP))
 
 /* ------------------------------- Macros ------------------------------------*/
-#define dictFreeVal(d, entry)                                                           \
-    do {                                                                                \
-        if ((d)->type->valDestructor) (d)->type->valDestructor((d), dictGetVal(entry)); \
-    } while (0)
-
-#define dictFreeKey(d, entry) \
-    if ((d)->type->keyDestructor) (d)->type->keyDestructor((d), dictGetKey(entry))
-
-#define dictCompareKeys(d, key1, key2) \
-    (((d)->type->keyCompare) ? (d)->type->keyCompare((d), key1, key2) : (key1) == (key2))
+static inline int dictCompareKeys(dict *d, const void *key1, const void *key2) {
+    if (d->type->keyCompare) {
+        return d->type->keyCompare(key1, key2);
+    } else {
+        return (key1 == key2);
+    }
+}
 
 #define dictMetadata(d) (&(d)->metadata)
 #define dictMetadataSize(d) ((d)->type->dictMetadataBytes ? (d)->type->dictMetadataBytes(d) : 0)
