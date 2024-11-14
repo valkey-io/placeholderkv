@@ -58,7 +58,7 @@
 #include "resp_parser.h"
 #include "server.h"
 
-#include "../deps/fast_float_c_interface/valkey_strtod.h"
+#include "valkey_strtod.h"
 
 static int parseBulk(ReplyParser *parser, void *p_ctx) {
     const char *proto = parser->curr_location;

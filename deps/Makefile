@@ -120,6 +120,6 @@ jemalloc: .make-prerequisites
 
 fast_float_c_interface: .make-prerequisites
 	@printf '%b %b\n' $(MAKECOLOR)MAKE$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR)
-	cd fast_float_c_interface && $(MAKE) CFLAGS="$(OPT) $(STD) $(WARN) $(DEBUG)" LDFLAGS="$(LDFLAGS)"
+	cd fast_float_c_interface && $(MAKE)
 
 .PHONY: fast_float_c_interface

@@ -34,6 +34,24 @@ jobs:
         run: |
           ./src/valkey-unit-tests
 
+  test-ubuntu-latest-fast-float:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: make
+        # Fail build if there are warnings
+        # build with TLS and FAST_FLOAT just for compilation coverage
+        run: make -j4 all-with-unit-tests SERVER_CFLAGS='-Werror' BUILD_TLS=yes USE_FAST_FLOAT=yes
+      - name: test
+        run: |
+          sudo apt-get install tcl8.6 tclx
+          ./runtest --verbose --tags -slow --dump-logs
+      - name: module api test
+        run: CFLAGS='-Werror' ./runtest-moduleapi --verbose --dump-logs
+      - name: unit tests
+        run: |
+          ./src/valkey-unit-tests
+
   test-ubuntu-latest-cmake:
     runs-on: ubuntu-latest
     steps:
@@ -110,14 +128,33 @@ jobs:
       - name: make
         run: make -j3 all-with-unit-tests SERVER_CFLAGS='-Werror'
 
+  build-macos-latest-fast-float:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: make
+        run: make -j3 all-with-unit-tests SERVER_CFLAGS='-Werror' USE_FAST_FLOAT=yes
+
   build-32bit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
         run: |
-          sudo apt-get update && sudo apt-get install libc6-dev-i386 libstdc++-11-dev-i386-cross gcc-multilib g++-multilib
+          sudo apt-get update && sudo apt-get install libc6-dev-i386
           make -j4 SERVER_CFLAGS='-Werror' 32bit
+
+  build-32bit-fast-float:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: make
+        run: |
+          # Fast float requires C++ 32-bit libraries to compile on 64-bit ubuntu machine i.e. "-cross" suffixed version. 
+          # Cross-compiling c++ to 32-bit also requires multilib support for g++ compiler i.e. "-multilib" suffixed version of g++.
+          # g++-multilib should generally include libstdc++.*cross version as well, but also added explicitly just in case. 
+          sudo apt-get update && sudo apt-get install libc6-dev-i386 libstdc++-11-dev-i386-cross gcc-multilib g++-multilib
+          make -j4 SERVER_CFLAGS='-Werror' 32bit USE_FAST_FLOAT=yes
 
   build-libc-malloc:
     runs-on: ubuntu-latest
@@ -134,8 +171,19 @@ jobs:
 
       - name: make
         run: |
-          dnf -y install epel-release gcc gcc-c++ make procps-ng which
+          dnf -y install epel-release gcc make procps-ng which
           make -j4 SERVER_CFLAGS='-Werror'
+
+  build-almalinux8-jemalloc-fast-float:
+    runs-on: ubuntu-latest
+    container: almalinux:8
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: make
+        run: |
+          dnf -y install epel-release gcc gcc-c++ make procps-ng which
+          make -j4 SERVER_CFLAGS='-Werror' USE_FAST_FLOAT=yes
 
   format-yaml:
     runs-on: ubuntu-latest

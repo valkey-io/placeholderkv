@@ -34,7 +34,7 @@
 #include <math.h>   /* isnan() */
 #include "cluster.h"
 
-#include "../deps/fast_float_c_interface/valkey_strtod.h"
+#include "valkey_strtod.h"
 
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 

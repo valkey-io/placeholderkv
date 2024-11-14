@@ -1,15 +1,32 @@
+CCCOLOR="\033[34m"
+SRCCOLOR="\033[33m"
+ENDCOLOR="\033[0m"
+
+ifndef V
+	QUIET_CXX = @printf '    %b %b\n' $(CCCOLOR)C++$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
+endif
+
 CXX?=c++
+WARN=-Wall -W -Wno-missing-field-initializers
+STD=-pedantic -std=c++11
+
+OPT?=-O3
+CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
+ifeq ($(OPT),-O3)
+        ifeq (clang,$(CLANG))
+                OPTIMIZATION+=-flto
+        else
+                OPTIMIZATION+=-flto=auto -ffat-lto-objects
+        endif
+endif
+
 # FASTFLOAT_ALLOWS_LEADING_PLUS allows +inf to be parsed as inf, instead of error. 
-CXXFLAGS=-std=c++11 -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
+CXXFLAGS=$(STD) $(OPT) $(WARN) -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 .PHONY: all clean
 all: valkey_strtod.o
 clean:
 	rm -f *.o || true;
 
-# src/Makefile passes values for OPT, STD and WARN variables. These are core CFLAGS used by executable targets.
-# We don't need to pass USE_FAST_FLOAT value to compiler here. The code in src/ includes the header files as is,
-# and at that point disables fast_float code based on USE_FAST_FLOAT value. Therefore, only src/Makefile passes 
-# USE_FAST_FLOAT value to compiler.
-valkey_strtod.o: valkey_strtod.cpp valkey_strtod.h
-	$(CXX) $(OPT) $(STD) $(WARN) $(CXXFLAGS) -o $@ -c $<
+valkey_strtod.o: valkey_strtod.cpp
+	$(QUIET_CXX)$(CXX) $(OPT) $(STD) $(WARN) $(CXXFLAGS) -o $@ -c $<

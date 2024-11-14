@@ -106,16 +106,17 @@ We use a customized version based on master branch commit e4448cf6d1cd08fff51981
 2. Copy updated files from newer version onto files in /hdr_histogram.
 3. Apply the changes from 1 above to the updated files.
 
-fast_float 
+fast_float
 ---
-The fast_float library provides fast header-only implementations for the C++ from_chars
-functions for `float` and `double` types as well as integer types.  These functions convert ASCII strings representing decimal values (e.g., `1.3e10`) into binary types.
-The functions are much faster than comparable number-parsing functions from existing C++ standard libraries.
+The fast_float library provides fast header-only implementations for the C++ from_chars functions for `float` and `double` types as well as integer types.  These functions convert ASCII strings representing decimal values (e.g., `1.3e10`) into binary types. The functions are much faster than comparable number-parsing functions from existing C++ standard libraries.
 
-Specifically, `fast_float` provides the following two functions to parse floating-point numbers with a C++17-like syntax (the library itself only requires C++11):
+Specifically, `fast_float` provides the following function to parse floating-point numbers with a C++17-like syntax (the library itself only requires C++11):
 
-To upgrade the library, 
+    template <typename T, typename UC = char, typename = FASTFLOAT_ENABLE_IF(is_supported_float_type<T>())>
+    from_chars_result_t<UC> from_chars(UC const *first, UC const *last, T &value, chars_format fmt = chars_format::general);
+
+To upgrade the library,
 1. Check out https://github.com/fastfloat/fast_float/tree/main
-2. cd fast_float 
-3. Invoke "python3 ./script/amalgamate.py --output fast_float.h" 
-4. Copy fast_float.h file to "deps/fast_float/". 
+2. cd fast_float
+3. Invoke "python3 ./script/amalgamate.py --output fast_float.h"
+4. Copy fast_float.h file to "deps/fast_float/".
