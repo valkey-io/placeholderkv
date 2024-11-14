@@ -3,7 +3,7 @@
         "summary": "Returns the specified command log's entries.",
         "complexity": "O(N) where N is the number of entries returned",
         "group": "server",
-        "since": "8.2.0",
+        "since": "8.1.0",
         "arity": 4,
         "container": "COMMANDLOG",
         "function": "commandlogCommand",

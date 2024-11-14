@@ -3,7 +3,7 @@
         "summary": "Returns the number of entries in the specified type of command log.",
         "complexity": "O(1)",
         "group": "server",
-        "since": "8.2.0",
+        "since": "8.1.0",
         "arity": 3,
         "container": "COMMANDLOG",
         "function": "commandlogCommand",

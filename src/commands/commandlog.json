@@ -3,7 +3,7 @@
         "summary": "A container for command log commands.",
         "complexity": "Depends on subcommand.",
         "group": "server",
-        "since": "8.2.0",
+        "since": "8.1.0",
         "arity": -2
     }
 }

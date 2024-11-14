@@ -3,7 +3,7 @@
         "summary": "Clears all entries from the specified type of command log.",
         "complexity": "O(N) where N is the number of entries in the commandlog",
         "group": "server",
-        "since": "8.2.0",
+        "since": "8.1.0",
         "arity": 3,
         "container": "COMMANDLOG",
         "function": "commandlogCommand",
