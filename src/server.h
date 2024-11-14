@@ -2730,7 +2730,7 @@ int serverSetProcTitle(char *title);
 int validateProcTitleTemplate(const char *template);
 int serverCommunicateSystemd(const char *sd_notify_msg);
 void serverSetCpuAffinity(const char *cpulist);
-void dictVanillaFree(dict *d, void *val);
+void dictVanillaFree(void *val);
 
 /* ERROR STATS constants */
 
@@ -3717,11 +3717,11 @@ void startEvictionTimeProc(void);
 /* Keys hashing / comparison functions for dict.c hash tables. */
 uint64_t dictSdsHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
-int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
-int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2);
-void dictSdsDestructor(dict *d, void *val);
-void dictListDestructor(dict *d, void *val);
-void *dictSdsDup(dict *d, const void *key);
+int dictSdsKeyCompare(const void *key1, const void *key2);
+int dictSdsKeyCaseCompare(const void *key1, const void *key2);
+void dictSdsDestructor(void *val);
+void dictListDestructor(void *val);
+void *dictSdsDup(const void *key);
 
 /* Git SHA1 */
 char *serverGitSHA1(void);
