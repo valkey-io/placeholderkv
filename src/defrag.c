@@ -966,7 +966,7 @@ void activeDefragCycle(void) {
     mstime_t latency;
     int all_stages_finished = 0;
     int quit = 0;
-
+#if !defined(FORCE_DEFRAG)
     if (!server.active_defrag_enabled) {
         if (server.active_defrag_running) {
             /* if active defrag was disabled mid-run, start from fresh next time. */
@@ -985,7 +985,10 @@ void activeDefragCycle(void) {
         }
         return;
     }
-
+#else
+    /* Avoid compiler warning */
+    if (0) goto update_metrics;
+#endif
     if (hasActiveChildProcess()) return; /* Defragging memory while there's a fork will just do damage. */
 
     /* Once a second, check if the fragmentation justfies starting a scan
