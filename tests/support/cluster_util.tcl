@@ -323,6 +323,15 @@ proc get_cluster_nodes {id {status "*"}} {
     return $nodes
 }
 
+# Returns the parsed myself node entry as a dictionary.
+proc get_myself id {
+    set nodes [get_cluster_nodes $id]
+    foreach n $nodes {
+        if {[cluster_has_flag $n myself]} {return $n}
+    }
+    return {}
+}
+
 # Returns 1 if no node knows node_id, 0 if any node knows it.
 proc node_is_forgotten {node_id} {
     for {set j 0} {$j < [llength $::servers]} {incr j} {
