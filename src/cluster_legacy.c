@@ -2256,7 +2256,8 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
         /* Ignore gossips about self. */
         if (node && node != myself) {
             /* We already know this node.
-               Handle failure reports, only when the sender is a voting primary. */
+             * Handle failure reports, the report is added only if the sender is a voting primary,
+             * and deletion of a failure report is not restricted. */
             if (sender) {
                 if (flags & (CLUSTER_NODE_FAIL | CLUSTER_NODE_PFAIL)) {
                     if (clusterNodeIsVotingPrimary(sender) && clusterNodeAddFailureReport(node, sender)) {
