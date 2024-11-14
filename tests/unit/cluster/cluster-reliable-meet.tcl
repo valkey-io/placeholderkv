@@ -88,6 +88,31 @@ proc cluster_get_first_node_in_handshake id {
     return {}
 }
 
+proc cluster_3_nodes_all_know_each_other {} {
+    set node0_id [dict get [get_myself 0] id]
+    set node1_id [dict get [get_myself 1] id]
+    set node2_id [dict get [get_myself 2] id]
+
+    if {
+        [cluster_get_node_by_id 0 $node0_id] != {} &&
+        [cluster_get_node_by_id 0 $node1_id] != {} &&
+        [cluster_get_node_by_id 0 $node2_id] != {} &&
+        [cluster_get_node_by_id 1 $node0_id] != {} &&
+        [cluster_get_node_by_id 1 $node1_id] != {} &&
+        [cluster_get_node_by_id 1 $node2_id] != {} &&
+        [cluster_get_node_by_id 2 $node0_id] != {} &&
+        [cluster_get_node_by_id 2 $node1_id] != {} &&
+        [cluster_get_node_by_id 2 $node2_id] != {} &&
+        [llength [R 0 CLUSTER LINKS]] == 4 &&
+        [llength [R 1 CLUSTER LINKS]] == 4 &&
+        [llength [R 2 CLUSTER LINKS]] == 4
+    } {
+        return 1
+    } else {
+        return 0
+    }
+}
+
 start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 4000 cluster-replica-no-failover yes}} {
     set CLUSTER_PACKET_TYPE_PING 0
     set CLUSTER_PACKET_TYPE_PONG 1
@@ -108,6 +133,10 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             # After the handshake is timed out, we allow all cluster bus messages to go through.
             # Eventually Node 0 should send a MEET packet to the other nodes to complete the handshake.
 
+            set node0_id [dict get [get_myself 0] id]
+            set node1_id [dict get [get_myself 1] id]
+            set node2_id [dict get [get_myself 2] id]
+
             # Drop all cluster bus messages
             R 1 DEBUG DROP-CLUSTER-PACKET-FILTER $CLUSTER_PACKET_TYPE_ALL
             # Drop MEET cluster bus messages, so that Node 0 cannot start a handshake with Node 2.
@@ -115,9 +144,15 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
 
             R 1 CLUSTER MEET [srv 0 host] [srv 0 port] $cluster_port
 
+            # Wait for Node 0 to be in handshake
+            wait_for_condition 10 400 {
+                [cluster_get_first_node_in_handshake 0] != {}
+            } else {
+                fail "Node 0 never entered handshake state"
+            }
+
             # We want Node 0 to learn about Node 2 through the gossip section of the MEET message
             set meet_retry 0
-            set node2_id [dict get [get_myself 2] id]
             while {[cluster_get_node_by_id 0 $node2_id] eq {}} {
                 if {$meet_retry == 10} {
                     error "assertion: Retried to meet Node 0 too many times"
@@ -146,9 +181,10 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
 
             # At this point Node 0 knows Node 1 & 2 through the gossip, but they don't know Node 0.
             wait_for_condition 50 100 {
-                [llength [R 0 CLUSTER NODES]] == 25 &&
-                [llength [R 1 CLUSTER NODES]] == 18 &&
-                [llength [R 2 CLUSTER NODES]] == 18
+                [cluster_get_node_by_id 0 $node1_id] != {} &&
+                [cluster_get_node_by_id 0 $node2_id] != {} &&
+                [cluster_get_node_by_id 1 $node0_id] eq {} &&
+                [cluster_get_node_by_id 2 $node0_id] eq {}
             } else {
                 fail "Unexpected CLUSTER NODES output, nodes 1 & 2 should not know node 0."
             }
@@ -157,12 +193,10 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             R 1 DEBUG DROP-CLUSTER-PACKET-FILTER $CLUSTER_PACKET_TYPE_NONE
             R 2 DEBUG DROP-CLUSTER-PACKET-FILTER $CLUSTER_PACKET_TYPE_NONE
 
-            # Now Node 0 will send a MEET packet to Node 1 & 2 since it has an outbound link to these nodes but no inblound link.
+            # Now Node 0 will send a MEET packet to Node 1 & 2 since it has an outbound link to these nodes but no inbound link.
             # Handshake should now complete successfully.
             wait_for_condition 50 200 {
-                [llength [R 0 CLUSTER NODES]] == 26 &&
-                [llength [R 1 CLUSTER NODES]] == 26 &&
-                [llength [R 2 CLUSTER NODES]] == 26
+                [cluster_3_nodes_all_know_each_other]
             } else {
                 fail "Unexpected CLUSTER NODES output, all nodes should know each other."
             }
@@ -191,6 +225,10 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             # After the handshake is timed out, we allow all cluster bus messages to go through.
             # Eventually Node 0 should send a MEET packet to the other nodes to complete the handshake.
 
+            set node0_id [dict get [get_myself 0] id]
+            set node1_id [dict get [get_myself 1] id]
+            set node2_id [dict get [get_myself 2] id]
+
             # Drop PONG messages
             R 1 DEBUG DROP-CLUSTER-PACKET-FILTER $CLUSTER_PACKET_TYPE_PONG
             # Drop MEET cluster bus messages, so that Node 0 cannot start a handshake with Node 2.
@@ -201,7 +239,8 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
 
             # Wait for node 0 to know about the other nodes in the cluster
             wait_for_condition 50 100 {
-                [llength [R 0 CLUSTER NODES]] == 26
+                [cluster_get_node_by_id 0 $node1_id] != {} &&
+                [cluster_get_node_by_id 0 $node2_id] != {}
             } else {
                 fail "Node 0 never learned about node 1 and 2"
             }
@@ -218,7 +257,7 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             } else {
                 fail "Node 1 never exited handshake state"
             }
-            assert {[llength [R 1 CLUSTER NODES]] == 18}
+            assert {[cluster_get_node_by_id 1 $node0_id] eq {}}
             # At this point, from node 1 point of view, the handshake with node 0 timed out.
 
             # Allow all messages
@@ -228,9 +267,7 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             # Now Node 0 will send a MEET packet to Node 1 & 2 since it has an outbound link to these nodes but no inblound link.
             # Handshake should now complete successfully.
             wait_for_condition 50 200 {
-                [llength [R 0 CLUSTER NODES]] == 26 &&
-                [llength [R 1 CLUSTER NODES]] == 26 &&
-                [llength [R 2 CLUSTER NODES]] == 26
+                [cluster_3_nodes_all_know_each_other]
             } else {
                 fail "Unexpected CLUSTER NODES output, all nodes should know each other."
             }

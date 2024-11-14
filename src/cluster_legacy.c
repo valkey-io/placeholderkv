@@ -3250,7 +3250,7 @@ int clusterProcessPacket(clusterLink *link) {
         serverLog(LL_DEBUG, "%s packet received: %.40s", clusterGetMessageTypeString(type),
                   link->node ? link->node->name : "NULL");
 
-        if (sender && nodeIsMeeting(sender)) {
+        if (sender && nodeInMeetState(sender)) {
             /* Once we get a response for MEET from the sender, we can stop sending more MEET. */
             sender->flags &= ~CLUSTER_NODE_MEET;
             serverLog(LL_NOTICE, "Successfully completed handshake with %.40s (%s)", sender->name,
@@ -3675,7 +3675,7 @@ void clusterLinkConnectHandler(connection *conn) {
      * of a PING one, to force the receiver to add us in its node
      * table. */
     mstime_t old_ping_sent = node->ping_sent;
-    clusterSendPing(link, nodeIsMeeting(node) ? CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
+    clusterSendPing(link, nodeInMeetState(node) ? CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
     if (old_ping_sent) {
         /* If there was an active ping before the link was
          * disconnected, we want to restore the ping time, otherwise
@@ -3695,7 +3695,7 @@ void clusterLinkConnectHandler(connection *conn) {
      */
 
     serverLog(LL_DEBUG, "Connecting with Node %.40s at %s:%d", node->name, node->ip, node->cport);
-    if (nodeIsMeeting(node)) {
+    if (nodeInMeetState(node)) {
         serverLog(LL_DEBUG, "Sending MEET packet on connection to node %.40s", node->name);
     }
 }
@@ -4955,8 +4955,7 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
         clusterDelNode(node);
         return 1;
     }
-    if (node->link != NULL && node->inbound_link == NULL &&
-        !nodeInHandshake(node) && !nodeIsMeeting(node) && !nodeTimedOut(node) &&
+    if (node->link != NULL && node->inbound_link == NULL && nodeInNormalState(node) &&
         now - node->inbound_link_freed_time > handshake_timeout) {
         /* Node has an outbound link, but no inbound link for more than the handshake timeout.
          * This probably means this node does not know us yet, whereas we know it.
@@ -4987,7 +4986,6 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
             return 0;
         }
     }
-
     return 0;
 }
 
