@@ -800,7 +800,7 @@ typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 
 /* Type definitions for implementing scripting engines modules. */
 typedef void ValkeyModuleScriptingEngineCtx;
-typedef void ValkeyModuleScriptingEngineFunctionCtx;
+typedef void ValkeyModuleScriptingEngineServerRuntimeCtx;
 
 /* This struct represents a scripting engine function that results from the
  * compilation of a script by the engine implementation.
@@ -811,7 +811,7 @@ typedef void ValkeyModuleScriptingEngineFunctionCtx;
  */
 typedef struct ValkeyModuleScriptingEngineCompiledFunction {
     ValkeyModuleString *name; /* Function name */
-    void *function;           /* Opaque object representing a function, usually it'
+    void *function;           /* Opaque object representing a function, usually it's
                                  the function compiled code. */
     ValkeyModuleString *desc; /* Function description */
     uint64_t f_flags;         /* Function flags */
@@ -831,12 +831,41 @@ typedef struct ValkeyModuleScriptingEngineMemoryInfo {
     size_t engine_memory_overhead;
 } ValkeyModuleScriptingEngineMemoryInfo;
 
-/* The callback function called when `FUNCTION LOAD` command is called to load
- * a library of functions.
- * This callback function evaluates the source code passed to `FUNCTION LOAD`
- * and registers the functions declared in the source code.
+typedef enum ValkeyModuleScriptingEngineSubsystemType {
+    VMSE_EVAL,
+    VMSE_FUNCTION,
+    VMSE_ALL
+} ValkeyModuleScriptingEngineSubsystemType;
+
+typedef struct ValkeyModuleScriptingEngineCallableLazyEvalReset {
+    void *context;
+
+    /*
+     * Callback function used for resetting the EVAL context implemented by an
+     * an engine. This callback will be called by a background thread when it's
+     * ready for resetting the context.
+     *
+     * - `context`: a generic pointer to a context object, stored in the
+     * callableLazyEvalReset struct.
+     *
+     */
+    void (*engineLazyEvalResetCallback)(void *context);
+} ValkeyModuleScriptingEngineCallableLazyEvalReset;
+
+/* The callback function called when either `EVAL`, `SCRIPT LOAD`, or
+ * `FUNCTION LOAD` command is called to compile the code.
+ * This callback function evaluates the source code passed and produces a list
+ * of pointers to the compiled functions structure.
+ * In the `EVAL` and `SCRIPT LOAD` case, the list only contains a single
+ * function.
+ * In the `FUNCTION LOAD` case, there are as many functions as there are calls
+ * to the `server.register_function` function in the source code.
  *
- * - `engine_ctx`: the engine specific context pointer.
+ * - `module_ctx`: the module runtime context.
+ *
+ * - `engine_ctx`: the scripting engine runtime context.
+ *
+ * - `type`: the subsystem type. Either EVAL or FUNCTION.
  *
  * - `code`: string pointer to the source code.
  *
@@ -850,27 +879,47 @@ typedef struct ValkeyModuleScriptingEngineMemoryInfo {
  * Returns an array of compiled function objects, or `NULL` if some error
  * occurred.
  */
-typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
+typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCompileCodeFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
+    ValkeyModuleScriptingEngineSubsystemType type,
     const char *code,
     size_t timeout,
     size_t *out_num_compiled_functions,
     ValkeyModuleString **err);
 
-/* The callback function called when `FCALL` command is called on a function
- * registered in the scripting engine.
+/* Free the given function.
+ *
+ * - `module_ctx`: the module runtime context.
+ *
+ * - `engine_ctx`: the scripting engine runtime context.
+ *
+ * - `type`: the subsystem where the function is associated with, either `EVAL`
+ *   or `FUNCTION`.
+ *
+ * - `compiled_function`: the compiled function to be freed.
+ */
+typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    ValkeyModuleScriptingEngineSubsystemType type,
+    ValkeyModuleScriptingEngineCompiledFunction *compiled_function);
+
+/* The callback function called when either `EVAL`, or`FCALL`, command is
+ * called.
  * This callback function executes the `compiled_function` code.
  *
  * - `module_ctx`: the module runtime context.
  *
- * - `engine_ctx`: the engine specific context pointer.
+ * - `engine_ctx`: the scripting engine runtime context.
  *
- * - `func_ctx`: the context opaque structure that represents the runtime
- *               context for the function.
+ * - `server_ctx`: the context opaque structure that represents the server-side
+ * runtime context for the function.
  *
  * - `compiled_function`: pointer to the compiled function registered by the
  *   engine.
+ *
+ * - `type`: the subsystem type. Either EVAL or FUNCTION.
  *
  * - `keys`: the array of key strings passed in the `FCALL` command.
  *
@@ -883,48 +932,71 @@ typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEng
 typedef void (*ValkeyModuleScriptingEngineCallFunctionFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
-    ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
-    void *compiled_function,
+    ValkeyModuleScriptingEngineServerRuntimeCtx *server_ctx,
+    ValkeyModuleScriptingEngineCompiledFunction *compiled_function,
+    ValkeyModuleScriptingEngineSubsystemType type,
     ValkeyModuleString **keys,
     size_t nkeys,
     ValkeyModuleString **args,
     size_t nargs);
-
 
 /* Return memory overhead for a given function, such memory is not counted as
  * engine memory but as general structs memory that hold different information
  */
 typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(
     ValkeyModuleCtx *module_ctx,
-    void *compiled_function);
+    ValkeyModuleScriptingEngineCompiledFunction *compiled_function);
 
-/* Free the given function */
-typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
+/* The callback function called when `SCRIPT FLUSH` command is called. The
+ * engine should reset the runtime environment used for EVAL scripts.
+ *
+ * - `module_ctx`: the module runtime context.
+ *
+ * - `engine_ctx`: the scripting engine runtime context.
+ *
+ * - `async`: if has value 1 then the reset is done asynchronously through
+ * the callback structure returned by this function.
+ */
+typedef ValkeyModuleScriptingEngineCallableLazyEvalReset *(*ValkeyModuleScriptingEngineResetEvalEnvFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
-    void *compiled_function);
+    int async);
 
+/* Return the current used memory by the engine.
+ *
+ * - `module_ctx`: the module runtime context.
+ *
+ * - `engine_ctx`: the scripting engine runtime context.
+ *
+ * - `type`: the subsystem type.
+ */
 typedef ValkeyModuleScriptingEngineMemoryInfo (*ValkeyModuleScriptingEngineGetMemoryInfoFunc)(
     ValkeyModuleCtx *module_ctx,
-    ValkeyModuleScriptingEngineCtx *engine_ctx);
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    ValkeyModuleScriptingEngineSubsystemType type);
+
 
 typedef struct ValkeyModuleScriptingEngineMethodsV1 {
     uint64_t version; /* Version of this structure for ABI compat. */
 
-    /* Library create function callback. When a new script is loaded, this
-     * callback will be called with the script code, and returns a list of
-     * ValkeyModuleScriptingEngineCompiledFunc objects. */
-    ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library;
+    /* Compile code function callback. When a new script is loaded, this
+     * callback will be called with the script code, compiles it, and returns a
+     * list of `ValkeyModuleScriptingEngineCompiledFunc` objects. */
+    ValkeyModuleScriptingEngineCompileCodeFunc compile_code;
+
+    /* Function callback to free the memory of a registered engine function. */
+    ValkeyModuleScriptingEngineFreeFunctionFunc free_function;
 
     /* The callback function called when `FCALL` command is called on a function
      * registered in this engine. */
     ValkeyModuleScriptingEngineCallFunctionFunc call_function;
 
-    /* Function callback to free the memory of a registered engine function. */
-    ValkeyModuleScriptingEngineFreeFunctionFunc free_function;
-
     /* Function callback to return memory overhead for a given function. */
     ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead;
+
+    /* The callback function used to reset the runtime environment used
+     * by the scripting engine for EVAL scripts. */
+    ValkeyModuleScriptingEngineResetEvalEnvFunc reset_eval_env;
 
     /* Function callback to get the used memory by the engine. */
     ValkeyModuleScriptingEngineGetMemoryInfoFunc get_memory_info;

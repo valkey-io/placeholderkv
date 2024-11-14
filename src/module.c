@@ -61,6 +61,7 @@
 #include "hdr_histogram.h"
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
+#include "module.h"
 #include "io_threads.h"
 #include "module.h"
 #include "scripting_engine.h"
