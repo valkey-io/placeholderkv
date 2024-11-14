@@ -755,13 +755,13 @@ void defragScanCallback(void *privdata, const dictEntry *de) {
  * or not, a false detection can cause the defragmenter to waste a lot of CPU
  * without the possibility of getting any results. */
 float getAllocatorFragmentation(size_t *out_frag_bytes) {
-    /* In case we are forcing defrag to run without Jemalloc support we cannot get any 
-     * good statistics from the allocator regarding extarnal fragmentation. 
+    /* In case we are forcing defrag to run without Jemalloc support we cannot get any
+     * good statistics from the allocator regarding external fragmentation.
      * This is why we are forcing the report to reflect fragmented system conditions based on the existing configurations. */
 #if defined(FORCE_DEFRAG) || !defined(USE_JEMALLOC)
-     
-        *out_frag_bytes = server.active_defrag_ignore_bytes+1;
-        return server.active_defrag_threshold_upper;
+
+    *out_frag_bytes = server.active_defrag_ignore_bytes + 1;
+    return server.active_defrag_threshold_upper;
 #else
 
     size_t resident, active, allocated, frag_smallbins_bytes;
