@@ -22,6 +22,12 @@ if (VALKEY_RELEASE_BUILD)
     set_property(TARGET valkey-server PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif ()
 
+if (FORCE_DEFRAG)
+    message(STATUS "Forcing Active Defrag run on valkey-server")
+    target_compile_definitions(valkey-server PRIVATE FORCE_DEFRAG)
+    target_compile_definitions(valkey-server PRIVATE HAVE_DEFRAG)
+endif ()
+
 # Target: valkey-cli
 list(APPEND CLI_LIBS "linenoise")
 valkey_build_and_install_bin(valkey-cli "${VALKEY_CLI_SRCS}" "${VALKEY_SERVER_LDFLAGS}" "${CLI_LIBS}" "redis-cli")
