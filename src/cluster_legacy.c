@@ -4959,7 +4959,7 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
         !nodeInHandshake(node) && !nodeIsMeeting(node) && !nodeTimedOut(node) &&
         now - node->inbound_link_freed_time > handshake_timeout) {
         /* Node has an outbound link, but no inbound link for more than the handshake timeout.
-         * This probably means this node does not know us yet, wherease we know it.
+         * This probably means this node does not know us yet, whereas we know it.
          * So we send it a MEET packet to do a handshake with it and correct the inconsistent cluster view. */
         node->flags |= CLUSTER_NODE_MEET;
         serverLog(LL_NOTICE, "Sending MEET packet to node %.40s because there is no inbound link for it", node->name);
