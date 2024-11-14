@@ -168,6 +168,11 @@ endif ()
 
 message(STATUS "Using ${MALLOC_LIB}")
 
+# DFERAG Override
+if (FORCE_DEFRAG)
+    add_valkey_server_compiler_options("-DHAVE_DEFRAG -DFORCE_DEFRAG")
+endif ()
+
 # TLS support
 if (BUILD_TLS)
     valkey_parse_build_option(${BUILD_TLS} USE_TLS)
@@ -379,3 +384,4 @@ unset(BUILD_MALLOC CACHE)
 unset(USE_JEMALLOC CACHE)
 unset(BUILD_TLS_MODULE CACHE)
 unset(BUILD_TLS_BUILTIN CACHE)
+unset(FORCE_DEFRAG CACHE)
