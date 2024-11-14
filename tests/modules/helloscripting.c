@@ -269,7 +269,7 @@ static size_t engineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
 }
 
 static void engineFreeFunction(ValkeyModuleCtx *module_ctx,
-                               ValkeyModuleScriptingEngineCtx *engine_ctx,
+	                       ValkeyModuleScriptingEngineCtx *engine_ctx,
                                void *compiled_function) {
     VALKEYMODULE_NOT_USED(module_ctx);
     VALKEYMODULE_NOT_USED(engine_ctx);
@@ -341,7 +341,8 @@ callHelloLangFunction(ValkeyModuleCtx *module_ctx,
     ValkeyModule_ReplyWithLongLong(module_ctx, result);
 }
 
-int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv,
+int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
+                        ValkeyModuleString **argv,
                         int argc) {
     VALKEYMODULE_NOT_USED(argv);
     VALKEYMODULE_NOT_USED(argc);

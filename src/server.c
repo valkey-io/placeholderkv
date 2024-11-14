@@ -42,6 +42,7 @@
 #include "fmtargs.h"
 #include "io_threads.h"
 #include "sds.h"
+#include "engine.h"
 
 #include <time.h>
 #include <signal.h>
@@ -2871,6 +2872,11 @@ void initServer(void) {
                               "with 'noeviction' policy now.");
         server.maxmemory = 3072LL * (1024 * 1024); /* 3 GB */
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
+    }
+
+    if (engineManagerInit() == C_ERR) {
+        serverPanic("Scripting engine manager initialization failed, check the server logs.");
+        exit(1);
     }
 
     /* Initialize the LUA scripting engine. */
