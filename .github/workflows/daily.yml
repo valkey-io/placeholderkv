@@ -506,7 +506,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make all-with-unit-tests valgrind SERVER_CFLAGS='-Werror'
+        run: make valgrind all-with-unit-tests SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -575,7 +575,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make all-with-unit-tests valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
+        run: make valgrind all-with-unit-tests CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
