@@ -57,8 +57,7 @@ void evalGenericCommandWithDebugging(client *c, int evalsha);
 sds ldbCatStackValue(sds s, lua_State *lua, int idx);
 listNode *luaScriptsLRUAdd(client *c, sds sha, int evalsha);
 
-static void dictLuaScriptDestructor(dict *d, void *val) {
-    UNUSED(d);
+static void dictLuaScriptDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
     decrRefCount(((luaScript *)val)->body);
     zfree(val);

@@ -1701,6 +1701,7 @@ struct valkeyServer {
     const char *busy_module_yield_reply; /* When non-null, we are inside RM_Yield. */
     char *ignore_warnings;               /* Config: warnings that should be ignored. */
     int client_pause_in_transaction;     /* Was a client pause executed during this Exec? */
+    int server_del_keys_in_slot;         /* The server is deleting the keys in the dirty slot. */
     int thp_enabled;                     /* If true, THP is enabled. */
     size_t page_size;                    /* The page size of OS. */
     /* Modules */
@@ -2731,7 +2732,7 @@ int serverSetProcTitle(char *title);
 int validateProcTitleTemplate(const char *template);
 int serverCommunicateSystemd(const char *sd_notify_msg);
 void serverSetCpuAffinity(const char *cpulist);
-void dictVanillaFree(dict *d, void *val);
+void dictVanillaFree(void *val);
 
 /* ERROR STATS constants */
 
@@ -2864,7 +2865,7 @@ void flushReplicasOutputBuffers(void);
 void disconnectReplicas(void);
 void evictClients(void);
 int listenToPort(connListener *fds);
-void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions_bitmask);
+void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions);
 void unpauseActions(pause_purpose purpose);
 uint32_t isPausedActions(uint32_t action_bitmask);
 uint32_t isPausedActionsWithUpdate(uint32_t action_bitmask);
@@ -3718,11 +3719,11 @@ void startEvictionTimeProc(void);
 /* Keys hashing / comparison functions for dict.c hash tables. */
 uint64_t dictSdsHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
-int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
-int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2);
-void dictSdsDestructor(dict *d, void *val);
-void dictListDestructor(dict *d, void *val);
-void *dictSdsDup(dict *d, const void *key);
+int dictSdsKeyCompare(const void *key1, const void *key2);
+int dictSdsKeyCaseCompare(const void *key1, const void *key2);
+void dictSdsDestructor(void *val);
+void dictListDestructor(void *val);
+void *dictSdsDup(const void *key);
 
 /* Git SHA1 */
 char *serverGitSHA1(void);
