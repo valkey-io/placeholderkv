@@ -394,7 +394,6 @@ ENDCOLOR="\033[0m"
 
 ifndef V
 QUIET_CC = @printf '    %b %b\n' $(CCCOLOR)CC$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
-QUIET_CXX = @printf '    %b %b\n' $(CCCOLOR)C++$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
 QUIET_GEN = @printf '    %b %b\n' $(CCCOLOR)GEN$(ENDCOLOR) $(SRCCOLOR)$@$(ENDCOLOR) 1>&2;
 QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
 QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
@@ -427,12 +426,16 @@ ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(E
 
 USE_FAST_FLOAT?=no
 ifeq ($(USE_FAST_FLOAT),yes)
+	# valkey_strtod.h uses this flag to switch valkey_strtod function to fast_float_strtod,
+	# therefore let's pass it to compiler for preprocessing.
 	FINAL_CFLAGS += -D USE_FAST_FLOAT
+	# next, let's add actual library containing fast_float_strtod function for linking.
 	DEPENDENCY_TARGETS += fast_float_c_interface
-	VALKEY_STRTOD_OBJECT = ../deps/fast_float_c_interface/valkey_strtod.o
-	ENGINE_SERVER_OBJ += $(VALKEY_STRTOD_OBJECT)
-	ENGINE_CLI_OBJ += $(VALKEY_STRTOD_OBJECT)
-	ENGINE_TEST_OBJ += $(VALKEY_STRTOD_OBJECT)
+	FAST_FLOAT_STRTOD_OBJECT = ../deps/fast_float_c_interface/fast_float_strtod.o
+	ENGINE_SERVER_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
+	ENGINE_CLI_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
+	ENGINE_TEST_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
+	# fast_float_strtod uses functions from c++ std library, so let's add it for linking as well.
 	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
 	ifeq (clang,$(CLANG))
 		FINAL_LIBS += -lc++

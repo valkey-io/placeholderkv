@@ -24,9 +24,9 @@ endif
 CXXFLAGS=$(STD) $(OPT) $(WARN) -fPIC -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 .PHONY: all clean
-all: valkey_strtod.o
+all: fast_float_strtod.o
 clean:
 	rm -f *.o || true;
 
-valkey_strtod.o: valkey_strtod.cpp
+fast_float_strtod.o: fast_float_strtod.cpp
 	$(QUIET_CXX)$(CXX) $(OPT) $(STD) $(WARN) $(CXXFLAGS) -o $@ -c $<

@@ -19,6 +19,8 @@ extern "C" {
 
 #ifdef USE_FAST_FLOAT
 
+#include "errno.h"
+
 /**
  * Converts a null-terminated byte string to a double using the fast_float library.
  *
