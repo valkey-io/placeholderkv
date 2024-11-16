@@ -1669,7 +1669,9 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
                 if (!conn) continue;
                 stillUp++;
             }
-            serverLog(LL_NOTICE, "Diskless rdb transfer, done reading from pipe, %d replicas still up.", stillUp);
+            if (stillUp) {
+                serverLog(LL_NOTICE, "Diskless rdb transfer, done reading from pipe, %d replicas still up.", stillUp);
+            }
             /* Now that the replicas have finished reading, notify the child that it's safe to exit.
              * When the server detects the child has exited, it can mark the replica as online, and
              * start streaming the replication buffers. */
@@ -1678,7 +1680,6 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
             return;
         }
 
-        int stillAlive = 0;
         for (i = 0; i < server.rdb_pipe_numconns; i++) {
             ssize_t nwritten;
             connection *conn = server.rdb_pipe_conns[i];
@@ -1708,15 +1709,10 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
                 server.rdb_pipe_numconns_writing++;
                 connSetWriteHandler(conn, rdbPipeWriteHandler);
             }
-            stillAlive++;
         }
 
-        if (stillAlive == 0) {
-            serverLog(LL_WARNING, "Diskless rdb transfer, last replica dropped, killing fork child.");
-            killRDBChild();
-        }
         /*  Remove the pipe read handler if at least one write handler was set. */
-        if (server.rdb_pipe_numconns_writing || stillAlive == 0) {
+        if (server.rdb_pipe_numconns_writing) {
             aeDeleteFileEvent(server.el, server.rdb_pipe_read, AE_READABLE);
             break;
         }
@@ -1745,6 +1741,8 @@ void updateReplicasWaitingBgsave(int bgsaveerr, int type) {
             struct valkey_stat buf;
 
             if (bgsaveerr != C_OK) {
+                /* If bgsaveerr is error, there is no need to protect the rdb channel. */
+                replica->flag.protected_rdb_channel = 0;
                 freeClientAsync(replica);
                 serverLog(LL_WARNING, "SYNC failed. BGSAVE child returned an error");
                 continue;
