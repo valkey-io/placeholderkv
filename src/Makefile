@@ -429,12 +429,10 @@ ifeq ($(USE_FAST_FLOAT),yes)
 	# valkey_strtod.h uses this flag to switch valkey_strtod function to fast_float_strtod,
 	# therefore let's pass it to compiler for preprocessing.
 	FINAL_CFLAGS += -D USE_FAST_FLOAT
-	# next, let's add actual library containing fast_float_strtod function for linking.
+	# next, let's build and add actual library containing fast_float_strtod function for linking.
 	DEPENDENCY_TARGETS += fast_float_c_interface
-	FAST_FLOAT_STRTOD_OBJECT = ../deps/fast_float_c_interface/fast_float_strtod.o
-	ENGINE_SERVER_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
-	ENGINE_CLI_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
-	ENGINE_TEST_OBJ += $(FAST_FLOAT_STRTOD_OBJECT)
+	FAST_FLOAT_STRTOD_OBJECT := ../deps/fast_float_c_interface/fast_float_strtod.o
+	FINAL_LIBS += $(FAST_FLOAT_STRTOD_OBJECT)
 	# fast_float_strtod uses functions from c++ std library, so let's add it for linking as well.
 	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
 	ifeq (clang,$(CLANG))

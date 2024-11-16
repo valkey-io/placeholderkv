@@ -16,9 +16,9 @@ OPT?=-O3
 CLANG := $(findstring clang,$(shell sh -c '$(CC) --version | head -1'))
 ifeq ($(OPT),-O3)
         ifeq (clang,$(CLANG))
-                OPTIMIZATION+=-flto
+                OPT+=-flto
         else
-                OPTIMIZATION+=-flto=auto -ffat-lto-objects
+                OPT+=-flto=auto -ffat-lto-objects
         endif
 endif
 
@@ -29,7 +29,9 @@ endif
 CXXFLAGS=$(STD) $(OPT) $(WARN) -fPIC $(CFLAGS) -D FASTFLOAT_ALLOWS_LEADING_PLUS
 
 .PHONY: all clean
+
 all: fast_float_strtod.o
+
 clean:
 	rm -f *.o || true;
 
