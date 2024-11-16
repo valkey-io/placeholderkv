@@ -149,12 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
-        run: |
-          # Fast float requires C++ 32-bit libraries to compile on 64-bit ubuntu machine i.e. "-cross" suffixed version. 
-          # Cross-compiling c++ to 32-bit also requires multilib support for g++ compiler i.e. "-multilib" suffixed version of g++.
-          # g++-multilib should generally include libstdc++.*cross version as well, but also added explicitly just in case. 
-          sudo apt-get update && sudo apt-get install libc6-dev-i386 libstdc++-11-dev-i386-cross gcc-multilib g++-multilib
-          make -j4 SERVER_CFLAGS='-Werror' 32bit USE_FAST_FLOAT=yes
+        run: "# Fast float requires C++ 32-bit libraries to compile on 64-bit ubuntu machine i.e. \"-cross\" suffixed version. \n# Cross-compiling c++ to 32-bit also requires multilib support for g++ compiler i.e. \"-multilib\" suffixed version of g++.\n# g++-multilib should generally include libstdc++.*cross version as well, but also added explicitly just in case. \nsudo apt-get update && sudo apt-get install libc6-dev-i386 libstdc++-11-dev-i386-cross gcc-multilib g++-multilib\nmake -j4 SERVER_CFLAGS='-Werror' 32bit USE_FAST_FLOAT=yes\n#magic___^_^___line\n"
 
   build-libc-malloc:
     runs-on: ubuntu-latest
