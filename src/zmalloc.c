@@ -56,17 +56,6 @@ void zlibc_free(void *ptr) {
 
 #define UNUSED(x) ((void)(x))
 
-#ifdef HAVE_MALLOC_SIZE
-#define PREFIX_SIZE (0)
-#else
-/* Use at least 8 bytes alignment on all systems. */
-#if SIZE_MAX < 0xffffffffffffffffull
-#define PREFIX_SIZE 8
-#else
-#define PREFIX_SIZE (sizeof(size_t))
-#endif
-#endif
-
 /* When using the libc allocator, use a minimum allocation size to match the
  * jemalloc behavior that doesn't return NULL in this case.
  */

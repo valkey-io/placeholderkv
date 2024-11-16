@@ -37,6 +37,17 @@
 #define __xstr(s) __str(s)
 #define __str(s) #s
 
+#ifdef HAVE_MALLOC_SIZE
+#define PREFIX_SIZE 0
+#else
+/* Use at least 8 bytes alignment on all systems. */
+#if SIZE_MAX < 0xffffffffffffffffull
+#define PREFIX_SIZE 8
+#else
+#define PREFIX_SIZE (sizeof(size_t))
+#endif
+#endif
+
 #if defined(USE_TCMALLOC)
 #define ZMALLOC_LIB ("tcmalloc-" __xstr(TC_VERSION_MAJOR) "." __xstr(TC_VERSION_MINOR))
 #include <gperftools/tcmalloc.h>
