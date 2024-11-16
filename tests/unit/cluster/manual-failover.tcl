@@ -212,7 +212,7 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
             [s 0 role] eq {slave} &&
             [s -3 role] eq {master}
         } else {
-            fail "The third falover does not happened"
+            fail "The second failover does not happen"
         }
         wait_for_cluster_propagation
     }
@@ -233,12 +233,12 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
         R 1 config set cluster-node-timeout 150000
         R 2 config set cluster-node-timeout 150000
 
-        # R 3 performs a plain failover and it will work.
+        # R 3 performs an automatic failover and it will work.
         R 3 config set cluster-replica-no-failover no
         wait_for_condition 1000 50 {
             [s -3 role] eq {master}
         } else {
-            fail "The first failover does not happened"
+            fail "The first failover does not happen"
         }
 
         # Resume the primary and wait for it to become a replica.
@@ -256,7 +256,7 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
             [s 0 role] eq {master} &&
             [s -3 role] eq {slave}
         } else {
-            fail "The second failover does not happened"
+            fail "The second failover does not happen"
         }
         wait_for_cluster_propagation
 
@@ -266,7 +266,7 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
             [s 0 role] eq {slave} &&
             [s -3 role] eq {master}
         } else {
-            fail "The third falover does not happened"
+            fail "The third falover does not happen"
         }
         wait_for_cluster_propagation
     }
