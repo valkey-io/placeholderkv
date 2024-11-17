@@ -651,7 +651,7 @@ void replicationFeedStreamFromPrimaryStream(char *buf, size_t buflen) {
     /* Debugging: this is handy to see the stream sent from primary
      * to replicas. Disabled with if(0). */
     if (0) {
-        if (server.hide_user_data_from_log) {
+        if (!server.hide_user_data_from_log) {
             printf("%zu:", buflen);
             for (size_t j = 0; j < buflen; j++) {
                 printf("%c", isprint(buf[j]) ? buf[j] : '.');
@@ -1669,7 +1669,9 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
                 if (!conn) continue;
                 stillUp++;
             }
-            serverLog(LL_NOTICE, "Diskless rdb transfer, done reading from pipe, %d replicas still up.", stillUp);
+            if (stillUp) {
+                serverLog(LL_NOTICE, "Diskless rdb transfer, done reading from pipe, %d replicas still up.", stillUp);
+            }
             /* Now that the replicas have finished reading, notify the child that it's safe to exit.
              * When the server detects the child has exited, it can mark the replica as online, and
              * start streaming the replication buffers. */
@@ -1678,7 +1680,6 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
             return;
         }
 
-        int stillAlive = 0;
         for (i = 0; i < server.rdb_pipe_numconns; i++) {
             ssize_t nwritten;
             connection *conn = server.rdb_pipe_conns[i];
@@ -1708,15 +1709,10 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
                 server.rdb_pipe_numconns_writing++;
                 connSetWriteHandler(conn, rdbPipeWriteHandler);
             }
-            stillAlive++;
         }
 
-        if (stillAlive == 0) {
-            serverLog(LL_WARNING, "Diskless rdb transfer, last replica dropped, killing fork child.");
-            killRDBChild();
-        }
         /*  Remove the pipe read handler if at least one write handler was set. */
-        if (server.rdb_pipe_numconns_writing || stillAlive == 0) {
+        if (server.rdb_pipe_numconns_writing) {
             aeDeleteFileEvent(server.el, server.rdb_pipe_read, AE_READABLE);
             break;
         }
@@ -1741,9 +1737,12 @@ void updateReplicasWaitingBgsave(int bgsaveerr, int type) {
         client *replica = ln->value;
 
         if (replica->repl_state == REPLICA_STATE_WAIT_BGSAVE_END) {
+            int repldbfd;
             struct valkey_stat buf;
 
             if (bgsaveerr != C_OK) {
+                /* If bgsaveerr is error, there is no need to protect the rdb channel. */
+                replica->flag.protected_rdb_channel = 0;
                 freeClientAsync(replica);
                 serverLog(LL_WARNING, "SYNC failed. BGSAVE child returned an error");
                 continue;
@@ -1790,17 +1789,26 @@ void updateReplicasWaitingBgsave(int bgsaveerr, int type) {
                 }
                 replica->repl_start_cmd_stream_on_ack = 1;
             } else {
-                if ((replica->repldbfd = open(server.rdb_filename, O_RDONLY)) == -1 ||
-                    valkey_fstat(replica->repldbfd, &buf) == -1) {
+                repldbfd = open(server.rdb_filename, O_RDONLY);
+                if (repldbfd == -1) {
                     freeClientAsync(replica);
-                    serverLog(LL_WARNING, "SYNC failed. Can't open/stat DB after BGSAVE: %s", strerror(errno));
+                    serverLog(LL_WARNING, "SYNC failed. Can't open DB after BGSAVE: %s", strerror(errno));
                     continue;
                 }
+                if (valkey_fstat(repldbfd, &buf) == -1) {
+                    freeClientAsync(replica);
+                    serverLog(LL_WARNING, "SYNC failed. Can't stat DB after BGSAVE: %s", strerror(errno));
+                    close(repldbfd);
+                    continue;
+                }
+                replica->repldbfd = repldbfd;
                 replica->repldboff = 0;
                 replica->repldbsize = buf.st_size;
                 replica->repl_state = REPLICA_STATE_SEND_BULK;
                 replica->replpreamble = sdscatprintf(sdsempty(), "$%lld\r\n", (unsigned long long)replica->repldbsize);
 
+                /* When repl_state changes to REPLICA_STATE_SEND_BULK, we will release
+                 * the resources in freeClient. */
                 connSetWriteHandler(replica->conn, NULL);
                 if (connSetWriteHandler(replica->conn, sendBulkToReplica) == C_ERR) {
                     freeClientAsync(replica);
@@ -2687,7 +2695,7 @@ static int dualChannelReplHandleEndOffsetResponse(connection *conn, sds *err) {
 
     /* Initiate repl_provisional_primary to act as this replica temp primary until RDB is loaded */
     server.repl_provisional_primary.conn = server.repl_transfer_s;
-    memcpy(server.repl_provisional_primary.replid, primary_replid, CONFIG_RUN_ID_SIZE);
+    memcpy(server.repl_provisional_primary.replid, primary_replid, sizeof(server.repl_provisional_primary.replid));
     server.repl_provisional_primary.reploff = reploffset;
     server.repl_provisional_primary.read_reploff = reploffset;
     server.repl_provisional_primary.dbid = dbid;
@@ -3237,7 +3245,6 @@ int dualChannelReplMainConnSendHandshake(connection *conn, sds *err) {
     ull2string(llstr, sizeof(llstr), server.rdb_client_id);
     *err = sendCommand(conn, "REPLCONF", "set-rdb-client-id", llstr, NULL);
     if (*err) return C_ERR;
-    server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
     return C_OK;
 }
 
@@ -3248,7 +3255,6 @@ int dualChannelReplMainConnRecvCapaReply(connection *conn, sds *err) {
         serverLog(LL_NOTICE, "Primary does not understand REPLCONF identify: %s", *err);
         return C_ERR;
     }
-    server.repl_state = REPL_STATE_SEND_PSYNC;
     return C_OK;
 }
 
@@ -3259,7 +3265,6 @@ int dualChannelReplMainConnSendPsync(connection *conn, sds *err) {
         *err = sdsnew(connGetLastError(conn));
         return C_ERR;
     }
-    server.repl_state = REPL_STATE_RECEIVE_PSYNC_REPLY;
     return C_OK;
 }
 
@@ -4262,7 +4267,7 @@ void replicationResurrectProvisionalPrimary(void) {
     /* Create a primary client, but do not initialize the read handler yet, as this replica still has a local buffer to
      * drain. */
     replicationCreatePrimaryClientWithHandler(server.repl_transfer_s, server.repl_provisional_primary.dbid, NULL);
-    memcpy(server.primary->replid, server.repl_provisional_primary.replid, CONFIG_RUN_ID_SIZE);
+    memcpy(server.primary->replid, server.repl_provisional_primary.replid, sizeof(server.repl_provisional_primary.replid));
     server.primary->reploff = server.repl_provisional_primary.reploff;
     server.primary->read_reploff = server.repl_provisional_primary.read_reploff;
     server.primary_repl_offset = server.primary->reploff;

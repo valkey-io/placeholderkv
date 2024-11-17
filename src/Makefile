@@ -25,7 +25,7 @@ ifeq ($(OPTIMIZATION),-O3)
 	ifeq (clang,$(CLANG))
 		OPTIMIZATION+=-flto
 	else
-		OPTIMIZATION+=-flto=auto
+		OPTIMIZATION+=-flto=auto -ffat-lto-objects
 	endif
 endif
 ifneq ($(OPTIMIZATION),-O0)
@@ -98,15 +98,6 @@ ifeq ($(USE_JEMALLOC),no)
 	MALLOC=libc
 endif
 
-# Some unit tests compile files a second time to get access to static functions, the "--allow-multiple-definition" flag
-# allows us to do that without an error, by using the first instance of function. This behavior can also be used
-# to tweak behavior of code just for unit tests. The version of ld on MacOS apparently always does this.
-ifneq ($(uname_S),Darwin)
-	ALLOW_DUPLICATE_FLAG=-Wl,--allow-multiple-definition
-else
-	ALLOW_DUPLICATE_FLAG=
-endif
-
 ifdef SANITIZER
 ifeq ($(SANITIZER),address)
 	MALLOC=libc
@@ -140,9 +131,6 @@ ifdef REDIS_LDFLAGS
 endif
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(SERVER_CFLAGS)
-ifeq ($(SERVER_TEST),yes)
-	FINAL_CFLAGS +=-DSERVER_TEST=1
-endif
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(SERVER_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
@@ -494,7 +482,7 @@ $(ENGINE_LIB_NAME): $(ENGINE_SERVER_OBJ)
 
 # valkey-unit-tests
 $(ENGINE_UNIT_TESTS): $(ENGINE_TEST_OBJ) $(ENGINE_LIB_NAME)
-	$(SERVER_LD) $(ALLOW_DUPLICATE_FLAG) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS)
+	$(SERVER_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a ../deps/fpconv/libfpconv.a $(FINAL_LIBS)
 
 # valkey-sentinel
 $(ENGINE_SENTINEL_NAME): $(SERVER_NAME)

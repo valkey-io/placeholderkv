@@ -328,3 +328,44 @@ int test_sdsHeaderSizes(int argc, char **argv, int flags) {
 
     return 0;
 }
+
+int test_sdssplitargs(int argc, char **argv, int flags) {
+    UNUSED(argc);
+    UNUSED(argv);
+    UNUSED(flags);
+
+    int len;
+    sds *sargv;
+
+    sargv = sdssplitargs("Testing one two three", &len);
+    TEST_ASSERT(4 == len);
+    TEST_ASSERT(!strcmp("Testing", sargv[0]));
+    TEST_ASSERT(!strcmp("one", sargv[1]));
+    TEST_ASSERT(!strcmp("two", sargv[2]));
+    TEST_ASSERT(!strcmp("three", sargv[3]));
+    sdsfreesplitres(sargv, len);
+
+    sargv = sdssplitargs("", &len);
+    TEST_ASSERT(0 == len);
+    TEST_ASSERT(sargv != NULL);
+    sdsfreesplitres(sargv, len);
+
+    sargv = sdssplitargs("\"Testing split strings\" \'Another split string\'", &len);
+    TEST_ASSERT(2 == len);
+    TEST_ASSERT(!strcmp("Testing split strings", sargv[0]));
+    TEST_ASSERT(!strcmp("Another split string", sargv[1]));
+    sdsfreesplitres(sargv, len);
+
+    sargv = sdssplitargs("\"Hello\" ", &len);
+    TEST_ASSERT(1 == len);
+    TEST_ASSERT(!strcmp("Hello", sargv[0]));
+    sdsfreesplitres(sargv, len);
+
+    char *binary_string = "\"\\x73\\x75\\x70\\x65\\x72\\x20\\x00\\x73\\x65\\x63\\x72\\x65\\x74\\x20\\x70\\x61\\x73\\x73\\x77\\x6f\\x72\\x64\"";
+    sargv = sdssplitargs(binary_string, &len);
+    TEST_ASSERT(1 == len);
+    TEST_ASSERT(22 == sdslen(sargv[0]));
+    sdsfreesplitres(sargv, len);
+
+    return 0;
+}

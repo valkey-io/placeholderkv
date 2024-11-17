@@ -567,6 +567,15 @@ typedef enum {
 #define PAUSE_ACTION_EVICT (1 << 3)
 #define PAUSE_ACTION_REPLICA (1 << 4) /* pause replica traffic */
 
+/* Sets log format */
+typedef enum { LOG_FORMAT_LEGACY = 0,
+               LOG_FORMAT_LOGFMT } log_format_type;
+
+/* Sets log timestamp format */
+typedef enum { LOG_TIMESTAMP_LEGACY = 0,
+               LOG_TIMESTAMP_ISO8601,
+               LOG_TIMESTAMP_MILLISECONDS } log_timestamp_type;
+
 /* common sets of actions to pause/unpause */
 #define PAUSE_ACTIONS_CLIENT_WRITE_SET \
     (PAUSE_ACTION_CLIENT_WRITE | PAUSE_ACTION_EXPIRE | PAUSE_ACTION_EVICT | PAUSE_ACTION_REPLICA)
@@ -1594,6 +1603,15 @@ typedef struct serverTLSContextConfig {
 } serverTLSContextConfig;
 
 /*-----------------------------------------------------------------------------
+ * Unix Context Configuration
+ *----------------------------------------------------------------------------*/
+
+typedef struct serverUnixContextConfig {
+    char *group;       /* UNIX socket group */
+    unsigned int perm; /* UNIX socket permission (see mode_t) */
+} serverUnixContextConfig;
+
+/*-----------------------------------------------------------------------------
  * AOF manifest definition
  *----------------------------------------------------------------------------*/
 typedef enum {
@@ -1683,6 +1701,7 @@ struct valkeyServer {
     const char *busy_module_yield_reply; /* When non-null, we are inside RM_Yield. */
     char *ignore_warnings;               /* Config: warnings that should be ignored. */
     int client_pause_in_transaction;     /* Was a client pause executed during this Exec? */
+    int server_del_keys_in_slot;         /* The server is deleting the keys in the dirty slot. */
     int thp_enabled;                     /* If true, THP is enabled. */
     size_t page_size;                    /* The page size of OS. */
     /* Modules */
@@ -1704,8 +1723,6 @@ struct valkeyServer {
     int bindaddr_count;                    /* Number of addresses in server.bindaddr[] */
     char *bind_source_addr;                /* Source address to bind on for outgoing connections */
     char *unixsocket;                      /* UNIX socket path */
-    char *unixsocketgroup;                 /* UNIX socket group */
-    unsigned int unixsocketperm;           /* UNIX socket permission (see mode_t) */
     connListener listeners[CONN_TYPE_MAX]; /* TCP/Unix/TLS even more types */
     uint32_t socket_mark_id;               /* ID for listen socket marking */
     connListener clistener;                /* Cluster bus listener */
@@ -1971,17 +1988,19 @@ struct valkeyServer {
     serverOpArray also_propagate; /* Additional command to propagate. */
     int replication_allowed;      /* Are we allowed to replicate? */
     /* Logging */
-    char *logfile;         /* Path of log file */
-    int syslog_enabled;    /* Is syslog enabled? */
-    char *syslog_ident;    /* Syslog ident */
-    int syslog_facility;   /* Syslog facility */
-    int crashlog_enabled;  /* Enable signal handler for crashlog.
-                            * disable for clean core dumps. */
-    int crashed;           /* True if the server has crashed, used in catClientInfoString
-                            * to indicate that no wait for IO threads is needed. */
-    int memcheck_enabled;  /* Enable memory check on crash. */
-    int use_exit_on_panic; /* Use exit() on panic and assert rather than
-                            * abort(). useful for Valgrind. */
+    char *logfile;            /* Path of log file */
+    int syslog_enabled;       /* Is syslog enabled? */
+    char *syslog_ident;       /* Syslog ident */
+    int syslog_facility;      /* Syslog facility */
+    int crashlog_enabled;     /* Enable signal handler for crashlog.
+                               * disable for clean core dumps. */
+    int crashed;              /* True if the server has crashed, used in catClientInfoString
+                               * to indicate that no wait for IO threads is needed. */
+    int memcheck_enabled;     /* Enable memory check on crash. */
+    int use_exit_on_panic;    /* Use exit() on panic and assert rather than
+                               * abort(). useful for Valgrind. */
+    int log_format;           /* Print log in specific format */
+    int log_timestamp_format; /* Timestamp format in log */
     /* Shutdown */
     int shutdown_timeout;    /* Graceful shutdown time limit in seconds. */
     int shutdown_on_sigint;  /* Shutdown flags configured for SIGINT. */
@@ -2202,6 +2221,7 @@ struct valkeyServer {
     int tls_replication;
     int tls_auth_clients;
     serverTLSContextConfig tls_ctx_config;
+    serverUnixContextConfig unix_ctx_config;
     /* cpu affinity */
     char *server_cpulist;      /* cpu affinity list of server main/io thread. */
     char *bio_cpulist;         /* cpu affinity list of bio thread. */
@@ -2711,7 +2731,7 @@ int serverSetProcTitle(char *title);
 int validateProcTitleTemplate(const char *template);
 int serverCommunicateSystemd(const char *sd_notify_msg);
 void serverSetCpuAffinity(const char *cpulist);
-void dictVanillaFree(dict *d, void *val);
+void dictVanillaFree(void *val);
 
 /* ERROR STATS constants */
 
@@ -2844,7 +2864,7 @@ void flushReplicasOutputBuffers(void);
 void disconnectReplicas(void);
 void evictClients(void);
 int listenToPort(connListener *fds);
-void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions_bitmask);
+void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions);
 void unpauseActions(pause_purpose purpose);
 uint32_t isPausedActions(uint32_t action_bitmask);
 uint32_t isPausedActionsWithUpdate(uint32_t action_bitmask);
@@ -3698,11 +3718,11 @@ void startEvictionTimeProc(void);
 /* Keys hashing / comparison functions for dict.c hash tables. */
 uint64_t dictSdsHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
-int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
-int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2);
-void dictSdsDestructor(dict *d, void *val);
-void dictListDestructor(dict *d, void *val);
-void *dictSdsDup(dict *d, const void *key);
+int dictSdsKeyCompare(const void *key1, const void *key2);
+int dictSdsKeyCaseCompare(const void *key1, const void *key2);
+void dictSdsDestructor(void *val);
+void dictListDestructor(void *val);
+void *dictSdsDup(const void *key);
 
 /* Git SHA1 */
 char *serverGitSHA1(void);

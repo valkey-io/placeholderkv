@@ -1230,7 +1230,7 @@ void clusterReset(int hard) {
     if (nodeIsReplica(myself)) {
         clusterSetNodeAsPrimary(myself);
         replicationUnsetPrimary();
-        emptyData(-1, EMPTYDB_NO_FLAGS, NULL);
+        emptyData(-1, server.lazyfree_lazy_user_flush ? EMPTYDB_ASYNC : EMPTYDB_NO_FLAGS, NULL);
     }
 
     /* Close slots, reset manual failover state. */
@@ -2451,6 +2451,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
      * need to delete all the keys in the slots we lost ownership. */
     uint16_t dirty_slots[CLUSTER_SLOTS];
     int dirty_slots_count = 0;
+    int delete_dirty_slots = 0;
 
     /* We should detect if sender is new primary of our shard.
      * We will know it if all our slots were migrated to sender, and sender
@@ -2677,6 +2678,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
             serverLog(LL_NOTICE,
                       "My last slot was migrated to node %.40s (%s) in shard %.40s. I am now an empty primary.",
                       sender->name, sender->human_nodename, sender->shard_id);
+            /* We may still have dirty slots when we became a empty primary due to
+             * a bad migration.
+             *
+             * In order to maintain a consistent state between keys and slots
+             * we need to remove all the keys from the slots we lost. */
+            delete_dirty_slots = 1;
         }
     } else if (dirty_slots_count) {
         /* If we are here, we received an update message which removed
@@ -2686,6 +2693,10 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
          *
          * In order to maintain a consistent state between keys and slots
          * we need to remove all the keys from the slots we lost. */
+        delete_dirty_slots = 1;
+    }
+
+    if (delete_dirty_slots) {
         for (int j = 0; j < dirty_slots_count; j++) {
             serverLog(LL_NOTICE, "Deleting keys in dirty slot %d on node %.40s (%s) in shard %.40s", dirty_slots[j],
                       myself->name, myself->human_nodename, myself->shard_id);
@@ -2981,7 +2992,7 @@ int clusterIsValidPacket(clusterLink *link) {
         return 0;
     }
 
-    if (type == server.cluster_drop_packet_filter) {
+    if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
         serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
         return 0;
     }
@@ -3070,7 +3081,8 @@ int clusterProcessPacket(clusterLink *link) {
     if (!clusterIsValidPacket(link)) {
         clusterMsg *hdr = (clusterMsg *)link->rcvbuf;
         uint16_t type = ntohs(hdr->type);
-        if (server.debug_cluster_close_link_on_packet_drop && type == server.cluster_drop_packet_filter) {
+        if (server.debug_cluster_close_link_on_packet_drop &&
+            (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
             serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
             return 0;
@@ -3134,6 +3146,24 @@ int clusterProcessPacket(clusterLink *link) {
         if (sender_claims_to_be_primary && sender_claimed_config_epoch > sender->configEpoch) {
             sender->configEpoch = sender_claimed_config_epoch;
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
+
+            if (server.cluster->failover_auth_time && sender->configEpoch >= server.cluster->failover_auth_epoch) {
+                /* Another node has claimed an epoch greater than or equal to ours.
+                 * If we have an ongoing election, reset it because we cannot win
+                 * with an epoch smaller than or equal to the incoming claim. This
+                 * allows us to start a new election as soon as possible. */
+                server.cluster->failover_auth_time = 0;
+                serverLog(LL_WARNING,
+                          "Failover election in progress for epoch %llu, but received a claim from "
+                          "node %.40s (%s) with an equal or higher epoch %llu. Resetting the election "
+                          "since we cannot win an election in the past.",
+                          (unsigned long long)server.cluster->failover_auth_epoch,
+                          sender->name, sender->human_nodename,
+                          (unsigned long long)sender->configEpoch);
+                /* Maybe we could start a new election, set a flag here to make sure
+                 * we check as soon as possible, instead of waiting for a cron. */
+                clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
+            }
         }
         /* Update the replication offset info for this node. */
         sender->repl_offset = ntohu64(hdr->offset);
@@ -4447,11 +4477,18 @@ int clusterGetReplicaRank(void) {
 void clusterLogCantFailover(int reason) {
     char *msg;
     static time_t lastlog_time = 0;
+    time_t now = time(NULL);
 
-    /* Don't log if we have the same reason for some time. */
-    if (reason == server.cluster->cant_failover_reason &&
-        time(NULL) - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD)
+    /* General logging suppression if the same reason has occurred recently. */
+    if (reason == server.cluster->cant_failover_reason && now - lastlog_time < CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
         return;
+    }
+
+    /* Special case: If the failure reason is due to data age, log 10 times less frequently. */
+    if (reason == server.cluster->cant_failover_reason && reason == CLUSTER_CANT_FAILOVER_DATA_AGE &&
+        now - lastlog_time < 10 * CLUSTER_CANT_FAILOVER_RELOG_PERIOD) {
+        return;
+    }
 
     server.cluster->cant_failover_reason = reason;
 
@@ -4525,8 +4562,9 @@ void clusterFailoverReplaceYourPrimary(void) {
  * 3) Perform the failover informing all the other nodes.
  */
 void clusterHandleReplicaFailover(void) {
+    mstime_t now = mstime();
     mstime_t data_age;
-    mstime_t auth_age = mstime() - server.cluster->failover_auth_time;
+    mstime_t auth_age = now - server.cluster->failover_auth_time;
     int needed_quorum = (server.cluster->size / 2) + 1;
     int manual_failover = server.cluster->mf_end != 0 && server.cluster->mf_can_start;
     mstime_t auth_timeout, auth_retry_time;
@@ -4588,7 +4626,7 @@ void clusterHandleReplicaFailover(void) {
     /* If the previous failover attempt timeout and the retry time has
      * elapsed, we can setup a new one. */
     if (auth_age > auth_retry_time) {
-        server.cluster->failover_auth_time = mstime() +
+        server.cluster->failover_auth_time = now +
                                              500 +           /* Fixed delay of 500 milliseconds, let FAIL msg propagate. */
                                              random() % 500; /* Random delay between 0 and 500 milliseconds. */
         server.cluster->failover_auth_count = 0;
@@ -4600,20 +4638,26 @@ void clusterHandleReplicaFailover(void) {
         server.cluster->failover_auth_time += server.cluster->failover_auth_rank * 1000;
         /* However if this is a manual failover, no delay is needed. */
         if (server.cluster->mf_end) {
-            server.cluster->failover_auth_time = mstime();
+            server.cluster->failover_auth_time = now;
             server.cluster->failover_auth_rank = 0;
-            clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
+            /* Reset auth_age since it is outdated now and we can bypass the auth_timeout
+             * check in the next state and start the election ASAP. */
+            auth_age = 0;
         }
         serverLog(LL_NOTICE,
                   "Start of election delayed for %lld milliseconds "
                   "(rank #%d, offset %lld).",
-                  server.cluster->failover_auth_time - mstime(), server.cluster->failover_auth_rank,
+                  server.cluster->failover_auth_time - now, server.cluster->failover_auth_rank,
                   replicationGetReplicaOffset());
         /* Now that we have a scheduled election, broadcast our offset
          * to all the other replicas so that they'll updated their offsets
          * if our offset is better. */
         clusterBroadcastPong(CLUSTER_BROADCAST_LOCAL_REPLICAS);
-        return;
+
+        /* Return ASAP if we can't start the election now. In a manual failover,
+         * we can start the election immediately, so in this case we continue to
+         * the next state without waiting for the next beforeSleep. */
+        if (now < server.cluster->failover_auth_time) return;
     }
 
     /* It is possible that we received more updated offsets from other
@@ -4633,7 +4677,7 @@ void clusterHandleReplicaFailover(void) {
     }
 
     /* Return ASAP if we can't still start the election. */
-    if (mstime() < server.cluster->failover_auth_time) {
+    if (now < server.cluster->failover_auth_time) {
         clusterLogCantFailover(CLUSTER_CANT_FAILOVER_WAITING_DELAY);
         return;
     }
@@ -4879,6 +4923,8 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
     /* A Node in HANDSHAKE state has a limited lifespan equal to the
      * configured node timeout. */
     if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
+        serverLog(LL_WARNING, "Clusterbus handshake timeout %s:%d after %lldms", node->ip,
+                  node->cport, handshake_timeout);
         clusterDelNode(node);
         return 1;
     }
@@ -5819,6 +5865,8 @@ const char *clusterGetMessageTypeString(int type) {
     return "unknown";
 }
 
+/* Get the slot from robj and return it. If the slot is not valid,
+ * return -1 and send an error to the client. */
 int getSlotOrReply(client *c, robj *o) {
     long long slot;
 
@@ -6048,8 +6096,11 @@ void removeChannelsInSlot(unsigned int slot) {
 /* Remove all the keys in the specified hash slot.
  * The number of removed items is returned. */
 unsigned int delKeysInSlot(unsigned int hashslot) {
-    if (!kvstoreDictSize(server.db->keys, hashslot)) return 0;
+    if (!countKeysInSlot(hashslot)) return 0;
 
+    /* We may lose a slot during the pause. We need to track this
+     * state so that we don't assert in propagateNow(). */
+    server.server_del_keys_in_slot = 1;
     unsigned int j = 0;
 
     kvstoreDictIterator *kvs_di = NULL;
@@ -6074,6 +6125,8 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
     }
     kvstoreReleaseDictIterator(kvs_di);
 
+    server.server_del_keys_in_slot = 0;
+    serverAssert(server.execution_nesting == 0);
     return j;
 }
 
@@ -6544,7 +6597,7 @@ int clusterCommandSpecial(client *c) {
         memset(slots, 0, CLUSTER_SLOTS);
         /* Check that all the arguments are parseable.*/
         for (j = 2; j < c->argc; j++) {
-            if ((slot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((slot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
@@ -6577,11 +6630,11 @@ int clusterCommandSpecial(client *c) {
         /* Check that all the arguments are parseable and that all the
          * slots are not already busy. */
         for (j = 2; j < c->argc; j += 2) {
-            if ((startslot = getSlotOrReply(c, c->argv[j])) == C_ERR) {
+            if ((startslot = getSlotOrReply(c, c->argv[j])) == -1) {
                 zfree(slots);
                 return 1;
             }
-            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == C_ERR) {
+            if ((endslot = getSlotOrReply(c, c->argv[j + 1])) == -1) {
                 zfree(slots);
                 return 1;
             }

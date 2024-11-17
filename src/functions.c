@@ -43,9 +43,9 @@ typedef enum {
 static size_t engine_cache_memory = 0;
 
 /* Forward declaration */
-static void engineFunctionDispose(dict *d, void *obj);
-static void engineStatsDispose(dict *d, void *obj);
-static void engineLibraryDispose(dict *d, void *obj);
+static void engineFunctionDispose(void *obj);
+static void engineStatsDispose(void *obj);
+static void engineLibraryDispose(void *obj);
 static int functionsVerifyName(sds name);
 
 typedef struct functionsLibEngineStats {
@@ -126,15 +126,13 @@ static size_t libraryMallocSize(functionLibInfo *li) {
     return zmalloc_size(li) + sdsAllocSize(li->name) + sdsAllocSize(li->code);
 }
 
-static void engineStatsDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineStatsDispose(void *obj) {
     functionsLibEngineStats *stats = obj;
     zfree(stats);
 }
 
 /* Dispose function memory */
-static void engineFunctionDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineFunctionDispose(void *obj) {
     if (!obj) {
         return;
     }
@@ -158,8 +156,7 @@ static void engineLibraryFree(functionLibInfo *li) {
     zfree(li);
 }
 
-static void engineLibraryDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineLibraryDispose(void *obj) {
     engineLibraryFree(obj);
 }
 
@@ -175,7 +172,7 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
         stats->n_lib = 0;
     }
     dictReleaseIterator(iter);
-    curr_functions_lib_ctx->cache_memory = 0;
+    lib_ctx->cache_memory = 0;
 }
 
 void functionsLibCtxClearCurrent(int async) {

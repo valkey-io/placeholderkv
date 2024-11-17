@@ -96,7 +96,7 @@ int clusterNodeIsFailing(clusterNode *node);
 int clusterNodeIsNoFailover(clusterNode *node);
 char *clusterNodeGetShardId(clusterNode *node);
 int clusterNodeNumReplicas(clusterNode *node);
-clusterNode *clusterNodeGetReplica(clusterNode *node, int slave_idx);
+clusterNode *clusterNodeGetReplica(clusterNode *node, int replica_idx);
 clusterNode *getMigratingSlotDest(int slot);
 clusterNode *getImportingSlotSource(int slot);
 clusterNode *getNodeBySlot(int slot);
