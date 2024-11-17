@@ -2,13 +2,16 @@ start_cluster 3 3 {tags {external:skip cluster} overrides {cluster-replica-no-fa
     test "NOADDR nodes will be marked as FAIL" {
         set primary0_id [R 0 CLUSTER MYID]
 
-        # R 0 is a primary, doing a CLUSTER RESET and the node name will be modified,
-        # and other nodes will set it to NOADDR.
+        # R 0 is a primary, after doing a CLUSTER RESET, the node name will be modified,
+        # and other nodes will set it to NOADDR and FAIL.
         R 0 cluster reset hard
         wait_for_log_messages -1 {"*PONG contains mismatching sender ID*"} 0 1000 10
+        wait_for_log_messages -2 {"*PONG contains mismatching sender ID*"} 0 1000 10
         wait_for_condition 1000 10 {
             [cluster_has_flag [cluster_get_node_by_id 1 $primary0_id] noaddr] eq 1 &&
-            [cluster_has_flag [cluster_get_node_by_id 1 $primary0_id] fail] eq 1
+            [cluster_has_flag [cluster_get_node_by_id 1 $primary0_id] fail] eq 1 &&
+            [cluster_has_flag [cluster_get_node_by_id 2 $primary0_id] noaddr] eq 1 &&
+            [cluster_has_flag [cluster_get_node_by_id 2 $primary0_id] fail] eq 1
         } else {
             fail "The node is not marked with the correct flag"
         }
