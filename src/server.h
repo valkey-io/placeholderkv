@@ -2189,7 +2189,7 @@ struct valkeyServer {
     int cluster_slot_stats_enabled;                        /* Cluster slot usage statistics tracking enabled. */
     /* Debug config that goes along with cluster_drop_packet_filter. When set, the link is closed on packet drop. */
     uint32_t debug_cluster_close_link_on_packet_drop : 1;
-    uint32_t debug_cluster_random_min_ping : 1;
+    uint32_t debug_cluster_random_ping : 1;
     sds cached_cluster_slot_info[CACHE_CONN_TYPE_MAX]; /* Index in array is a bitwise or of CACHE_CONN_TYPE_* */
     /* Scripting */
     mstime_t busy_reply_threshold;  /* Script / module timeout in milliseconds */

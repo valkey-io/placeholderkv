@@ -5002,7 +5002,7 @@ void clusterCron(void) {
 
     /* Ping some random node 1 time every 10 iterations, so that we usually ping
      * one random node every second. */
-    if (server.debug_cluster_random_min_ping && !(iteration % 10)) {
+    if (server.debug_cluster_random_ping && !(iteration % 10)) {
         int j;
 
         /* Check a few random nodes and ping the one with the oldest
