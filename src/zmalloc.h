@@ -37,17 +37,6 @@
 #define __xstr(s) __str(s)
 #define __str(s) #s
 
-#ifdef HAVE_MALLOC_SIZE
-#define PREFIX_SIZE 0
-#else
-/* Use at least 8 bytes alignment on all systems. */
-#if SIZE_MAX < 0xffffffffffffffffull
-#define PREFIX_SIZE 8
-#else
-#define PREFIX_SIZE (sizeof(size_t))
-#endif
-#endif
-
 #if defined(USE_TCMALLOC)
 #define ZMALLOC_LIB ("tcmalloc-" __xstr(TC_VERSION_MAJOR) "." __xstr(TC_VERSION_MINOR))
 #include <gperftools/tcmalloc.h>
@@ -178,6 +167,17 @@ size_t zmalloc_usable_size(void *ptr);
  * the compiler recognizes this extra memory. However, if we use the pointer
  * obtained from z[*]_usable() family functions, there is no need for this step. */
 #define zmalloc_usable_size(p) zmalloc_size(p)
+
+#ifdef HAVE_MALLOC_SIZE
+#define PREFIX_SIZE 0
+#else
+/* Use at least 8 bytes alignment on all systems. */
+#if SIZE_MAX < 0xffffffffffffffffull
+#define PREFIX_SIZE 8
+#else
+#define PREFIX_SIZE (sizeof(size_t))
+#endif
+#endif
 
 /* derived from https://github.com/systemd/systemd/pull/25688
  * We use zmalloc_usable_size() everywhere to use memory blocks, but that is an abuse since the
