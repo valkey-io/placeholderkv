@@ -4371,8 +4371,9 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
     if (!force_ack && mstime() - node->replicaof->voted_time < server.cluster_node_timeout * 2) {
         serverLog(LL_WARNING,
                   "Failover auth denied to %.40s (%s): "
-                  "can't vote about this replica before %lld milliseconds",
+                  "can't vote for any replica of %.40s (%s) within %lld milliseconds",
                   node->name, node->human_nodename,
+                  node->replicaof->name, node->replicaof->human_nodename,
                   (long long)((server.cluster_node_timeout * 2) - (mstime() - node->replicaof->voted_time)));
         return;
     }
