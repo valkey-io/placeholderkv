@@ -2244,7 +2244,7 @@ void readSyncBulkPayload(connection *conn) {
 
         int loadingFailed = 0;
         rdbLoadingCtx loadingCtx = {.dbarray = dbarray, .functions_lib_ctx = functions_lib_ctx};
-        if (rdbLoadRioWithLoadingCtx(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
+        if (rdbLoadRioWithLoadingCtxScopedRdb(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
             /* RDB loading failed. */
             serverLog(LL_WARNING, "Failed trying to load the PRIMARY synchronization DB "
                                   "from socket, check server logs.");

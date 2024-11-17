@@ -1111,8 +1111,8 @@ start_server {tags {"dual-channel-replication external:skip"}} {
     $primary config set repl-diskless-sync-delay 5; # allow catch failed sync before retry
 
     # Generating RDB will cost 100 sec to generate
-    $primary debug populate 10000 primary 1
-    $primary config set rdb-key-save-delay 10000
+    $primary debug populate 100000 primary 1
+    $primary config set rdb-key-save-delay 1000
     
     start_server {} {
         set replica [srv 0 client]
@@ -1207,12 +1207,11 @@ start_server {tags {"dual-channel-replication external:skip"}} {
 
     $primary config set repl-diskless-sync yes
     $primary config set dual-channel-replication-enabled yes
-    $primary config set loglevel debug
     $primary config set repl-diskless-sync-delay 5; # allow catch failed sync before retry
 
     # Generating RDB will take 100 sec to generate
     $primary debug populate 1000000 primary 1
-    $primary config set rdb-key-save-delay -1000
+    $primary config set rdb-key-save-delay 100
     
     start_server {} {
         set replica [srv 0 client]
