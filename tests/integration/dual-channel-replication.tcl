@@ -1203,7 +1203,6 @@ start_server {tags {"dual-channel-replication external:skip"}} {
     set primary [srv 0 client]
     set primary_host [srv 0 host]
     set primary_port [srv 0 port]
-    set loglines [count_log_lines 0]
 
     $primary config set repl-diskless-sync yes
     $primary config set dual-channel-replication-enabled yes
