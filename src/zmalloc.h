@@ -168,17 +168,6 @@ size_t zmalloc_usable_size(void *ptr);
  * obtained from z[*]_usable() family functions, there is no need for this step. */
 #define zmalloc_usable_size(p) zmalloc_size(p)
 
-#ifdef HAVE_MALLOC_SIZE
-#define PREFIX_SIZE 0
-#else
-/* Use at least 8 bytes alignment on all systems. */
-#if SIZE_MAX < 0xffffffffffffffffull
-#define PREFIX_SIZE 8
-#else
-#define PREFIX_SIZE (sizeof(size_t))
-#endif
-#endif
-
 /* derived from https://github.com/systemd/systemd/pull/25688
  * We use zmalloc_usable_size() everywhere to use memory blocks, but that is an abuse since the
  * malloc_usable_size() isn't meant for this kind of use, it is for diagnostics only. That is also why the
