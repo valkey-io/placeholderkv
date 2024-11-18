@@ -990,7 +990,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
     runs-on: ${{ matrix.os }}
     if: |
       (github.event_name == 'workflow_dispatch' ||
@@ -1019,7 +1019,7 @@ jobs:
         run: make SERVER_CFLAGS='-Werror'
 
   test-freebsd:
-    runs-on: macos-12
+    runs-on: macos-13
     if: |
       (github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'schedule' && github.repository == 'valkey-io/valkey') ||
