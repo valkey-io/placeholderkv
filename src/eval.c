@@ -200,8 +200,8 @@ void scriptingInit(int setup) {
 
     /* Initialize a dictionary we use to map SHAs to scripts.
      * Initialize a list we use for lua script evictions.
-     * Note that we duplicate the sha when adding to the lru list due to defrag
-     * We need to free them respectively */
+     * Note that we duplicate the sha when adding to the lru list due to defrag,
+     * and we need to free them respectively. */
     lctx.lua_scripts = dictCreate(&shaScriptObjectDictType);
     lctx.lua_scripts_lru_list = listCreate();
     listSetFreeMethod(lctx.lua_scripts_lru_list, (void (*)(void *))sdsfree);
