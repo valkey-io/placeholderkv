@@ -422,9 +422,11 @@ unsigned long long kvstoreScan(kvstore *kvs,
  * `dictTryExpand` call and in case of `dictExpand` call it signifies no expansion was performed.
  */
 int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandShouldSkipDictIndex *skip_cb) {
+    if (newsize == 0) return 1;
     for (int i = 0; i < kvs->num_dicts; i++) {
-        dict *d = kvstoreGetDict(kvs, i);
-        if (!d || (skip_cb && skip_cb(i))) continue;
+        if (skip_cb && skip_cb(i)) continue;
+        /* If the dictionary doesn't exist, create it */
+        dict *d = createDictIfNeeded(kvs, i);
         int result = try_expand ? dictTryExpand(d, newsize) : dictExpand(d, newsize);
         if (try_expand && result == DICT_ERR) return 0;
     }
