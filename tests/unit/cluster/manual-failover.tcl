@@ -193,7 +193,7 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
 
         # Make sure we don't send PINGs for a short period of time.
         for {set j 0} {$j < [llength $::servers]} {incr j} {
-            R $j debug cluster-random-min-ping 0
+            R $j debug cluster-random-ping 0
             R $j config set cluster-ping-interval 300000
         }
 

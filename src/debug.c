@@ -436,7 +436,7 @@ void debugCommand(client *c) {
             "CLOSE-CLUSTER-LINK-ON-PACKET-DROP <0|1>",
             "    This is valid only when DROP-CLUSTER-PACKET-FILTER is set to a valid packet type.",
             "    When set to 1, the cluster link is closed after dropping a packet based on the filter.",
-            "CLUSTER-RANDOM-MIN-PING <0|1>",
+            "CLUSTER-RANDOM-PING <0|1>",
             "    Send cluster ping to a random node every second. Enabled by default.",
             "OOM",
             "    Crash the server simulating an out-of-memory error.",
@@ -609,7 +609,7 @@ void debugCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "close-cluster-link-on-packet-drop") && c->argc == 3) {
         server.debug_cluster_close_link_on_packet_drop = atoi(c->argv[2]->ptr);
         addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "cluster-random-min-ping") && c->argc == 3) {
+    } else if (!strcasecmp(c->argv[1]->ptr, "cluster-random-ping") && c->argc == 3) {
         server.debug_cluster_random_ping = atoi(c->argv[2]->ptr);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "object") && (c->argc == 3 || c->argc == 4)) {
