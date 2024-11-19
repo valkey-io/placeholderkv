@@ -156,7 +156,7 @@ static int parseDouble(ReplyParser *parser, void *p_ctx) {
     if (len <= MAX_LONG_DOUBLE_CHARS) {
         memcpy(buf, proto + 1, len);
         buf[len] = '\0';
-        valkey_strtod(buf, &d); /* We expect a valid representation. */
+        d = valkey_strtod(buf, NULL); /* We expect a valid representation. */
     }
     parser->callbacks.double_callback(p_ctx, d, proto, parser->curr_location - proto);
     return C_OK;

@@ -9,14 +9,18 @@
 
 extern "C"
 {
-    const char* fast_float_strtod(const char *str, double *value)
+    double fast_float_strtod(const char *str, const char** endptr)
     {
         double temp = 0;
         auto answer = fast_float::from_chars(str, str + strlen(str), temp);
-        *value = temp;
         if (answer.ec != std::errc()) {
             errno = (answer.ec == std::errc::result_out_of_range) ? ERANGE : EINVAL;
+        } else {
+            errno = 0;
         }
-        return answer.ptr;
+        if (endptr) {
+            *endptr = answer.ptr;
+        }
+        return temp;
     }
 }

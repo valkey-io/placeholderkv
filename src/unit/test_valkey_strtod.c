@@ -15,24 +15,20 @@ int test_valkey_strtod(int argc, char **argv, int flags) {
     UNUSED(argv);
     UNUSED(flags);
 
-    double value = 0;
     errno = 0;
-    valkey_strtod("231.2341234", &value);
+    double value = valkey_strtod("231.2341234", NULL);
     TEST_ASSERT(value == 231.2341234);
     TEST_ASSERT(errno == 0);
 
-    value = 0;
-    valkey_strtod("+inf", &value);
+    value = valkey_strtod("+inf", NULL);
     TEST_ASSERT(isinf(value));
     TEST_ASSERT(errno == 0);
 
-    value = 0;
-    valkey_strtod("-inf", &value);
+    value = valkey_strtod("-inf", NULL);
     TEST_ASSERT(isinf(value));
     TEST_ASSERT(errno == 0);
 
-    value = 0;
-    valkey_strtod("inf", &value);
+    value = valkey_strtod("inf", NULL);
     TEST_ASSERT(isinf(value));
     TEST_ASSERT(errno == 0);
 

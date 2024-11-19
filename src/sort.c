@@ -480,9 +480,9 @@ void sortCommandGeneric(client *c, int readonly) {
                 if (sortby) vector[j].u.cmpobj = getDecodedObject(byval);
             } else {
                 if (sdsEncodedObject(byval)) {
-                    const char *eptr;
+                    char *eptr;
                     errno = 0;
-                    eptr = valkey_strtod(byval->ptr, &(vector[j].u.score));
+                    vector[j].u.score = valkey_strtod(byval->ptr, &eptr);
                     if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }

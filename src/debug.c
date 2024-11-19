@@ -843,8 +843,7 @@ void debugCommand(client *c) {
                              "string|integer|double|bignum|null|array|set|map|attrib|push|verbatim|true|false");
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "sleep") && c->argc == 3) {
-        double dtime;
-        valkey_strtod(c->argv[2]->ptr, &dtime);
+        double dtime = valkey_strtod(c->argv[2]->ptr, NULL);
         long long utime = dtime * 1000000;
         struct timespec tv;
 

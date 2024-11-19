@@ -2539,9 +2539,9 @@ static int parseOptions(int argc, char **argv) {
                 exit(1);
             }
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
-            double seconds;
             errno = 0;
-            const char *eptr = valkey_strtod(argv[++i], &seconds);
+            char *eptr;
+            double seconds = valkey_strtod(argv[++i], &eptr);
             if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {
                 fprintf(stderr, "Invalid connection timeout for -t.\n");
                 exit(1);
