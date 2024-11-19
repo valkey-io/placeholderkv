@@ -582,6 +582,19 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
       set err1
     } {*WRONGTYPE*}
 
+    test "SET with IFEQ conditional" {
+        # Setting an initial value for the key
+        r set foo "initial_value"
+
+        # Trying to set the key only if the value is exactly "initial_value"
+        assert_equal OK [r set foo "new_value" ifeq "initial_value"]
+        assert_equal "new_value" [r get foo]
+
+        # Trying to set the key only if the value is NOT "initial_value"
+        assert_equal {} [r set foo "should_not_set" ifeq "wrong_value"]
+        assert_equal "new_value" [r get foo]
+    }
+
     test {Extended SET EX option} {
         r del foo
         r set foo bar ex 10
