@@ -3589,6 +3589,7 @@ void syncWithPrimary(connection *conn) {
         sdsfree(err);
         err = NULL;
         server.repl_state = REPL_STATE_RECEIVE_VERSION_REPLY;
+        return;
     }
 
     /* Receive VERSION reply. */
