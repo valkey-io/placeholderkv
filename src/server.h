@@ -1681,10 +1681,6 @@ struct valkeyServer {
     char *configfile;         /* Absolute config file path, or NULL */
     char *executable;         /* Absolute executable file path. */
     char **exec_argv;         /* Executable argv vector (copy). */
-    int dynamic_hz;           /* Change hz value depending on # of clients. */
-    int config_hz;            /* Configured HZ value. May be different than
-                                 the actual 'hz' field value if dynamic-hz
-                                 is enabled. */
     mode_t umask;             /* The umask value of the process on startup */
     int hz;                   /* serverCron() calls frequency in hertz */
     int in_fork_child;        /* indication that this is a fork child */

@@ -465,7 +465,7 @@ start_server {tags {"other external:skip"}} {
 }
 
 start_cluster 1 0 {tags {"other external:skip cluster slow"}} {
-    r config set dynamic-hz no hz 500
+    r config set hz 500
     test "Server can trigger resizing" {
         r flushall
         # hashslot(foo) is 12182
