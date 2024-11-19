@@ -22,7 +22,7 @@
  * Refer to "../deps/fast_float_c_interface" for more details.
  * Refer to https://github.com/fastfloat/fast_float for more information on the underlying library.
  */
-double fast_float_strtod(const char *str, char ** endptr);
+double fast_float_strtod(const char *str, char **endptr);
 
 static inline double valkey_strtod(const char *str, char **endptr) {
     errno = 0;
