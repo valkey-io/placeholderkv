@@ -3379,15 +3379,15 @@ void dualChannelSetupMainConnForPsync(connection *conn) {
  * ┌────────▼──────────┐        │ │  │DUAL_CHANNEL_RECEIVE_ENDOFF│     │    │by the primary      │
  * │RECEIVE_IP_REPLY   │        │ │  └───────┬───────────────────┘     │ ┌──▼────────────────┐   │
  * └────────┬──────────┘        │ │          │$ENDOFF                  │ │RECEIVE_PSYNC_REPLY│   │
- *          │                   │ │          ├─────────────────────────┘ └──┬────────────────┘   │
- *          │                   │ │          │                              │+CONTINUE           │
- *          │                   │ │  ┌───────▼───────────────┐           ┌──▼────────────────┐   │
- *          │                   │ │  │DUAL_CHANNEL_RDB_LOAD  │           │TRANSFER           │   │
+ *          │+OK                │ │          ├─────────────────────────┘ └──┬────────────────┘   │
+ * ┌────────▼──────────┐        │ │          │                              │+CONTINUE           │
+ * │RECEIVE_CAPA_REPLY │        │ │  ┌───────▼───────────────┐           ┌──▼────────────────┐   │
+ * └────────┬──────────┘        │ │  │DUAL_CHANNEL_RDB_LOAD  │           │TRANSFER           │   │
  *          │+OK                │ │  └───────┬───────────────┘           └─────┬─────────────┘   │
- * ┌────────▼──────────┐        │ │          │Done loading                     │                 │
- * │RECEIVE_CAPA_REPLY │        │ │  ┌───────▼───────────────┐                 │                 │
- * └────────┬──────────┘        │ │  │DUAL_CHANNEL_RDB_LOADED│                 │                 │
- *          │                   │ │  └───────┬───────────────┘                 │                 │
+ * ┌────────▼─────────────┐     │ │          │Done loading                     │                 │
+ * │RECEIVE_VERSION_REPLY │     │ │  ┌───────▼───────────────┐                 │                 │
+ * └────────┬─────────────┘     │ │  │DUAL_CHANNEL_RDB_LOADED│                 │                 │
+ *          │+OK                │ │  └───────┬───────────────┘                 │                 │
  * ┌────────▼───┐               │ │          │                                 │                 │
  * │SEND_PSYNC  │               │ │          │Replica loads local replication  │                 │
  * └─┬──────────┘               │ │          │buffer into memory               │                 │
