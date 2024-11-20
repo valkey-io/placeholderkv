@@ -86,6 +86,19 @@
                 "type": "string"
             },
             {
+                "name": "ifeq",
+                "type": "string",
+                "optional": true,
+                "summary": "Sets the key's value only if the current value matches the specified comparison value.",
+                "arguments": [
+                    {
+                        "name": "comparison-value",
+                        "type": "string",
+                        "summary": "The value to compare with the current key's value before setting."
+                    }
+                ]
+            },
+            {
                 "name": "condition",
                 "type": "oneof",
                 "optional": true,
