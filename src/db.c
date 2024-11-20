@@ -388,7 +388,7 @@ robj *dbRandomKey(serverDb *db) {
             if (allvolatile && (server.primary_host || server.import_mode) && --maxtries == 0) {
                 /* If the DB is composed only of keys with an expire set,
                  * it could happen that all the keys are already logically
-                 * expired in the repilca, so the function cannot stop because
+                 * expired in the replica, so the function cannot stop because
                  * expireIfNeeded() is false, nor it can stop because
                  * dictGetFairRandomKey() returns NULL (there are keys to return).
                  * To prevent the infinite loop we do some tries, but if there
@@ -1798,7 +1798,13 @@ int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
 /* Check if the key is expired. */
 int keyIsExpired(serverDb *db, robj *key) {
     int dict_index = getKVStoreIndexForKey(key->ptr);
-    return keyIsExpiredWithDictIndex(db, key, dict_index);
+    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return 0;
+
+    /* See expireIfNeededWithDictIndex for more details. */
+    if (server.primary_host == NULL && server.import_mode) {
+        if (server.current_client && server.current_client->flag.import_source) return 0;
+    }
+    return 1;
 }
 
 keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index) {

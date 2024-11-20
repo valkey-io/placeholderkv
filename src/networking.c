@@ -3586,7 +3586,7 @@ void clientCommand(client *c) {
             "NO-TOUCH (ON|OFF)",
             "    Will not touch LRU/LFU stats when this mode is on.",
             "IMPORT-SOURCE (ON|OFF)",
-            "    Mark this connection as an import source if server.import_mode is true.",
+            "    Mark this connection as an import source if import-mode is enabled.",
             "    Sync tools can set their connections into 'import-source' state to visit",
             "    expired keys.",
             NULL};

@@ -841,7 +841,7 @@ start_server {tags {"expire"}} {
 
         r set foo1 bar PX 1
         r set foo2 bar PX 1
-        after 100
+        after 10
 
         assert_equal [r dbsize] {2}
 
@@ -879,22 +879,27 @@ start_server {tags {"expire"}} {
         assert_equal [r debug set-active-expire 1] {OK}
     } {} {needs:debug}
 
-    test {RANDOMKEY can return expired key in import mode} {
+    test {Client can visit expired key in import-source state} {
         r flushall
 
         r config set import-mode yes
-        assert_equal [r client import-source on] {OK}
 
-        r set foo1 bar PX 1
+        r set foo1 1 PX 1
         after 10
 
-        set client [valkey [srv "host"] [srv "port"] 0 $::tls]
-        if {!$::singledb} {
-            $client select 9
-        }
-        assert_equal [$client ttl foo1] {-2}
+        # Normal clients cannot visit expired key.
+        assert_equal [r get foo1] {}
+        assert_equal [r ttl foo1] {-2}
+        assert_equal [r dbsize] 1
 
+        # Client can visit expired key when in import-source state.
+        assert_equal [r client import-source on] {OK}
+        assert_equal [r ttl foo1] {0}
+        assert_equal [r get foo1] {1}
+        assert_equal [r incr foo1] {2}
         assert_equal [r randomkey] {foo1}
+        assert_equal [r scan 0 match * count 10000] {0 foo1}
+        assert_equal [r keys *] {foo1}
 
         assert_equal [r client import-source off] {OK}
         r config set import-mode no
