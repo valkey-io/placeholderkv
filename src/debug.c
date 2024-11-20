@@ -437,7 +437,7 @@ void debugCommand(client *c) {
             "    This is valid only when DROP-CLUSTER-PACKET-FILTER is set to a valid packet type.",
             "    When set to 1, the cluster link is closed after dropping a packet based on the filter.",
             "DISABLE-CLUSTER-RANDOM-PING <0|1>",
-            "    Send cluster ping to a random node every second.",
+            "    Disable sending cluster ping to a random node every second.",
             "OOM",
             "    Crash the server simulating an out-of-memory error.",
             "PANIC",
