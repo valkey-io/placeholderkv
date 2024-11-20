@@ -25,7 +25,21 @@
         "arguments": [
             {
                 "name": "type",
-                "type": "string"
+                "type": "oneof",
+                "arguments": [
+                    {
+                        "name": "slow",
+                        "type": "string"
+                    },
+                    {
+                        "name": "large-request",
+                        "type": "string"
+                    },
+                    {
+                        "name": "large-reply",
+                        "type": "string"
+                    }
+                ]
             }
         ]
     }

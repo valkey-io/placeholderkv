@@ -6,8 +6,8 @@
  * using the 'slowlog-log-slower-than' config directive, that is also
  * readable and writable using the CONFIG SET/GET command.
  *
- * Other configurations such as `heavytraffic-input-larger-than` and
- * `heavytraffic-output-larger-than` can be found with more detailed
+ * Other configurations such as `large-request-larger-than` and
+ * `large-reply-larger-than` can be found with more detailed
  * explanations in the config file.
  *
  * The command log is actually not "logged" in the server log file
@@ -207,9 +207,9 @@ void slowlogCommand(client *c) {
 
 int commandlogGetTypeOrReply(client *c, robj *o) {
     if (!strcasecmp(o->ptr, "slow")) return COMMANDLOG_TYPE_SLOW;
-    if (!strcasecmp(o->ptr, "heavytraffic-input")) return COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT;
-    if (!strcasecmp(o->ptr, "heavytraffic-output")) return COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT;
-    addReplyError(c, "type should be one of the following: slow, heavytraffic-input, heavytraffic-output");
+    if (!strcasecmp(o->ptr, "large-request")) return COMMANDLOG_TYPE_LARGE_REQUEST;
+    if (!strcasecmp(o->ptr, "large-reply")) return COMMANDLOG_TYPE_LARGE_REPLY;
+    addReplyError(c, "type should be one of the following: slow, large-request, large-reply");
     return -1;
 }
 
@@ -224,8 +224,8 @@ void commandlogCommand(client *c) {
             "    Entries are made of:",
             "    id, timestamp,",
             "        time in microseconds for type of slow,",
-            "        or size in bytes for type of heavytraffic-input,",
-            "        or size in bytes for type of heavytraffic-output",
+            "        or size in bytes for type of large-request,",
+            "        or size in bytes for type of large-reply",
             "    arguments array, client IP and port,",
             "    client name",
             "LEN <type>",

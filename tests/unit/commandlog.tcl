@@ -1,13 +1,13 @@
-start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 heavytraffic-input-larger-than 1048576 heavytraffic-output-larger-than 1048576}} {
+start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 large-request-larger-than 1048576 large-reply-larger-than 1048576}} {
     test {COMMANDLOG - check that it starts with an empty log} {
         if {$::external} {
             r commandlog reset slow
-            r commandlog reset heavytraffic-input
-            r commandlog reset heavytraffic-output
+            r commandlog reset large-request
+            r commandlog reset large-reply
         }
         assert_equal [r commandlog len slow] 0
-        assert_equal [r commandlog len heavytraffic-input] 0
-        assert_equal [r commandlog len heavytraffic-output] 0
+        assert_equal [r commandlog len large-request] 0
+        assert_equal [r commandlog len large-reply] 0
     }
 
     test {COMMANDLOG - only logs commands exceeding the threshold} {
@@ -18,53 +18,53 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 hea
         r debug sleep 0.2
         assert_equal [r commandlog len slow] 1
 
-        # for heavytraffic-input
-        r config set heavytraffic-input-larger-than 1024
+        # for large-request
+        r config set large-request-larger-than 1024
         r ping
-        assert_equal [r commandlog len heavytraffic-input] 0
+        assert_equal [r commandlog len large-request] 0
         set value [string repeat A 1024]
         r set testkey $value
-        assert_equal [r commandlog len heavytraffic-input] 1
+        assert_equal [r commandlog len large-request] 1
 
-        # for heavytraffic-output
-        r config set heavytraffic-output-larger-than 1024
+        # for large-reply
+        r config set large-reply-larger-than 1024
         r ping
-        assert_equal [r commandlog len heavytraffic-output] 0
+        assert_equal [r commandlog len large-reply] 0
         r get testkey
-        assert_equal [r commandlog len heavytraffic-output] 1
+        assert_equal [r commandlog len large-reply] 1
     } {} {needs:debug}
 
     test {COMMANDLOG - zero max length is correctly handled} {
         r commandlog reset slow
-        r commandlog reset heavytraffic-input
-        r commandlog reset heavytraffic-output
+        r commandlog reset large-request
+        r commandlog reset large-reply
         r config set slowlog-max-len 0
         r config set slowlog-log-slower-than 0
-        r config set heavytraffic-input-max-len 0
-        r config set heavytraffic-input-larger-than 0
-        r config set heavytraffic-output-max-len 0
-        r config set heavytraffic-output-larger-than 0
+        r config set large-request-max-len 0
+        r config set large-request-larger-than 0
+        r config set large-reply-max-len 0
+        r config set large-reply-larger-than 0
         for {set i 0} {$i < 100} {incr i} {
             r ping
         }
         assert_equal [r commandlog len slow] 0
-        assert_equal [r commandlog len heavytraffic-input] 0
-        assert_equal [r commandlog len heavytraffic-output] 0
+        assert_equal [r commandlog len large-request] 0
+        assert_equal [r commandlog len large-reply] 0
     }
 
     test {COMMANDLOG - max entries is correctly handled} {
         r config set slowlog-log-slower-than 0
         r config set slowlog-max-len 10
-        r config set heavytraffic-input-max-len 10
-        r config set heavytraffic-input-larger-than 0
-        r config set heavytraffic-output-max-len 10
-        r config set heavytraffic-output-larger-than 0
+        r config set large-request-max-len 10
+        r config set large-request-larger-than 0
+        r config set large-reply-max-len 10
+        r config set large-reply-larger-than 0
         for {set i 0} {$i < 100} {incr i} {
             r ping
         }
         assert_equal [r commandlog len slow] 10
-        assert_equal [r commandlog len heavytraffic-input] 10
-        assert_equal [r commandlog len heavytraffic-output] 10
+        assert_equal [r commandlog len large-request] 10
+        assert_equal [r commandlog len large-reply] 10
     }
 
     test {COMMANDLOG - GET optional argument to limit output len works} {
@@ -72,25 +72,25 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 hea
         assert_equal 10 [llength [r commandlog get -1 slow]]
         assert_equal 10 [llength [r commandlog get 20 slow]]
 
-        assert_equal 5  [llength [r commandlog get 5 heavytraffic-input]]
-        assert_equal 10 [llength [r commandlog get -1 heavytraffic-input]]
-        assert_equal 10 [llength [r commandlog get 20 heavytraffic-input]]
+        assert_equal 5  [llength [r commandlog get 5 large-request]]
+        assert_equal 10 [llength [r commandlog get -1 large-request]]
+        assert_equal 10 [llength [r commandlog get 20 large-request]]
 
-        assert_equal 5  [llength [r commandlog get 5 heavytraffic-output]]
-        assert_equal 10 [llength [r commandlog get -1 heavytraffic-output]]
-        assert_equal 10 [llength [r commandlog get 20 heavytraffic-output]]
+        assert_equal 5  [llength [r commandlog get 5 large-reply]]
+        assert_equal 10 [llength [r commandlog get -1 large-reply]]
+        assert_equal 10 [llength [r commandlog get 20 large-reply]]
     }
 
     test {COMMANDLOG - RESET subcommand works} {
         r config set slowlog-log-slower-than 100000
-        r config set heavytraffic-input-larger-than 1024
-        r config set heavytraffic-output-larger-than 1024
+        r config set large-request-larger-than 1024
+        r config set large-reply-larger-than 1024
         r commandlog reset slow
-        r commandlog reset heavytraffic-input
-        r commandlog reset heavytraffic-output
+        r commandlog reset large-request
+        r commandlog reset large-reply
         assert_equal [r commandlog len slow] 0
-        assert_equal [r commandlog len heavytraffic-input] 0
-        assert_equal [r commandlog len heavytraffic-output] 0
+        assert_equal [r commandlog len large-request] 0
+        assert_equal [r commandlog len large-reply] 0
     }
 
     test {COMMANDLOG - logged entry sanity check} {
@@ -107,10 +107,10 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 hea
         assert_equal [lindex $e 3] {debug sleep 0.2}
         assert_equal {foobar} [lindex $e 5]
 
-        # for heavytraffic-input
+        # for large-request
         set value [string repeat A 1024]
         r set testkey $value
-        set e [lindex [r commandlog get -1 heavytraffic-input] 0]
+        set e [lindex [r commandlog get -1 large-request] 0]
         assert_equal [llength $e] 6
         if {!$::external} {
             assert_equal [lindex $e 0] 118
@@ -119,9 +119,9 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 hea
         assert_equal [lindex $e 3] {set testkey {AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA... (896 more bytes)}}
         assert_equal {foobar} [lindex $e 5]
 
-        # for heavytraffic-output
+        # for large-reply
         r get testkey
-        set e [lindex [r commandlog get -1 heavytraffic-output] 0]
+        set e [lindex [r commandlog get -1 large-reply] 0]
         assert_equal [llength $e] 6
         if {!$::external} {
             assert_equal [lindex $e 0] 117

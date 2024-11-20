@@ -375,8 +375,8 @@ typedef enum blocking_type {
                                     three: normal, replica, pubsub. */
 
 #define COMMANDLOG_TYPE_SLOW 0
-#define COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT 1
-#define COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT 2
+#define COMMANDLOG_TYPE_LARGE_REQUEST 1
+#define COMMANDLOG_TYPE_LARGE_REPLY 2
 #define COMMANDLOG_TYPE_MAX 3
 
 /* Configuration and entry list of different types of command logs */

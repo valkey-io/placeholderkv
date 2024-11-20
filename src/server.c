@@ -3404,8 +3404,8 @@ void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
     c = scriptIsRunning() ? scriptGetCaller() : c;
 
     commandlogPushEntryIfNeeded(c, argv, argc, c->duration, COMMANDLOG_TYPE_SLOW);
-    commandlogPushEntryIfNeeded(c, argv, argc, c->net_input_bytes_curr_cmd, COMMANDLOG_TYPE_HEAVYTRAFFIC_INPUT);
-    commandlogPushEntryIfNeeded(c, argv, argc, c->net_output_bytes_curr_cmd, COMMANDLOG_TYPE_HEAVYTRAFFIC_OUTPUT);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_input_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REQUEST);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_output_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REPLY);
 }
 
 /* This function is called in order to update the total command histogram duration.
