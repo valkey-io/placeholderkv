@@ -11814,8 +11814,7 @@ uint64_t dictCStringKeyHash(const void *key) {
     return dictGenHashFunction((unsigned char *)key, strlen((char *)key));
 }
 
-int dictCStringKeyCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictCStringKeyCompare(const void *key1, const void *key2) {
     return strcmp(key1, key2) == 0;
 }
 

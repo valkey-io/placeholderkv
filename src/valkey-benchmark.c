@@ -199,7 +199,7 @@ static long long showThroughput(struct aeEventLoop *eventLoop, long long id, voi
 
 /* Dict callbacks */
 static uint64_t dictSdsHash(const void *key);
-static int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
+static int dictSdsKeyCompare(const void *key1, const void *key2);
 
 /* Implementation */
 static long long ustime(void) {
@@ -220,10 +220,8 @@ static uint64_t dictSdsHash(const void *key) {
     return dictGenHashFunction((unsigned char *)key, sdslen((char *)key));
 }
 
-static int dictSdsKeyCompare(dict *d, const void *key1, const void *key2) {
+static int dictSdsKeyCompare(const void *key1, const void *key2) {
     int l1, l2;
-    UNUSED(d);
-
     l1 = sdslen((sds)key1);
     l2 = sdslen((sds)key2);
     if (l1 != l2) return 0;
