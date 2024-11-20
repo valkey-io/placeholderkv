@@ -102,20 +102,20 @@ void setGenericCommand(client *c,
         if (getGenericCommand(c) == C_ERR) return;
     }
 
-    found = (lookupKeyWrite(c->db, key) != NULL);
+    const robj *value = lookupKeyWrite(c->db, key);
+    found = value != NULL;
 
     /* Handle the IFEQ conditional check */
     if (flags & OBJ_SET_IFEQ && found) {
-        robj *current_value = lookupKeyRead(c->db, key);
 
-        if (current_value->type != OBJ_STRING) {
+        if (value->type != OBJ_STRING) {
             if (!(flags & OBJ_SET_GET)) {
                 addReplyError(c, "value(s) must be present or string");
             }
             return;
         }
 
-        if (compareStringObjects(current_value, comparison) != 0) {
+        if (compareStringObjects(value, comparison) != 0) {
             if (!(flags & OBJ_SET_GET)) {
                 addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
             }
