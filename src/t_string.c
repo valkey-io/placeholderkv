@@ -67,15 +67,15 @@ static int checkStringLength(client *c, long long size, long long append) {
  * If abort_reply is NULL, "$-1" is used. */
 
 #define OBJ_NO_FLAGS 0
-#define OBJ_SET_NX (1 << 0)  /* Set if key not exists. */
-#define OBJ_SET_XX (1 << 1)  /* Set if key exists. */
-#define OBJ_EX (1 << 2)      /* Set if time in seconds is given */
-#define OBJ_PX (1 << 3)      /* Set if time in ms in given */
-#define OBJ_KEEPTTL (1 << 4) /* Set and keep the ttl */
-#define OBJ_SET_GET (1 << 5) /* Set if want to get key before set */
-#define OBJ_EXAT (1 << 6)    /* Set if timestamp in second is given */
-#define OBJ_PXAT (1 << 7)    /* Set if timestamp in ms is given */
-#define OBJ_PERSIST (1 << 8) /* Set if we need to remove the ttl */
+#define OBJ_SET_NX (1 << 0)   /* Set if key not exists. */
+#define OBJ_SET_XX (1 << 1)   /* Set if key exists. */
+#define OBJ_EX (1 << 2)       /* Set if time in seconds is given */
+#define OBJ_PX (1 << 3)       /* Set if time in ms in given */
+#define OBJ_KEEPTTL (1 << 4)  /* Set and keep the ttl */
+#define OBJ_SET_GET (1 << 5)  /* Set if want to get key before set */
+#define OBJ_EXAT (1 << 6)     /* Set if timestamp in second is given */
+#define OBJ_PXAT (1 << 7)     /* Set if timestamp in ms is given */
+#define OBJ_PERSIST (1 << 8)  /* Set if we need to remove the ttl */
 #define OBJ_SET_IFEQ (1 << 9) /* Set if we need compare and set */
 
 /* Forward declaration */
