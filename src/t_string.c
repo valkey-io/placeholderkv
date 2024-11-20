@@ -108,7 +108,7 @@ void setGenericCommand(client *c,
     if (flags & OBJ_SET_IFEQ && found) {
         robj *current_value = lookupKeyRead(c->db, key);
 
-        if (current_value == NULL || current_value->type != OBJ_STRING || checkType(c, comparison, OBJ_STRING) != 0) {
+        if (checkType(c, current_value, OBJ_STRING) != 0) {
             if (!(flags & OBJ_SET_GET)) {
                 addReplyError(c, "value(s) must be present or string");
             }
