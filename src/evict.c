@@ -541,13 +541,13 @@ int performEvictions(void) {
     int replicas = listLength(server.replicas);
     int result = EVICT_FAIL;
 
-    if (getMaxmemoryState(&mem_reported, NULL, &mem_tofree, NULL) == C_OK) {
-        result = EVICT_OK;
+    if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION || (iAmPrimary() && server.import_mode)) {
+        result = EVICT_FAIL; /* We need to free memory, but policy forbids or we are in import mode. */
         goto update_metrics;
     }
 
-    if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION || (iAmPrimary() && server.import_mode)) {
-        result = EVICT_FAIL; /* We need to free memory, but policy forbids or we are in import mode. */
+    if (getMaxmemoryState(&mem_reported, NULL, &mem_tofree, NULL) == C_OK) {
+        result = EVICT_OK;
         goto update_metrics;
     }
 
