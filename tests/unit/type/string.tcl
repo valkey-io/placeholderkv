@@ -598,8 +598,9 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         r del foo
 
         r sadd foo "some_set_value"
-        assert_error {ERR value(s) must be present or string} {r set foo "new_value" ifeq "some_set_value"}
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "some_set_value"}
     }
+
 
     test "SET with IFEQ conditional - with get" {
         r del foo
@@ -612,6 +613,13 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         assert_equal "new_value" [r get foo]
     }
 
+    test "SET with IFEQ conditional - non string current value with get" {
+        r del foo
+
+        r sadd foo "some_set_value"
+
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "initial_value" get}
+    }
 
     test "SET with IFEQ conditional - with xx" {
         r del foo
