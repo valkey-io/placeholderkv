@@ -10666,7 +10666,7 @@ struct COMMAND_ARG SET_expiration_Subargs[] = {
 struct COMMAND_ARG SET_Args[] = {
 {MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 {MAKE_ARG("value",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
-{MAKE_ARG("ifeq",ARG_TYPE_STRING,-1,NULL,"Sets the key's value only if the current value matches the specified comparison value.",NULL,CMD_ARG_OPTIONAL,0,NULL)},
+{MAKE_ARG("comparison-value",ARG_TYPE_STRING,-1,"IFEQ","Sets the key's value only if the current value matches the specified comparison value.",NULL,CMD_ARG_OPTIONAL,0,NULL)},
 {MAKE_ARG("condition",ARG_TYPE_ONEOF,-1,NULL,NULL,"2.6.12",CMD_ARG_OPTIONAL,2,NULL),.subargs=SET_condition_Subargs},
 {MAKE_ARG("get",ARG_TYPE_PURE_TOKEN,-1,"GET",NULL,"6.2.0",CMD_ARG_OPTIONAL,0,NULL)},
 {MAKE_ARG("expiration",ARG_TYPE_ONEOF,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,5,NULL),.subargs=SET_expiration_Subargs},
