@@ -68,7 +68,7 @@
 "ZRANGE k 1 2 WITHSCORES " "[BYSCORE|BYLEX] [REV] [LIMIT offset count]"
 
 # Optional one-of args with parameters: SET key value [NX|XX] [GET] [EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]
-"SET key value " " [IFEQ comparison-value] [NX|XX] [GET] [EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]"
+"SET key value " "[IFEQ comparison-value] [NX|XX] [GET] [EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]"
 "SET key value EX" "[IFEQ comparison-value] [NX|XX] [GET] [EX seconds|PX milliseconds|EXAT unix-time-seconds|PXAT unix-time-milliseconds|KEEPTTL]"
 "SET key value EX " "seconds [IFEQ comparison-value] [NX|XX] [GET]"
 "SET key value EX 23 " "[IFEQ comparison-value] [NX|XX] [GET]"
