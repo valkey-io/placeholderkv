@@ -314,8 +314,7 @@ static valkey *dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, voi
     }
     serverAssertWithInfo(NULL, key, oldref != NULL);
     valkey *old = *oldref;
-
-    val->lru = old->lru;
+    valkey *new;
 
     if (overwrite) {
         /* VM_StringDMA may call dbUnshareStringValue which may free val, so we
@@ -331,16 +330,36 @@ static valkey *dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, voi
         /* Because of VM_StringDMA, old may be changed, so we need get old again */
         old = *oldref;
     }
-    /* Replace the old value at its location in the key space. */
-    long long expire = objectGetExpire(old);
-    valkey *new = objectSetKeyAndExpire(val, key->ptr, expire);
-    *oldref = new;
-    /* Replace the old value at its location in the expire space. */
-    if (expire >= 0) {
-        int dict_index = getKVStoreIndexForKey(key->ptr);
-        void **expireref = kvstoreHashtableFindRef(db->expires, dict_index, key->ptr);
-        serverAssert(expireref != NULL);
-        *expireref = new;
+
+    if ((old->refcount == 1 && old->encoding != OBJ_ENCODING_EMBSTR) &&
+        (val->refcount == 1 && val->encoding != OBJ_ENCODING_EMBSTR)) {
+        /* Keep old object in the database. Just swap it's ptr, type and
+         * encoding with the content of val. */
+        int tmp_type = old->type;
+        int tmp_encoding = old->encoding;
+        void *tmp_ptr = old->ptr;
+        old->type = val->type;
+        old->encoding = val->encoding;
+        old->ptr = val->ptr;
+        val->type = tmp_type;
+        val->encoding = tmp_encoding;
+        val->ptr = tmp_ptr;
+        /* Return the old object as new. Set old to val to be freed below. */
+        new = old;
+        old = val;
+    } else {
+        /* Replace the old value at its location in the key space. */
+        val->lru = old->lru;
+        long long expire = objectGetExpire(old);
+        new = objectSetKeyAndExpire(val, key->ptr, expire);
+        *oldref = new;
+        /* Replace the old value at its location in the expire space. */
+        if (expire >= 0) {
+            int dict_index = getKVStoreIndexForKey(key->ptr);
+            void **expireref = kvstoreHashtableFindRef(db->expires, dict_index, key->ptr);
+            serverAssert(expireref != NULL);
+            *expireref = new;
+        }
     }
     /* For efficiency, let the I/O thread that allocated an object also deallocate it. */
     if (tryOffloadFreeObjToIOThreads(old) == C_OK) {
