@@ -186,7 +186,12 @@ void functionsLibCtxClearCurrent(int async) {
 }
 
 /* Free the given functions ctx */
-void freeFunctionsSync(functionsLibCtx *functions_lib_ctx) {
+void functionsLibCtxFreeGeneric(functionsLibCtx *functions_lib_ctx, int async) {
+    if (async) {
+        freeFunctionsAsync(functions_lib_ctx);
+        return;
+    }
+
     functionsLibCtxClear(functions_lib_ctx);
     dictRelease(functions_lib_ctx->functions);
     dictRelease(functions_lib_ctx->libraries);
@@ -195,18 +200,14 @@ void freeFunctionsSync(functionsLibCtx *functions_lib_ctx) {
 }
 
 /* Free the given functions ctx */
-void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx, int async) {
-    if (async) {
-        freeFunctionsAsync(functions_lib_ctx);
-    } else {
-        freeFunctionsSync(functions_lib_ctx);
-    }
+void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
+    functionsLibCtxFreeGeneric(functions_lib_ctx, 0);
 }
 
 /* Swap the current functions ctx with the given one.
  * Free the old functions ctx. */
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async) {
-    functionsLibCtxFree(curr_functions_lib_ctx, async);
+    functionsLibCtxFreeGeneric(curr_functions_lib_ctx, async);
     curr_functions_lib_ctx = new_lib_ctx;
 }
 
@@ -798,7 +799,7 @@ load_error:
         addReply(c, shared.ok);
     }
     if (functions_lib_ctx) {
-        functionsLibCtxFree(functions_lib_ctx, server.lazyfree_lazy_user_flush);
+        functionsLibCtxFreeGeneric(functions_lib_ctx, server.lazyfree_lazy_user_flush);
     }
 }
 

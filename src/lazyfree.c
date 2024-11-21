@@ -64,7 +64,7 @@ void lazyFreeLuaScripts(void *args[]) {
 void lazyFreeFunctionsCtx(void *args[]) {
     functionsLibCtx *functions_lib_ctx = args[0];
     size_t len = functionsLibCtxFunctionsLen(functions_lib_ctx);
-    functionsLibCtxFree(functions_lib_ctx, 0);
+    functionsLibCtxFree(functions_lib_ctx);
     atomic_fetch_sub_explicit(&lazyfree_objects, len, memory_order_relaxed);
     atomic_fetch_add_explicit(&lazyfreed_objects, len, memory_order_relaxed);
 }
@@ -240,7 +240,7 @@ void freeFunctionsAsync(functionsLibCtx *functions_lib_ctx) {
                                   memory_order_relaxed);
         bioCreateLazyFreeJob(lazyFreeFunctionsCtx, 1, functions_lib_ctx);
     } else {
-        freeFunctionsSync(functions_lib_ctx);
+        functionsLibCtxFree(functions_lib_ctx);
     }
 }
 
