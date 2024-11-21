@@ -216,6 +216,13 @@ void sdsfree(sds s) {
     s_free_with_size(sdsAllocPtr(s), sdsAllocSize(s));
 }
 
+/* This variant of sdsfree() gets its argument as void, and is useful
+ * as free method in data structures that expect a 'void free_object(void*)'
+ * prototype for the free method. */
+void sdsfreeVoid(void *s) {
+    sdsfree(s);
+}
+
 /* Set the sds string length to the length as obtained with strlen(), so
  * considering as content only up to the first null term character.
  *
