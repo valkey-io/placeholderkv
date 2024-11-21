@@ -32,6 +32,7 @@
 #include "server.h"
 #include "connhelpers.h"
 #include "adlist.h"
+#include "io_threads.h"
 
 #if (USE_OPENSSL == 1 /* BUILD_YES */) || ((USE_OPENSSL == 2 /* BUILD_MODULE */) && (BUILD_TLS_MODULE == 2))
 
@@ -60,6 +61,8 @@
 
 SSL_CTX *valkey_tls_ctx = NULL;
 SSL_CTX *valkey_tls_client_ctx = NULL;
+
+static void TLSNegotiate(void *conn);
 
 static int parseProtocolsConfig(const char *str) {
     int i, count = 0;
@@ -116,6 +119,8 @@ static list *pending_list = NULL;
 
 static pthread_mutex_t *openssl_locks;
 
+static void TLSNegotiate(void *conn);
+
 static void sslLockingCallback(int mode, int lock_id, const char *f, int line) {
     pthread_mutex_t *mt = openssl_locks + lock_id;
 
@@ -170,6 +175,7 @@ static void tlsInit(void) {
     }
 
     pending_list = listCreate();
+    setTLSNegotiationCallback(TLSNegotiate);
 }
 
 static void tlsCleanup(void) {
@@ -518,16 +524,16 @@ static void tlsEventHandler(struct aeEventLoop *el, int fd, void *clientData, in
 static void updateSSLEvent(tls_connection *conn);
 
 /* Process the return code received from OpenSSL>
- * Update the want parameter with expected I/O.
+ * Update the conn flags with the WANT_READ/WANT_WRITE flags.
  * Update the connection's error state if a real error has occurred.
  * Returns an SSL error code, or 0 if no further handling is required.
  */
-static int handleSSLReturnCode(tls_connection *conn, int ret_value, WantIOType *want) {
+static int handleSSLReturnCode(tls_connection *conn, int ret_value) {
     if (ret_value <= 0) {
         int ssl_err = SSL_get_error(conn->ssl, ret_value);
         switch (ssl_err) {
-        case SSL_ERROR_WANT_WRITE: *want = WANT_WRITE; return 0;
-        case SSL_ERROR_WANT_READ: *want = WANT_READ; return 0;
+        case SSL_ERROR_WANT_WRITE: conn->flags |= TLS_CONN_FLAG_READ_WANT_WRITE; return 0;
+        case SSL_ERROR_WANT_READ: conn->flags |= TLS_CONN_FLAG_WRITE_WANT_READ; return 0;
         case SSL_ERROR_SYSCALL:
             conn->c.last_errno = errno;
             if (conn->ssl_error) zfree(conn->ssl_error);
@@ -563,11 +569,8 @@ static int updateStateAfterSSLIO(tls_connection *conn, int ret_value, int update
     }
 
     if (ret_value <= 0) {
-        WantIOType want = 0;
         int ssl_err;
-        if (!(ssl_err = handleSSLReturnCode(conn, ret_value, &want))) {
-            if (want == WANT_READ) conn->flags |= TLS_CONN_FLAG_WRITE_WANT_READ;
-            if (want == WANT_WRITE) conn->flags |= TLS_CONN_FLAG_READ_WANT_WRITE;
+        if (!(ssl_err = handleSSLReturnCode(conn, ret_value))) {
             if (update_event) updateSSLEvent(conn);
             errno = EAGAIN;
             return -1;
@@ -585,19 +588,34 @@ static int updateStateAfterSSLIO(tls_connection *conn, int ret_value, int update
     return ret_value;
 }
 
-static void registerSSLEvent(tls_connection *conn, WantIOType want) {
-    int mask = aeGetFileEvents(server.el, conn->c.fd);
+static void updateSSLEvent(tls_connection *conn) {
+    if (conn->flags & TLS_CONN_FLAG_POSTPONE_UPDATE_STATE) return;
 
-    switch (want) {
-    case WANT_READ:
-        if (mask & AE_WRITABLE) aeDeleteFileEvent(server.el, conn->c.fd, AE_WRITABLE);
-        if (!(mask & AE_READABLE)) aeCreateFileEvent(server.el, conn->c.fd, AE_READABLE, tlsEventHandler, conn);
-        break;
-    case WANT_WRITE:
-        if (mask & AE_READABLE) aeDeleteFileEvent(server.el, conn->c.fd, AE_READABLE);
-        if (!(mask & AE_WRITABLE)) aeCreateFileEvent(server.el, conn->c.fd, AE_WRITABLE, tlsEventHandler, conn);
-        break;
-    default: serverAssert(0); break;
+    int mask = aeGetFileEvents(server.el, conn->c.fd);
+    int need_read, need_write;
+
+    if (conn->c.state == CONN_STATE_CONNECTED) {
+        /* When connected, check both flags and handlers. */
+        need_read = conn->c.read_handler || (conn->flags & TLS_CONN_FLAG_WRITE_WANT_READ);
+        need_write = conn->c.write_handler || (conn->flags & TLS_CONN_FLAG_READ_WANT_WRITE);
+    } else {
+        /* When not connected, only check flags. */
+        need_read = conn->flags & TLS_CONN_FLAG_WRITE_WANT_READ;
+        need_write = conn->flags & TLS_CONN_FLAG_READ_WANT_WRITE;
+    }
+
+    /* Add events that are needed */
+    if (need_read && !(mask & AE_READABLE)) aeCreateFileEvent(server.el, conn->c.fd, AE_READABLE, tlsEventHandler, conn);
+    if (need_write && !(mask & AE_WRITABLE)) aeCreateFileEvent(server.el, conn->c.fd, AE_WRITABLE, tlsEventHandler, conn);
+
+    if (conn->c.state == CONN_STATE_CONNECTED) {
+        /* Remove events that are no longer needed */
+        if (!need_read && (mask & AE_READABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_READABLE);
+        if (!need_write && (mask & AE_WRITABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_WRITABLE);
+    } else {
+        /* When not connected, read and write events are mutually exclusive we need to remove the opposite event. */
+        if (need_read && (mask & AE_WRITABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_WRITABLE);
+        if (need_write && (mask & AE_READABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_READABLE);
     }
 }
 
@@ -634,26 +652,35 @@ void updateSSLPendingFlag(tls_connection *conn) {
     }
 }
 
-static void updateSSLEvent(tls_connection *conn) {
-    if (conn->flags & TLS_CONN_FLAG_POSTPONE_UPDATE_STATE) return;
-
-    int mask = aeGetFileEvents(server.el, conn->c.fd);
-    int need_read = conn->c.read_handler || (conn->flags & TLS_CONN_FLAG_WRITE_WANT_READ);
-    int need_write = conn->c.write_handler || (conn->flags & TLS_CONN_FLAG_READ_WANT_WRITE);
-
-    if (need_read && !(mask & AE_READABLE))
-        aeCreateFileEvent(server.el, conn->c.fd, AE_READABLE, tlsEventHandler, conn);
-    if (!need_read && (mask & AE_READABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_READABLE);
-
-    if (need_write && !(mask & AE_WRITABLE))
-        aeCreateFileEvent(server.el, conn->c.fd, AE_WRITABLE, tlsEventHandler, conn);
-    if (!need_write && (mask & AE_WRITABLE)) aeDeleteFileEvent(server.el, conn->c.fd, AE_WRITABLE);
-}
-
 static void updateSSLState(connection *conn_) {
     tls_connection *conn = (tls_connection *)conn_;
     updateSSLEvent(conn);
+    if (conn->c.conn_handler && conn->c.state != CONN_STATE_ACCEPTING) {
+        /* If the conn handler is set, we need to call it to notify it that the connection is ready. */
+        callHandler((connection *)conn, conn->c.conn_handler);
+        conn->c.conn_handler = NULL;
+        return;
+    }
     updatePendingData(conn);
+}
+
+static void clearTLSWantFlags(tls_connection *conn) {
+    conn->flags &= ~(TLS_CONN_FLAG_WRITE_WANT_READ | TLS_CONN_FLAG_READ_WANT_WRITE);
+}
+
+static void TLSNegotiate(void *_conn) {
+    tls_connection *conn = (tls_connection *)_conn;
+    ERR_clear_error();
+    clearTLSWantFlags(conn);
+
+    int ret = SSL_accept(conn->ssl);
+    if (ret > 0) {
+        conn->c.state = CONN_STATE_CONNECTED;
+    } else if (!handleSSLReturnCode(conn, ret)) {
+        updateSSLEvent(conn);
+    } else {
+        conn->c.state = CONN_STATE_ERROR;
+    }
 }
 
 static void tlsHandleEvent(tls_connection *conn, int mask) {
@@ -669,6 +696,7 @@ static void tlsHandleEvent(tls_connection *conn, int mask) {
             conn->c.last_errno = conn_error;
             conn->c.state = CONN_STATE_ERROR;
         } else {
+            clearTLSWantFlags(conn);
             ERR_clear_error();
             if (!(conn->flags & TLS_CONN_FLAG_FD_SET)) {
                 SSL_set_fd(conn->ssl, conn->c.fd);
@@ -676,14 +704,8 @@ static void tlsHandleEvent(tls_connection *conn, int mask) {
             }
             ret = SSL_connect(conn->ssl);
             if (ret <= 0) {
-                WantIOType want = 0;
-                if (!handleSSLReturnCode(conn, ret, &want)) {
-                    registerSSLEvent(conn, want);
-
-                    /* Avoid hitting UpdateSSLEvent, which knows nothing
-                     * of what SSL_connect() wants and instead looks at our
-                     * R/W handlers.
-                     */
+                if (!handleSSLReturnCode(conn, ret)) {
+                    updateSSLEvent(conn);
                     return;
                 }
 
@@ -698,25 +720,9 @@ static void tlsHandleEvent(tls_connection *conn, int mask) {
         conn->c.conn_handler = NULL;
         break;
     case CONN_STATE_ACCEPTING:
-        ERR_clear_error();
-        ret = SSL_accept(conn->ssl);
-        if (ret <= 0) {
-            WantIOType want = 0;
-            if (!handleSSLReturnCode(conn, ret, &want)) {
-                /* Avoid hitting UpdateSSLEvent, which knows nothing
-                 * of what SSL_connect() wants and instead looks at our
-                 * R/W handlers.
-                 */
-                registerSSLEvent(conn, want);
-                return;
-            }
-
-            /* If not handled, it's an error */
-            conn->c.state = CONN_STATE_ERROR;
-        } else {
-            conn->c.state = CONN_STATE_CONNECTED;
-        }
-
+        if (trySendTLSNegotiationToIOThreads((connection *)conn) == C_OK) return;
+        TLSNegotiate((connection *)conn);
+        if (conn->c.state == CONN_STATE_ACCEPTING) return; /* Still pending negotiation */
         if (!callHandler((connection *)conn, conn->c.conn_handler)) return;
         conn->c.conn_handler = NULL;
         break;
@@ -740,20 +746,17 @@ static void tlsHandleEvent(tls_connection *conn, int mask) {
         int invert = conn->c.flags & CONN_FLAG_WRITE_BARRIER;
 
         if (!invert && call_read) {
-            conn->flags &= ~TLS_CONN_FLAG_READ_WANT_WRITE;
             if (!callHandler((connection *)conn, conn->c.read_handler)) return;
         }
 
         /* Fire the writable event. */
         if (call_write) {
-            conn->flags &= ~TLS_CONN_FLAG_WRITE_WANT_READ;
             if (!callHandler((connection *)conn, conn->c.write_handler)) return;
         }
 
         /* If we have to invert the call, fire the readable event now
          * after the writable one. */
         if (invert && call_read) {
-            conn->flags &= ~TLS_CONN_FLAG_READ_WANT_WRITE;
             if (!callHandler((connection *)conn, conn->c.read_handler)) return;
         }
         updatePendingData(conn);
@@ -841,27 +844,17 @@ static void connTLSClose(connection *conn_) {
 
 static int connTLSAccept(connection *_conn, ConnectionCallbackFunc accept_handler) {
     tls_connection *conn = (tls_connection *)_conn;
-    int ret;
-
     if (conn->c.state != CONN_STATE_ACCEPTING) return C_ERR;
-    ERR_clear_error();
 
     /* Try to accept */
     conn->c.conn_handler = accept_handler;
-    ret = SSL_accept(conn->ssl);
+    if (trySendTLSNegotiationToIOThreads(_conn) == C_OK) return C_OK;
 
-    if (ret <= 0) {
-        WantIOType want = 0;
-        if (!handleSSLReturnCode(conn, ret, &want)) {
-            registerSSLEvent(conn, want); /* We'll fire back */
-            return C_OK;
-        } else {
-            conn->c.state = CONN_STATE_ERROR;
-            return C_ERR;
-        }
-    }
+    TLSNegotiate(_conn);
 
-    conn->c.state = CONN_STATE_CONNECTED;
+    if (conn->c.state == CONN_STATE_ERROR) return C_ERR;
+    if (conn->c.state == CONN_STATE_ACCEPTING) return C_OK; /* Still pending negotiation. */
+
     if (!callHandler((connection *)conn, conn->c.conn_handler)) return C_OK;
     conn->c.conn_handler = NULL;
 
@@ -898,6 +891,7 @@ static int connTLSWrite(connection *conn_, const void *data, size_t data_len) {
     int ret;
 
     if (conn->c.state != CONN_STATE_CONNECTED) return -1;
+    clearTLSWantFlags(conn);
     ERR_clear_error();
     ret = SSL_write(conn->ssl, data, data_len);
     return updateStateAfterSSLIO(conn, ret, 1);
@@ -946,6 +940,7 @@ static int connTLSRead(connection *conn_, void *buf, size_t buf_len) {
 
     if (conn->c.state != CONN_STATE_CONNECTED) return -1;
     ERR_clear_error();
+    clearTLSWantFlags(conn);
     ret = SSL_read(conn->ssl, buf, buf_len);
     updateSSLPendingFlag(conn);
     return updateStateAfterSSLIO(conn, ret, 1);
@@ -1014,6 +1009,7 @@ static ssize_t connTLSSyncWrite(connection *conn_, char *ptr, ssize_t size, long
     tls_connection *conn = (tls_connection *)conn_;
 
     setBlockingTimeout(conn, timeout);
+    clearTLSWantFlags(conn);
     SSL_clear_mode(conn->ssl, SSL_MODE_ENABLE_PARTIAL_WRITE);
     ERR_clear_error();
     int ret = SSL_write(conn->ssl, ptr, size);
@@ -1028,6 +1024,7 @@ static ssize_t connTLSSyncRead(connection *conn_, char *ptr, ssize_t size, long 
     tls_connection *conn = (tls_connection *)conn_;
 
     setBlockingTimeout(conn, timeout);
+    clearTLSWantFlags(conn);
     ERR_clear_error();
     int ret = SSL_read(conn->ssl, ptr, size);
     updateSSLPendingFlag(conn);
@@ -1042,6 +1039,7 @@ static ssize_t connTLSSyncReadLine(connection *conn_, char *ptr, ssize_t size, l
     ssize_t nread = 0;
 
     setBlockingTimeout(conn, timeout);
+    clearTLSWantFlags(conn);
 
     size--;
     while (size) {

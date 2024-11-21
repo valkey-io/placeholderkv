@@ -9,6 +9,7 @@
 static __thread int thread_id = 0; /* Thread local var */
 static pthread_t io_threads[IO_THREADS_MAX_NUM] = {0};
 static pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
+void (*tls_negotiation_cb)(void *);
 
 /* IO jobs queue functions - Used to send jobs from the main-thread to the IO thread. */
 typedef void (*job_handler)(void *);
@@ -553,4 +554,57 @@ void trySendPollJobToIOThreads(void) {
     aeSetCustomPollProc(server.el, getIOThreadPollResults);
     aeSetPollProtect(server.el, 1);
     IOJobQueue_push(jq, IOThreadPoll, server.el);
+}
+
+void setTLSNegotiationCallback(void (*cb)(void *)) {
+    tls_negotiation_cb = cb;
+}
+
+static void ioThreadTLSNegotiation(void *data) {
+    client *c = (client *)data;
+    tls_negotiation_cb(c->conn);
+    c->io_read_state = CLIENT_COMPLETED_IO;
+}
+
+/*
+ * This function attempts to offload TLS negotiation for a client connection to an I/O thread.
+ * Returns C_OK if the TLS negotiation was successfully queued for processing by an I/O thread,
+ * or C_ERR if the client is not eligible for offloading.
+ * Parameters:
+ *   conn: The connection object for which TLS negotiation should be performed
+ */
+int trySendTLSNegotiationToIOThreads(connection *conn) {
+    if (server.io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    if (!(conn->flags & CONN_FLAG_CLIENT)) {
+        return C_ERR;
+    }
+
+    client *c = connGetPrivateData(conn);
+    if (c->io_read_state != CLIENT_IDLE) {
+        return C_OK;
+    }
+
+    if (server.active_io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    size_t thread_id = (c->id % (server.active_io_threads_num - 1)) + 1;
+    IOJobQueue *job_queue = &io_jobs[thread_id];
+
+    if (IOJobQueue_isFull(job_queue)) {
+        return C_ERR;
+    }
+
+    c->read_flags = READ_FLAGS_TLS_NEGOTIATION;
+    c->io_read_state = CLIENT_PENDING_IO;
+    c->flag.pending_read = 1;
+    listLinkNodeTail(server.clients_pending_io_read, &c->pending_read_list_node);
+    connSetPostponeUpdateState(c->conn, 1);
+    server.stat_io_tls_negotiation_offloaded++;
+    IOJobQueue_push(job_queue, ioThreadTLSNegotiation, c);
+
+    return C_OK;
 }

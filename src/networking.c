@@ -134,6 +134,7 @@ client *createClient(connection *conn) {
         if (server.tcpkeepalive) connKeepAlive(conn, server.tcpkeepalive);
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
+        conn->flags |= CONN_FLAG_CLIENT;
     }
     c->buf = zmalloc_usable(PROTO_REPLY_CHUNK_BYTES, &c->buf_usable_size);
     selectDb(c, 0);
@@ -4724,6 +4725,9 @@ int processIOThreadsReadDone(void) {
 
         connSetPostponeUpdateState(c->conn, 0);
         connUpdateState(c->conn);
+
+        /* No client's data was read only TLS handshake. */
+        if (c->read_flags & READ_FLAGS_TLS_NEGOTIATION) continue;
 
         /* On read error - stop here. */
         if (handleReadResult(c) == C_ERR) {
