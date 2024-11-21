@@ -1,0 +1,405 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						8,
+						9
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Debug-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						1,
+						2,
+						3,
+						8
+					]
+				},
+				{
+					"build" : "deps",
+					"childIndexes" : 
+					[
+						2,
+						3,
+						4,
+						5,
+						6,
+						7
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-deps-Debug-9809b3fc864cc8f91ec2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "deps"
+				},
+				{
+					"build" : "deps/jemalloc",
+					"jsonFile" : "directory-deps.jemalloc-Debug-31f78ca96110b8565992.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "deps/jemalloc"
+				},
+				{
+					"build" : "deps/lua",
+					"jsonFile" : "directory-deps.lua-Debug-e32167bf4fa066a55f1e.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 2,
+					"source" : "deps/lua",
+					"targetIndexes" : 
+					[
+						7
+					]
+				},
+				{
+					"build" : "deps/hiredis",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-deps.hiredis-Debug-bdb6b2c1641304f6d887.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.0.0"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 3,
+					"source" : "deps/hiredis",
+					"targetIndexes" : 
+					[
+						5
+					]
+				},
+				{
+					"build" : "deps/linenoise",
+					"jsonFile" : "directory-deps.linenoise-Debug-71f22b96308b55557585.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 4,
+					"source" : "deps/linenoise",
+					"targetIndexes" : 
+					[
+						6
+					]
+				},
+				{
+					"build" : "deps/fpconv",
+					"jsonFile" : "directory-deps.fpconv-Debug-c1128fa45b220216fe89.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 5,
+					"source" : "deps/fpconv",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "deps/hdr_histogram",
+					"jsonFile" : "directory-deps.hdr_histogram-Debug-0b25950baf49b1fd426e.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 6,
+					"source" : "deps/hdr_histogram",
+					"targetIndexes" : 
+					[
+						4
+					]
+				},
+				{
+					"build" : "src",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-src-Debug-e7d22124b7be3a2fdc45.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 7,
+					"source" : "src",
+					"targetIndexes" : 
+					[
+						9,
+						10,
+						11
+					]
+				},
+				{
+					"build" : "tests",
+					"childIndexes" : 
+					[
+						10
+					],
+					"jsonFile" : "directory-tests-Debug-b01f6abb0ab61427ef3b.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "tests"
+				},
+				{
+					"build" : "tests/rdma",
+					"jsonFile" : "directory-tests.rdma-Debug-3ec5f8a64301c3fe0693.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 9,
+					"projectIndex" : 8,
+					"source" : "tests/rdma"
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8
+					],
+					"directoryIndexes" : 
+					[
+						0,
+						1,
+						9
+					],
+					"name" : "valkey",
+					"targetIndexes" : 
+					[
+						1,
+						2,
+						3,
+						8
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						2
+					],
+					"name" : "jemalloc",
+					"parentIndex" : 0
+				},
+				{
+					"directoryIndexes" : 
+					[
+						3
+					],
+					"name" : "lualib",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						7
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						4
+					],
+					"name" : "hiredis",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						5
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						5
+					],
+					"name" : "linenoise",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						6
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						6
+					],
+					"name" : "fpconv",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						7
+					],
+					"name" : "hdr_histogram",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						4
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						8
+					],
+					"name" : "valkey-server",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						9,
+						10,
+						11
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						10
+					],
+					"name" : "rdma-test",
+					"parentIndex" : 0
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 6,
+					"id" : "fpconv::@5f7dc7955b080ded9c61",
+					"jsonFile" : "target-fpconv-Debug-479bcd50eb5efddb9b82.json",
+					"name" : "fpconv",
+					"projectIndex" : 5
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "generate_commands_def::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-generate_commands_def-Debug-890f1009cc13e2017d68.json",
+					"name" : "generate_commands_def",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "generate_fmtargs_h::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-generate_fmtargs_h-Debug-29877c9a493643c9da02.json",
+					"name" : "generate_fmtargs_h",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "generate_test_files_h::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-generate_test_files_h-Debug-c578cef9c2918acad9b0.json",
+					"name" : "generate_test_files_h",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 7,
+					"id" : "hdr_histogram::@b5459ef93968417e758a",
+					"jsonFile" : "target-hdr_histogram-Debug-826e5ecb306bd31020c8.json",
+					"name" : "hdr_histogram",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 4,
+					"id" : "hiredis::@8aee188d977b3356ca55",
+					"jsonFile" : "target-hiredis-Debug-fe92e02ef4ad22332a0b.json",
+					"name" : "hiredis",
+					"projectIndex" : 3
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "linenoise::@eb5190127594ef08c6af",
+					"jsonFile" : "target-linenoise-Debug-752334e78997027cadf9.json",
+					"name" : "linenoise",
+					"projectIndex" : 4
+				},
+				{
+					"directoryIndex" : 3,
+					"id" : "lualib::@67e70dc13aa9e25c27cd",
+					"jsonFile" : "target-lualib-Debug-341f075e426f27d5641e.json",
+					"name" : "lualib",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "release_header::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-release_header-Debug-d871f5ea0c53f352ebee.json",
+					"name" : "release_header",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 8,
+					"id" : "valkey-benchmark::@145eef247bfb46b6828c",
+					"jsonFile" : "target-valkey-benchmark-Debug-ee8a23c61399baff0f59.json",
+					"name" : "valkey-benchmark",
+					"projectIndex" : 7
+				},
+				{
+					"directoryIndex" : 8,
+					"id" : "valkey-cli::@145eef247bfb46b6828c",
+					"jsonFile" : "target-valkey-cli-Debug-2ba7de89c01ec134303f.json",
+					"name" : "valkey-cli",
+					"projectIndex" : 7
+				},
+				{
+					"directoryIndex" : 8,
+					"id" : "valkey-server::@145eef247bfb46b6828c",
+					"jsonFile" : "target-valkey-server-Debug-d579b488dd36c1371dc6.json",
+					"name" : "valkey-server",
+					"projectIndex" : 7
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/Users/zhubinbin/github/valkey/cmake-build-debug",
+		"source" : "/Users/zhubinbin/github/valkey"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 4
+	}
+}

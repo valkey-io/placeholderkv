@@ -4363,12 +4363,17 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 
     /* We did not voted for a replica about this primary for two
      * times the node timeout. This is not strictly needed for correctness
-     * of the algorithm but makes the base case more linear. */
-    if (mstime() - node->replicaof->voted_time < server.cluster_node_timeout * 2) {
+     * of the algorithm but makes the base case more linear.
+     *
+     * This limitation does not restrict manual failover. If a user initiates
+     * a manual failover, we need to allow it to vote, otherwise the manual
+     * failover may time out. */
+    if (!force_ack && mstime() - node->replicaof->voted_time < server.cluster_node_timeout * 2) {
         serverLog(LL_WARNING,
-                  "Failover auth denied to %.40s %s: "
-                  "can't vote about this primary before %lld milliseconds",
+                  "Failover auth denied to %.40s (%s): "
+                  "can't vote for any replica of %.40s (%s) within %lld milliseconds",
                   node->name, node->human_nodename,
+                  node->replicaof->name, node->replicaof->human_nodename,
                   (long long)((server.cluster_node_timeout * 2) - (mstime() - node->replicaof->voted_time)));
         return;
     }
@@ -4394,7 +4399,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 
     /* We can vote for this replica. */
     server.cluster->lastVoteEpoch = server.cluster->currentEpoch;
-    node->replicaof->voted_time = mstime();
+    if (!force_ack) node->replicaof->voted_time = mstime();
     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
     clusterSendFailoverAuth(node);
     serverLog(LL_NOTICE, "Failover auth granted to %.40s (%s) for epoch %llu", node->name, node->human_nodename,
@@ -4930,6 +4935,8 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
     /* A Node in HANDSHAKE state has a limited lifespan equal to the
      * configured node timeout. */
     if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
+        serverLog(LL_WARNING, "Clusterbus handshake timeout %s:%d after %lldms", node->ip,
+                  node->cport, handshake_timeout);
         clusterDelNode(node);
         return 1;
     }
@@ -6103,6 +6110,9 @@ void removeChannelsInSlot(unsigned int slot) {
 unsigned int delKeysInSlot(unsigned int hashslot) {
     if (!countKeysInSlot(hashslot)) return 0;
 
+    /* We may lose a slot during the pause. We need to track this
+     * state so that we don't assert in propagateNow(). */
+    server.server_del_keys_in_slot = 1;
     unsigned int j = 0;
 
     kvstoreDictIterator *kvs_di = NULL;
@@ -6127,6 +6137,8 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
     }
     kvstoreReleaseDictIterator(kvs_di);
 
+    server.server_del_keys_in_slot = 0;
+    serverAssert(server.execution_nesting == 0);
     return j;
 }
 

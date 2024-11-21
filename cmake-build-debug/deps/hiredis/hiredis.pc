@@ -1,0 +1,12 @@
+prefix=/usr/local
+install_libdir=lib
+exec_prefix=${prefix}
+libdir=${exec_prefix}/${install_libdir}
+includedir=${prefix}/include
+pkgincludedir=${includedir}/hiredis
+
+Name: hiredis
+Description: Minimalistic C client library for Redis.
+Version: 1.2.0
+Libs: -L${libdir} -lhiredis
+Cflags: -I${pkgincludedir} -I${includedir} -D_FILE_OFFSET_BITS=64

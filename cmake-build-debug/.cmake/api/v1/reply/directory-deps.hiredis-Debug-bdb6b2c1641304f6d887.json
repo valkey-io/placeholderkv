@@ -1,0 +1,155 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"INSTALL"
+		],
+		"files" : 
+		[
+			"deps/hiredis/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 96,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 109,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 112,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 115,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 118,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 138,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 143,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"lib/libhiredisd.a"
+			],
+			"targetId" : "hiredis::@8aee188d977b3356ca55",
+			"targetIndex" : 5,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "build/native",
+			"paths" : 
+			[
+				"deps/hiredis/hiredis.targets"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 3,
+			"component" : "Unspecified",
+			"destination" : "include/hiredis",
+			"paths" : 
+			[
+				"deps/hiredis/hiredis.h",
+				"deps/hiredis/read.h",
+				"deps/hiredis/sds.h",
+				"deps/hiredis/async.h",
+				"deps/hiredis/alloc.h",
+				"deps/hiredis/sockcompat.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "Unspecified",
+			"destination" : "include/hiredis",
+			"paths" : 
+			[
+				"deps/hiredis/adapters"
+			],
+			"type" : "directory"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "Unspecified",
+			"destination" : "lib/pkgconfig",
+			"paths" : 
+			[
+				"cmake-build-debug/deps/hiredis/hiredis.pc"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 6,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/hiredis",
+			"exportName" : "hiredis-targets",
+			"exportTargets" : 
+			[
+				{
+					"id" : "hiredis::@8aee188d977b3356ca55",
+					"index" : 5
+				}
+			],
+			"paths" : 
+			[
+				"deps/hiredis/CMakeFiles/Export/f76fe032f6b17c351203f51eb0d9a53a/hiredis-targets.cmake"
+			],
+			"type" : "export"
+		},
+		{
+			"backtrace" : 7,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/hiredis",
+			"paths" : 
+			[
+				"cmake-build-debug/deps/hiredis/hiredis-config.cmake",
+				"cmake-build-debug/deps/hiredis/hiredis-config-version.cmake"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "deps/hiredis",
+		"source" : "deps/hiredis"
+	}
+}

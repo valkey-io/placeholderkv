@@ -25,7 +25,7 @@ ifeq ($(OPTIMIZATION),-O3)
 	ifeq (clang,$(CLANG))
 		OPTIMIZATION+=-flto
 	else
-		OPTIMIZATION+=-flto=auto
+		OPTIMIZATION+=-flto=auto -ffat-lto-objects
 	endif
 endif
 ifneq ($(OPTIMIZATION),-O0)
@@ -131,9 +131,6 @@ ifdef REDIS_LDFLAGS
 endif
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(SERVER_CFLAGS)
-ifeq ($(SERVER_TEST),yes)
-	FINAL_CFLAGS +=-DSERVER_TEST=1
-endif
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(SERVER_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb

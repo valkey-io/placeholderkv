@@ -1,0 +1,223 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install",
+			"valkey_install_bin",
+			"valkey_build_and_install_bin",
+			"valkey_create_symlink"
+		],
+		"files" : 
+		[
+			"cmake/Modules/ValkeySetup.cmake",
+			"src/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 14,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 95,
+				"parent" : 1
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 65,
+				"parent" : 2
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 96,
+				"parent" : 1
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 4
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 27,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 95,
+				"parent" : 6
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 65,
+				"parent" : 7
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 96,
+				"parent" : 6
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 9
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 33,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 95,
+				"parent" : 11
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 65,
+				"parent" : 12
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 96,
+				"parent" : 11
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 14
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 39,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 16
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 40,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 18
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 41,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 20
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 3,
+			"component" : "valkey",
+			"destination" : "bin",
+			"paths" : 
+			[
+				"bin/valkey-server"
+			],
+			"targetId" : "valkey-server::@145eef247bfb46b6828c",
+			"targetIndex" : 11,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "valkey",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 8,
+			"component" : "valkey",
+			"destination" : "bin",
+			"paths" : 
+			[
+				"bin/valkey-cli"
+			],
+			"targetId" : "valkey-cli::@145eef247bfb46b6828c",
+			"targetIndex" : 10,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 10,
+			"component" : "valkey",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 13,
+			"component" : "valkey",
+			"destination" : "bin",
+			"paths" : 
+			[
+				"bin/valkey-benchmark"
+			],
+			"targetId" : "valkey-benchmark::@145eef247bfb46b6828c",
+			"targetIndex" : 9,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 15,
+			"component" : "valkey",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 17,
+			"component" : "valkey",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 19,
+			"component" : "valkey",
+			"type" : "code"
+		},
+		{
+			"backtrace" : 21,
+			"component" : "valkey",
+			"type" : "code"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "src",
+		"source" : "src"
+	}
+}
