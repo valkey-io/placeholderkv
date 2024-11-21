@@ -1555,12 +1555,17 @@ void unlinkClient(client *c) {
          * in which case it needs to be cleaned from that list */
         if (c->flag.replica && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END && server.rdb_pipe_conns) {
             int i;
+            int still_alive = 0;
             for (i = 0; i < server.rdb_pipe_numconns; i++) {
                 if (server.rdb_pipe_conns[i] == c->conn) {
                     rdbPipeWriteHandlerConnRemoved(c->conn);
                     server.rdb_pipe_conns[i] = NULL;
-                    break;
                 }
+                if (server.rdb_pipe_conns[i]) still_alive++;
+            }
+            if (still_alive == 0) {
+                serverLog(LL_NOTICE, "Diskless rdb transfer, last replica dropped, killing fork child.");
+                killRDBChild();
             }
         }
         /* Only use shutdown when the fork is active and we are the parent. */
@@ -1731,6 +1736,7 @@ void freeClient(client *c) {
     /* UNWATCH all the keys */
     unwatchAllKeys(c);
     listRelease(c->watched_keys);
+    c->watched_keys = NULL;
 
     /* Unsubscribe from all the pubsub channels */
     pubsubUnsubscribeAllChannels(c, 0);
@@ -1738,16 +1744,22 @@ void freeClient(client *c) {
     pubsubUnsubscribeAllPatterns(c, 0);
     unmarkClientAsPubSub(c);
     dictRelease(c->pubsub_channels);
+    c->pubsub_channels = NULL;
     dictRelease(c->pubsub_patterns);
+    c->pubsub_patterns = NULL;
     dictRelease(c->pubsubshard_channels);
+    c->pubsubshard_channels = NULL;
 
     /* Free data structures. */
     listRelease(c->reply);
+    c->reply = NULL;
     zfree(c->buf);
+    c->buf = NULL;
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
     freeClientOriginalArgv(c);
     if (c->deferred_reply_errors) listRelease(c->deferred_reply_errors);
+    c->deferred_reply_errors = NULL;
 #ifdef LOG_REQ_RES
     reqresReset(c, 1);
 #endif
@@ -1774,6 +1786,7 @@ void freeClient(client *c) {
         if (server.saveparamslen == 0 && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END &&
             server.child_type == CHILD_TYPE_RDB && server.rdb_child_type == RDB_CHILD_TYPE_DISK &&
             anyOtherReplicaWaitRdb(c) == 0) {
+            serverLog(LL_NOTICE, "Background saving, persistence disabled, last replica dropped, killing fork child.");
             killRDBChild();
         }
         if (c->repl_state == REPLICA_STATE_SEND_BULK) {
@@ -3572,6 +3585,10 @@ void clientCommand(client *c) {
             "    Protect current client connection from eviction.",
             "NO-TOUCH (ON|OFF)",
             "    Will not touch LRU/LFU stats when this mode is on.",
+            "IMPORT-SOURCE (ON|OFF)",
+            "    Mark this connection as an import source if server.import_mode is true.",
+            "    Sync tools can set their connections into 'import-source' state to visit",
+            "    expired keys.",
             NULL};
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
@@ -4045,6 +4062,22 @@ void clientCommand(client *c) {
             }
         }
         addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
+        /* CLIENT IMPORT-SOURCE ON|OFF */
+        if (!server.import_mode) {
+            addReplyError(c, "Server is not in import mode");
+            return;
+        }
+        if (!strcasecmp(c->argv[2]->ptr, "on")) {
+            c->flag.import_source = 1;
+            addReply(c, shared.ok);
+        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+            c->flag.import_source = 0;
+            addReply(c, shared.ok);
+        } else {
+            addReplyErrorObject(c, shared.syntaxerr);
+            return;
+        }
     } else {
         addReplySubcommandSyntaxError(c);
     }
@@ -4558,7 +4591,7 @@ static void pauseClientsByClient(mstime_t endTime, int isPauseClientAll) {
 }
 
 /* Pause actions up to the specified unixtime (in ms) for a given type of
- * commands.
+ * purpose.
  *
  * A main use case of this function is to allow pausing replication traffic
  * so that a failover without data loss to occur. Replicas will continue to receive

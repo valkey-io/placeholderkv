@@ -74,8 +74,9 @@ start_server {tags {"pubsubshard external:skip"}} {
 
     test "SUNSUBSCRIBE from non-subscribed channels" {
         set rd1 [valkey_deferring_client]
-        catch {sunsubscribe $rd1 {foo}} e
-        assert_match {*NOSUB*} $e
+        assert_equal {0} [sunsubscribe $rd1 {foo}]
+        assert_equal {0} [sunsubscribe $rd1 {bar}]
+        assert_equal {0} [sunsubscribe $rd1 {quux}]
 
         # clean up clients
         $rd1 close

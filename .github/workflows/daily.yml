@@ -60,7 +60,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make all-with-unit-tests SERVER_CFLAGS='-Werror -DSERVER_TEST'
+        run: make all-with-unit-tests SERVER_CFLAGS='-Werror'
       - name: testprep
         run: sudo apt-get install tcl8.6 tclx
       - name: test
@@ -75,10 +75,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: legacy unit tests
-        if: true && !contains(github.event.inputs.skiptests, 'unittest')
-        run: ./src/valkey-server test all --accurate
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -109,7 +106,7 @@ jobs:
         run: |
           apt-get update && apt-get install -y make gcc-13
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
-          make all-with-unit-tests CC=gcc OPT=-O3 SERVER_CFLAGS='-Werror -DSERVER_TEST -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3'
+          make all-with-unit-tests CC=gcc OPT=-O3 SERVER_CFLAGS='-Werror -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3'
       - name: testprep
         run: apt-get install -y tcl8.6 tclx procps
       - name: test
@@ -124,10 +121,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: legacy unit tests
-        if: true && !contains(github.event.inputs.skiptests, 'unittest')
-        run: ./src/valkey-server test all --accurate
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -234,7 +228,7 @@ jobs:
       - name: make
         run: |
           sudo apt-get update && sudo apt-get install libc6-dev-i386
-          make 32bit SERVER_CFLAGS='-Werror -DSERVER_TEST'
+          make 32bit SERVER_CFLAGS='-Werror'
       - name: testprep
         run: sudo apt-get install tcl8.6 tclx
       - name: test
@@ -251,10 +245,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: legacy unit tests
-        if: true && !contains(github.event.inputs.skiptests, 'unittest')
-        run: ./src/valkey-server test all --accurate
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -483,7 +474,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind SERVER_CFLAGS='-Werror -DSERVER_TEST'
+        run: make valgrind SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -515,7 +506,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind SERVER_CFLAGS='-Werror -DSERVER_TEST'
+        run: make valgrind all-with-unit-tests SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -526,7 +517,7 @@ jobs:
       - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: |
-          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-server test all --valgrind
+          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-unit-tests --valgrind
           if grep -q 0x err.txt; then cat err.txt; exit 1; fi
 
   test-valgrind-no-malloc-usable-size-test:
@@ -552,7 +543,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE -DSERVER_TEST" SERVER_CFLAGS='-Werror'
+        run: make valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -584,7 +575,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make valgrind CFLAGS="-DNO_MALLOC_USABLE_SIZE -DSERVER_TEST" SERVER_CFLAGS='-Werror'
+        run: make valgrind all-with-unit-tests CFLAGS="-DNO_MALLOC_USABLE_SIZE" SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -595,7 +586,7 @@ jobs:
       - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: |
-          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-server test all --valgrind
+          valgrind --track-origins=yes --suppressions=./src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full --log-file=err.txt ./src/valkey-unit-tests --valgrind
           if grep -q 0x err.txt; then cat err.txt; exit 1; fi
 
   test-sanitizer-address:
@@ -627,7 +618,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make all-with-unit-tests OPT=-O3 SANITIZER=address SERVER_CFLAGS='-DSERVER_TEST -Werror'
+        run: make all-with-unit-tests OPT=-O3 SANITIZER=address SERVER_CFLAGS='-Werror'
       - name: testprep
         run: |
           sudo apt-get update
@@ -644,10 +635,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: legacy unit tests
-        if: true && !contains(github.event.inputs.skiptests, 'unittest')
-        run: ./src/valkey-server test all
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests
 
@@ -680,7 +668,7 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make all-with-unit-tests OPT=-O3 SANITIZER=undefined SERVER_CFLAGS='-DSERVER_TEST -Werror' LUA_DEBUG=yes # we (ab)use this flow to also check Lua C API violations
+        run: make all-with-unit-tests OPT=-O3 SANITIZER=undefined SERVER_CFLAGS='-Werror' LUA_DEBUG=yes # we (ab)use this flow to also check Lua C API violations
       - name: testprep
         run: |
           sudo apt-get update
@@ -697,10 +685,7 @@ jobs:
       - name: cluster tests
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster ${{github.event.inputs.cluster_test_args}}
-      - name: legacy unit tests
-        if: true && !contains(github.event.inputs.skiptests, 'unittest')
-        run: ./src/valkey-server test all --accurate
-      - name: new unit tests
+      - name: unittest
         if: true && !contains(github.event.inputs.skiptests, 'unittest')
         run: ./src/valkey-unit-tests --accurate
 
@@ -1005,7 +990,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
     runs-on: ${{ matrix.os }}
     if: |
       (github.event_name == 'workflow_dispatch' ||
@@ -1031,10 +1016,10 @@ jobs:
           repository: ${{ env.GITHUB_REPOSITORY }}
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
-        run: make SERVER_CFLAGS='-Werror -DSERVER_TEST'
+        run: make SERVER_CFLAGS='-Werror'
 
   test-freebsd:
-    runs-on: macos-12
+    runs-on: macos-13
     if: |
       (github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'schedule' && github.repository == 'valkey-io/valkey') ||

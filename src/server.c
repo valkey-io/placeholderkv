@@ -360,25 +360,20 @@ void exitFromChild(int retcode) {
  * keys and Objects as values (Objects can hold SDS strings,
  * lists, sets). */
 
-void dictVanillaFree(dict *d, void *val) {
-    UNUSED(d);
+void dictVanillaFree(void *val) {
     zfree(val);
 }
 
-void dictListDestructor(dict *d, void *val) {
-    UNUSED(d);
+void dictListDestructor(void *val) {
     listRelease((list *)val);
 }
 
-void dictDictDestructor(dict *d, void *val) {
-    UNUSED(d);
+void dictDictDestructor(void *val) {
     dictRelease((dict *)val);
 }
 
-int dictSdsKeyCompare(dict *d, const void *key1, const void *key2) {
+int dictSdsKeyCompare(const void *key1, const void *key2) {
     int l1, l2;
-    UNUSED(d);
-
     l1 = sdslen((sds)key1);
     l2 = sdslen((sds)key2);
     if (l1 != l2) return 0;
@@ -391,30 +386,26 @@ size_t dictSdsEmbedKey(unsigned char *buf, size_t buf_len, const void *key, uint
 
 /* A case insensitive version used for the command lookup table and other
  * places where case insensitive non binary-safe comparison is needed. */
-int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictSdsKeyCaseCompare(const void *key1, const void *key2) {
     return strcasecmp(key1, key2) == 0;
 }
 
-void dictObjectDestructor(dict *d, void *val) {
-    UNUSED(d);
+void dictObjectDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
     decrRefCount(val);
 }
 
-void dictSdsDestructor(dict *d, void *val) {
-    UNUSED(d);
+void dictSdsDestructor(void *val) {
     sdsfree(val);
 }
 
-void *dictSdsDup(dict *d, const void *key) {
-    UNUSED(d);
+void *dictSdsDup(const void *key) {
     return sdsdup((const sds)key);
 }
 
-int dictObjKeyCompare(dict *d, const void *key1, const void *key2) {
+int dictObjKeyCompare(const void *key1, const void *key2) {
     const robj *o1 = key1, *o2 = key2;
-    return dictSdsKeyCompare(d, o1->ptr, o2->ptr);
+    return dictSdsKeyCompare(o1->ptr, o2->ptr);
 }
 
 uint64_t dictObjHash(const void *key) {
@@ -446,16 +437,13 @@ uint64_t dictClientHash(const void *key) {
 }
 
 /* Dict compare function for client */
-int dictClientKeyCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictClientKeyCompare(const void *key1, const void *key2) {
     return ((client *)key1)->id == ((client *)key2)->id;
 }
 
 /* Dict compare function for null terminated string */
-int dictCStrKeyCompare(dict *d, const void *key1, const void *key2) {
+int dictCStrKeyCompare(const void *key1, const void *key2) {
     int l1, l2;
-    UNUSED(d);
-
     l1 = strlen((char *)key1);
     l2 = strlen((char *)key2);
     if (l1 != l2) return 0;
@@ -463,12 +451,11 @@ int dictCStrKeyCompare(dict *d, const void *key1, const void *key2) {
 }
 
 /* Dict case insensitive compare function for null terminated string */
-int dictCStrKeyCaseCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictCStrKeyCaseCompare(const void *key1, const void *key2) {
     return strcasecmp(key1, key2) == 0;
 }
 
-int dictEncObjKeyCompare(dict *d, const void *key1, const void *key2) {
+int dictEncObjKeyCompare(const void *key1, const void *key2) {
     robj *o1 = (robj *)key1, *o2 = (robj *)key2;
     int cmp;
 
@@ -480,7 +467,7 @@ int dictEncObjKeyCompare(dict *d, const void *key1, const void *key2) {
      * objects as well. */
     if (o1->refcount != OBJ_STATIC_REFCOUNT) o1 = getDecodedObject(o1);
     if (o2->refcount != OBJ_STATIC_REFCOUNT) o2 = getDecodedObject(o2);
-    cmp = dictSdsKeyCompare(d, o1->ptr, o2->ptr);
+    cmp = dictSdsKeyCompare(o1->ptr, o2->ptr);
     if (o1->refcount != OBJ_STATIC_REFCOUNT) decrRefCount(o1);
     if (o2->refcount != OBJ_STATIC_REFCOUNT) decrRefCount(o2);
     return cmp;
@@ -1144,10 +1131,10 @@ void databasesCron(void) {
     /* Expire keys by random sampling. Not required for replicas
      * as primary will synthesize DELs for us. */
     if (server.active_expire_enabled) {
-        if (iAmPrimary()) {
-            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
-        } else {
+        if (!iAmPrimary()) {
             expireReplicaKeys();
+        } else if (!server.import_mode) {
+            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
         }
     }
 
@@ -1740,7 +1727,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
-    if (server.active_expire_enabled && iAmPrimary()) activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
+    if (server.active_expire_enabled && !server.import_mode && iAmPrimary()) activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
 
     if (moduleCount()) {
         moduleFireServerEvent(VALKEYMODULE_EVENT_EVENTLOOP, VALKEYMODULE_SUBEVENT_EVENTLOOP_BEFORE_SLEEP, NULL);
@@ -2146,6 +2133,7 @@ void initServerConfig(void) {
     server.extended_redis_compat = 0;
     server.pause_cron = 0;
     server.dict_resizing = 1;
+    server.import_mode = 0;
 
     server.latency_tracking_info_percentiles_len = 3;
     server.latency_tracking_info_percentiles = zmalloc(sizeof(double) * (server.latency_tracking_info_percentiles_len));
@@ -2670,7 +2658,6 @@ void initServer(void) {
     server.aof_state = server.aof_enabled ? AOF_ON : AOF_OFF;
     server.fsynced_reploff = server.aof_enabled ? 0 : -1;
     server.hz = server.config_hz;
-    server.pid = getpid();
     server.in_fork_child = CHILD_TYPE_NONE;
     server.rdb_pipe_read = -1;
     server.rdb_child_exit_pipe = -1;
@@ -3329,8 +3316,28 @@ static void propagateNow(int dbid, robj **argv, int argc, int target) {
     if (!shouldPropagate(target)) return;
 
     /* This needs to be unreachable since the dataset should be fixed during
-     * replica pause (otherwise data may be lost during a failover) */
-    serverAssert(!(isPausedActions(PAUSE_ACTION_REPLICA) && (!server.client_pause_in_transaction)));
+     * replica pause (otherwise data may be lost during a failover).
+     *
+     * Though, there are exceptions:
+     *
+     * 1. We allow write commands that were queued up before and after to
+     *    execute, if a CLIENT PAUSE executed during a transaction, we will
+     *    track the state, the CLIENT PAUSE takes effect only after a transaction
+     *    has finished.
+     * 2. Primary loses a slot during the pause, deletes all keys and replicates
+     *    DEL to its replicas. In this case, we will track the state, the dirty
+     *    slots will be deleted in the end without affecting the data consistency.
+     *
+     * Note that case 2 can happen in one of the following scenarios:
+     * 1) The primary waits for the replica to replicate before exiting, see
+     *    shutdown-timeout in conf for more details. In this case, primary lost
+     *    a slot during the SIGTERM waiting.
+     * 2) The primary waits for the replica to replicate during a manual failover.
+     *    In this case, primary lost a slot during the pausing.
+     * 3) The primary was paused by CLIENT PAUSE, and lost a slot during the
+     *    pausing. */
+    serverAssert(!isPausedActions(PAUSE_ACTION_REPLICA) || server.client_pause_in_transaction ||
+                 server.server_del_keys_in_slot);
 
     if (server.aof_state != AOF_OFF && target & PROPAGATE_AOF) feedAppendOnlyFile(dbid, argv, argc);
     if (target & PROPAGATE_REPL) replicationFeedReplicas(dbid, argv, argc);
@@ -4165,12 +4172,6 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Not allow several UNSUBSCRIBE commands executed under non-pubsub mode */
-    if (!c->flag.pubsub && (c->cmd->proc == unsubscribeCommand || c->cmd->proc == sunsubscribeCommand ||
-                            c->cmd->proc == punsubscribeCommand)) {
-        rejectCommandFormat(c, "-NOSUB '%s' command executed not in subscribed mode", c->cmd->fullname);
-        return C_OK;
-    }
     /* Only allow commands with flag "t", such as INFO, REPLICAOF and so on,
      * when replica-serve-stale-data is no and we are a replica with a broken
      * link with primary. */
@@ -6396,7 +6397,7 @@ void closeChildUnusedResourceAfterFork(void) {
 int serverFork(int purpose) {
     if (isMutuallyExclusiveChildType(purpose)) {
         if (hasActiveChildProcess()) {
-            errno = EEXIST;
+            errno = EALREADY;
             return -1;
         }
 
@@ -6781,84 +6782,11 @@ int iAmPrimary(void) {
             (server.cluster_enabled && clusterNodeIsPrimary(getMyClusterNode())));
 }
 
-#ifdef SERVER_TEST
-#include "testhelp.h"
-#include "intset.h" /* Compact integer set structure */
-
-int __failed_tests = 0;
-int __test_num = 0;
-
-/* The flags are the following:
- * --accurate:     Runs tests with more iterations.
- * --large-memory: Enables tests that consume more than 100mb. */
-typedef int serverTestProc(int argc, char **argv, int flags);
-struct serverTest {
-    char *name;
-    serverTestProc *proc;
-    int failed;
-} serverTests[] = {
-    {"quicklist", quicklistTest},
-};
-serverTestProc *getTestProcByName(const char *name) {
-    int numtests = sizeof(serverTests) / sizeof(struct serverTest);
-    for (int j = 0; j < numtests; j++) {
-        if (!strcasecmp(name, serverTests[j].name)) {
-            return serverTests[j].proc;
-        }
-    }
-    return NULL;
-}
-#endif
-
 /* Main is marked as weak so that unit tests can use their own main function. */
 __attribute__((weak)) int main(int argc, char **argv) {
     struct timeval tv;
     int j;
     char config_from_stdin = 0;
-
-#ifdef SERVER_TEST
-    monotonicInit(); /* Required for dict tests, that are relying on monotime during dict rehashing. */
-    if (argc >= 3 && !strcasecmp(argv[1], "test")) {
-        int flags = 0;
-        for (j = 3; j < argc; j++) {
-            char *arg = argv[j];
-            if (!strcasecmp(arg, "--accurate"))
-                flags |= TEST_ACCURATE;
-            else if (!strcasecmp(arg, "--large-memory"))
-                flags |= TEST_LARGE_MEMORY;
-            else if (!strcasecmp(arg, "--valgrind"))
-                flags |= TEST_VALGRIND;
-        }
-
-        if (!strcasecmp(argv[2], "all")) {
-            int numtests = sizeof(serverTests) / sizeof(struct serverTest);
-            for (j = 0; j < numtests; j++) {
-                serverTests[j].failed = (serverTests[j].proc(argc, argv, flags) != 0);
-            }
-
-            /* Report tests result */
-            int failed_num = 0;
-            for (j = 0; j < numtests; j++) {
-                if (serverTests[j].failed) {
-                    failed_num++;
-                    printf("[failed] Test - %s\n", serverTests[j].name);
-                } else {
-                    printf("[ok] Test - %s\n", serverTests[j].name);
-                }
-            }
-
-            printf("%d tests, %d passed, %d failed\n", numtests, numtests - failed_num, failed_num);
-
-            return failed_num == 0 ? 0 : 1;
-        } else {
-            serverTestProc *proc = getTestProcByName(argv[2]);
-            if (!proc) return -1; /* test not found */
-            return proc(argc, argv, flags);
-        }
-
-        return 0;
-    }
-#endif
 
     /* We need to initialize our libraries, and the server configuration. */
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
@@ -6889,6 +6817,7 @@ __attribute__((weak)) int main(int argc, char **argv) {
     if (exec_name == NULL) exec_name = argv[0];
     server.sentinel_mode = checkForSentinelMode(argc, argv, exec_name);
     initServerConfig();
+    server.pid = getpid();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
     moduleInitModulesSystem();
@@ -7070,7 +6999,12 @@ __attribute__((weak)) int main(int argc, char **argv) {
     /* Daemonize if needed */
     server.supervised = serverIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
-    if (background) daemonize();
+    if (background) {
+        /* We need to reset server.pid after daemonize(), otherwise the
+         * log printing role will always be the child. */
+        daemonize();
+        server.pid = getpid();
+    }
 
     serverLog(LL_NOTICE, "oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo");
     serverLog(LL_NOTICE, "Valkey version=%s, bits=%d, commit=%s, modified=%d, pid=%d, just started", VALKEY_VERSION,
@@ -7154,5 +7088,4 @@ __attribute__((weak)) int main(int argc, char **argv) {
     aeDeleteEventLoop(server.el);
     return 0;
 }
-
 /* The End */
