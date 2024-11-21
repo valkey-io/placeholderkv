@@ -240,7 +240,7 @@ void freeFunctionsAsync(functionsLibCtx *functions_lib_ctx) {
                                   memory_order_relaxed);
         bioCreateLazyFreeJob(lazyFreeFunctionsCtx, 1, functions_lib_ctx);
     } else {
-        functionsLibCtxFree(functions_lib_ctx, 0);
+        freeFunctionsSync(functions_lib_ctx);
     }
 }
 

@@ -189,15 +189,20 @@ void functionsLibCtxClearCurrent(int async) {
 }
 
 /* Free the given functions ctx */
+void freeFunctionsSync(functionsLibCtx *functions_lib_ctx) {
+    functionsLibCtxClear(functions_lib_ctx);
+    dictRelease(functions_lib_ctx->functions);
+    dictRelease(functions_lib_ctx->libraries);
+    dictRelease(functions_lib_ctx->engines_stats);
+    zfree(functions_lib_ctx);
+}
+
+/* Free the given functions ctx */
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx, int async) {
     if (async) {
         freeFunctionsAsync(functions_lib_ctx);
     } else {
-        functionsLibCtxClear(functions_lib_ctx);
-        dictRelease(functions_lib_ctx->functions);
-        dictRelease(functions_lib_ctx->libraries);
-        dictRelease(functions_lib_ctx->engines_stats);
-        zfree(functions_lib_ctx);
+        freeFunctionsSync(functions_lib_ctx);
     }
 }
 
