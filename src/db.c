@@ -331,6 +331,21 @@ static valkey *dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, voi
         /* Because of VM_StringDMA, old may be changed, so we need get old again */
         old = *oldref;
     }
+
+    /* Can we keep the old object in the database and just replace the ptr? */
+    if ((old->refcount == 1 && old->type == OBJ_STRING && old->encoding != OBJ_ENCODING_EMBSTR) &&
+        (val->refcount == 1 && val->type == OBJ_STRING && val->encoding != OBJ_ENCODING_EMBSTR)) {
+        if (old->encoding == OBJ_ENCODING_RAW) {
+            /* TODO: Offload sdsfree to io thread. */
+            sdsfree(old->ptr);
+        }
+        old->encoding = val->encoding;
+        old->ptr = val->ptr;
+        val->ptr = NULL;
+        decrRefCount(val);
+        return old;
+    }
+
     /* Replace the old value at its location in the key space. */
     long long expire = objectGetExpire(old);
     valkey *new = objectSetKeyAndExpire(val, key->ptr, expire);
