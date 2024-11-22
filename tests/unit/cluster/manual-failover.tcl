@@ -313,3 +313,64 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
         verify_no_log_message -3 "*Manual failover timed out*" $loglines2
     }
 } ;# start_cluster
+
+start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 1000}} {
+    test "Broadcast PONG to the cluster when the node role changes" {
+        # R0 is a primary and R3 is a replica, we will do multiple cluster failover
+        # and then check their role and flags.
+        set R0_nodeid [R 0 cluster myid]
+        set R3_nodeid [R 3 cluster myid]
+
+        # Make sure we don't send PINGs for a short period of time.
+        for {set j 0} {$j < [llength $::servers]} {incr j} {
+            R $j debug disable-cluster-random-ping 0
+            R $j config set cluster-ping-interval 300000
+        }
+
+        R 3 cluster failover
+        wait_for_condition 1000 50 {
+            [s 0 role] eq {slave} &&
+            [s -3 role] eq {master}
+        } else {
+            fail "Failover does not happened"
+        }
+
+        # Get the node information of R0 and R3 in my view from CLUSTER NODES
+        # R0 should be a replica and R3 should be a primary in all views.
+        for {set j 0} {$j < [llength $::servers]} {incr j} {
+            wait_for_condition 1000 50 {
+                [check_cluster_node_mark slave $j $R0_nodeid] &&
+                [check_cluster_node_mark master $j $R3_nodeid]
+            } else {
+                puts "R0_nodeid: $R0_nodeid"
+                puts "R3_nodeid: $R3_nodeid"
+                puts "R $j cluster nodes:"
+                puts [R $j cluster nodes]
+                fail "Node role does not changed in the first failover"
+            }
+        }
+
+        R 0 cluster failover
+        wait_for_condition 1000 50 {
+            [s 0 role] eq {master} &&
+            [s -3 role] eq {slave}
+        } else {
+            fail "The second failover does not happened"
+        }
+
+        # Get the node information of R0 and R3 in my view from CLUSTER NODES
+        # R0 should be a primary and R3 should be a replica in all views.
+        for {set j 0} {$j < [llength $::servers]} {incr j} {
+            wait_for_condition 1000 50 {
+                [check_cluster_node_mark master $j $R0_nodeid] &&
+                [check_cluster_node_mark slave $j $R3_nodeid]
+            } else {
+                puts "R0_nodeid: $R0_nodeid"
+                puts "R3_nodeid: $R3_nodeid"
+                puts "R $j cluster nodes:"
+                puts [R $j cluster nodes]
+                fail "Node role does not changed in the second failover"
+            }
+        }
+    }
+} ;# start_cluster

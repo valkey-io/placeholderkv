@@ -2669,7 +2669,8 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
              *
              * If the sender and myself are in the same shard, try psync. */
             clusterSetPrimary(sender, !are_in_same_shard, !are_in_same_shard);
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_FSYNC_CONFIG);
+            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_FSYNC_CONFIG |
+                                 CLUSTER_TODO_BROADCAST_ALL);
         } else if (nodeIsPrimary(myself) && (sender_slots >= migrated_our_slots) && !are_in_same_shard) {
             /* When all our slots are lost to the sender and the sender belongs to
              * a different shard, this is likely due to a client triggered slot
@@ -4538,7 +4539,7 @@ void clusterFailoverReplaceYourPrimary(void) {
 
     /* 4) Pong all the other nodes so that they can update the state
      *    accordingly and detect that we switched to primary role. */
-    clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+    clusterDoBeforeSleep(CLUSTER_TODO_BROADCAST_ALL);
 
     /* 5) If there was a manual failover in progress, clear the state. */
     resetManualFailover();
@@ -5029,7 +5030,7 @@ void clusterCron(void) {
 
     /* Ping some random node 1 time every 10 iterations, so that we usually ping
      * one random node every second. */
-    if (!(iteration % 10)) {
+    if (!server.debug_cluster_disable_random_ping && !(iteration % 10)) {
         int j;
 
         /* Check a few random nodes and ping the one with the oldest
@@ -5205,6 +5206,13 @@ void clusterBeforeSleep(void) {
     if (flags & CLUSTER_TODO_SAVE_CONFIG) {
         int fsync = flags & CLUSTER_TODO_FSYNC_CONFIG;
         clusterSaveConfigOrDie(fsync);
+    }
+
+    if (flags & CLUSTER_TODO_BROADCAST_ALL) {
+        /* Broadcast a pong to all known nodes. This is useful when something changes
+         * in the configuration and we want to make the cluster aware it before the
+         * regular ping. */
+        clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
     }
 }
 
@@ -6556,7 +6564,7 @@ void clusterCommandSetSlot(client *c) {
                 }
                 /* After importing this slot, let the other nodes know as
                  * soon as possible. */
-                clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+                clusterDoBeforeSleep(CLUSTER_TODO_BROADCAST_ALL);
             }
         }
     }
@@ -6748,8 +6756,7 @@ int clusterCommandSpecial(client *c) {
          * If the instance is a replica, it had a totally different replication history.
          * In these both cases, myself as a replica has to do a full sync. */
         clusterSetPrimary(n, 1, 1);
-        clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
-        clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_SAVE_CONFIG);
+        clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_BROADCAST_ALL);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "count-failure-reports") && c->argc == 3) {
         /* CLUSTER COUNT-FAILURE-REPORTS <NODE ID> */
