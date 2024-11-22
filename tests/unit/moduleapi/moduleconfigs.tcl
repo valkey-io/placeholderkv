@@ -252,7 +252,7 @@ start_server {tags {"modules"}} {
        set modulename [lmap x [r module list] {dict get $x name}]
        assert_not_equal [lsearch $modulename moduleparameter] -1
        assert_equal "{10 20 30}" [lmap x [r module list] {dict get $x args}]
-       r testmoduleparameter.update.parameter 40 50 60 70
+       assert_equal OK [r testmoduleparameter.update.parameter 40 50 60 70]
        assert_equal "{40 50 60 70}" [lmap x [r module list] {dict get $x args}]
     }
 }

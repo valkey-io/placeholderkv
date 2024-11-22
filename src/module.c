@@ -2265,19 +2265,16 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
  * - VALKEYMODULE_ERR on failure.
  */
 int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
-    if (!ctx->module->onload) {
-        return VALKEYMODULE_ERR;
-    }
     struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
     for (int i = 0; i < loadmod->argc; i++) {
         decrRefCount(loadmod->argv[i]);
     }
     zfree(loadmod->argv);
-    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
-    loadmod->argc = argc;
-    for (int i = 0; i < argc; i++) {
-        loadmod->argv[i] = argv[i];
-        incrRefCount(loadmod->argv[i]);
+    loadmod->argv = argc - 1 ? zmalloc(sizeof(robj *) * (argc - 1)) : NULL;
+    loadmod->argc = argc - 1;
+    for (int i = 1; i < argc; i++) {
+        loadmod->argv[i - 1] = argv[i];
+        incrRefCount(loadmod->argv[i - 1]);
     }
     return VALKEYMODULE_OK;
 }
