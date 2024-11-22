@@ -3147,7 +3147,8 @@ int clusterProcessPacket(clusterLink *link) {
             sender->configEpoch = sender_claimed_config_epoch;
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
 
-            if (server.cluster->failover_auth_time && sender->configEpoch >= server.cluster->failover_auth_epoch) {
+            if (server.cluster->failover_auth_time && server.cluster->failover_auth_sent &&
+                sender->configEpoch >= server.cluster->failover_auth_epoch) {
                 /* Another node has claimed an epoch greater than or equal to ours.
                  * If we have an ongoing election, reset it because we cannot win
                  * with an epoch smaller than or equal to the incoming claim. This
