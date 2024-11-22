@@ -493,7 +493,7 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
 
     if (obj->refcount > 1) return C_ERR;
 
-    if (obj->type != OBJ_ENCODING_RAW || obj->type != OBJ_STRING) return C_ERR;
+    if (obj->encoding != OBJ_ENCODING_RAW || obj->type != OBJ_STRING) return C_ERR;
 
     /* We select the thread ID in a round-robin fashion. */
     size_t tid = (server.stat_io_freed_objects % (server.active_io_threads_num - 1)) + 1;
