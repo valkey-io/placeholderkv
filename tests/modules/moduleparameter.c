@@ -6,8 +6,7 @@
 
 int test_module_update_parameter(ValkeyModuleCtx *ctx,
                                  ValkeyModuleString **argv, int argc) {
-  ValkeyModule_UpdateRuntimeArgs(ctx, argv, argc);
-  return ValkeyModule_ReplyWithSimpleString(ctx, "Module runtime args test");
+  return ValkeyModule_UpdateRuntimeArgs(ctx, argv, argc);
 }
 
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
