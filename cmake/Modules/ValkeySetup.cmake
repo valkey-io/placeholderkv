@@ -74,9 +74,11 @@ endmacro ()
 macro (valkey_build_and_install_bin target sources ld_flags libs link_name)
     add_executable(${target} ${sources})
 
-    if (USE_JEMALLOC)
-        # Using jemalloc
-        target_link_libraries(${target} jemalloc)
+    if (USE_JEMALLOC
+        OR USE_TCMALLOC
+        OR USE_TCMALLOC_MINIMAL)
+        # Using custom allocator
+        target_link_libraries(${target} ${ALLOCATOR_LIB})
     endif ()
 
     # Place this line last to ensure that ${ld_flags} is placed last on the linker line
@@ -151,16 +153,23 @@ endif ()
 if (BUILD_MALLOC)
     if ("${BUILD_MALLOC}" STREQUAL "jemalloc")
         set(MALLOC_LIB "jemalloc")
+        set(ALLOCATOR_LIB "jemalloc")
         add_valkey_server_compiler_options("-DUSE_JEMALLOC")
         set(USE_JEMALLOC 1)
     elseif ("${BUILD_MALLOC}" STREQUAL "libc")
         set(MALLOC_LIB "libc")
     elseif ("${BUILD_MALLOC}" STREQUAL "tcmalloc")
         set(MALLOC_LIB "tcmalloc")
+        valkey_pkg_config(libtcmalloc ALLOCATOR_LIB)
+
         add_valkey_server_compiler_options("-DUSE_TCMALLOC")
+        set(USE_TCMALLOC 1)
     elseif ("${BUILD_MALLOC}" STREQUAL "tcmalloc_minimal")
         set(MALLOC_LIB "tcmalloc_minimal")
+        valkey_pkg_config(libtcmalloc_minimal ALLOCATOR_LIB)
+
         add_valkey_server_compiler_options("-DUSE_TCMALLOC")
+        set(USE_TCMALLOC_MINIMAL 1)
     else ()
         message(FATAL_ERROR "BUILD_MALLOC can be one of: jemalloc, libc, tcmalloc or tcmalloc_minimal")
     endif ()
@@ -202,16 +211,12 @@ if (BUILD_RDMA)
         if (USE_RDMA EQUAL 2) # Module
             message(STATUS "Building RDMA as module")
             add_valkey_server_compiler_options("-DUSE_RDMA=2")
-            find_package(PkgConfig REQUIRED)
 
             # Locate librdmacm & libibverbs, fail if we can't find them
-            pkg_check_modules(RDMACM REQUIRED librdmacm)
-            pkg_check_modules(IBVERBS REQUIRED libibverbs)
+            valkey_pkg_config(librdmacm RDMACM_LIBS)
+            valkey_pkg_config(libibverbs IBVERBS_LIBS)
 
-            message(STATUS "${RDMACM_LINK_LIBRARIES};${IBVERBS_LINK_LIBRARIES}")
-            list(APPEND RDMA_LIBS "${RDMACM_LIBRARIES};${IBVERBS_LIBRARIES}")
-            unset(RDMACM_LINK_LIBRARIES CACHE)
-            unset(IBVERBS_LINK_LIBRARIES CACHE)
+            list(APPEND RDMA_LIBS "${RDMACM_LIBS};${IBVERBS_LIBS}")
             set(BUILD_RDMA_MODULE 1)
         elseif (USE_RDMA EQUAL 1)
             # RDMA can only be built as a module. So disable it
@@ -266,17 +271,18 @@ endif ()
 
 # Sanitizer
 if (BUILD_SANITIZER)
-    # For best results, force libc
-    set(MALLOC_LIB, "libc")
+    # Common CFLAGS
+    list(APPEND VALKEY_SANITAIZER_CFLAGS "-fno-sanitize-recover=all")
+    list(APPEND VALKEY_SANITAIZER_CFLAGS "-fno-omit-frame-pointer")
     if ("${BUILD_SANITIZER}" STREQUAL "address")
-        add_valkey_server_compiler_options("-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer")
-        add_valkey_server_linker_option("-fsanitize=address")
+        list(APPEND VALKEY_SANITAIZER_CFLAGS "-fsanitize=address")
+        list(APPEND VALKEY_SANITAIZER_LDFLAGS "-fsanitize=address")
     elseif ("${BUILD_SANITIZER}" STREQUAL "thread")
-        add_valkey_server_compiler_options("-fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer")
-        add_valkey_server_linker_option("-fsanitize=thread")
+        list(APPEND VALKEY_SANITAIZER_CFLAGS "-fsanitize=thread")
+        list(APPEND VALKEY_SANITAIZER_LDFLAGS "-fsanitize=thread")
     elseif ("${BUILD_SANITIZER}" STREQUAL "undefined")
-        add_valkey_server_compiler_options("-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer")
-        add_valkey_server_linker_option("-fsanitize=undefined")
+        list(APPEND VALKEY_SANITAIZER_CFLAGS "-fsanitize=undefined")
+        list(APPEND VALKEY_SANITAIZER_LDFLAGS "-fsanitize=undefined")
     else ()
         message(FATAL_ERROR "Unknown sanitizer: ${BUILD_SANITIZER}")
     endif ()
@@ -366,7 +372,6 @@ include(SourceFiles)
 
 # Clear the below variables from the cache
 unset(CMAKE_C_FLAGS CACHE)
-unset(BUILD_SANITIZER CACHE)
 unset(VALKEY_SERVER_LDFLAGS CACHE)
 unset(VALKEY_SERVER_CFLAGS CACHE)
 unset(PYTHON_EXE CACHE)
