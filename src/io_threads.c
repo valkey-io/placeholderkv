@@ -9,7 +9,8 @@
 static __thread int thread_id = 0; /* Thread local var */
 static pthread_t io_threads[IO_THREADS_MAX_NUM] = {0};
 static pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
-void (*tls_negotiation_cb)(void *);
+typedef void (*tls_negotiation_callback)(void *);
+tls_negotiation_callback tls_negotiation_cb;
 
 /* IO jobs queue functions - Used to send jobs from the main-thread to the IO thread. */
 typedef void (*job_handler)(void *);
@@ -556,7 +557,7 @@ void trySendPollJobToIOThreads(void) {
     IOJobQueue_push(jq, IOThreadPoll, server.el);
 }
 
-void setTLSNegotiationCallback(void (*cb)(void *)) {
+void setTLSNegotiationCallback(tls_negotiation_callback cb) {
     tls_negotiation_cb = cb;
 }
 
@@ -578,7 +579,7 @@ int trySendTLSNegotiationToIOThreads(connection *conn) {
         return C_ERR;
     }
 
-    if (!(conn->flags & CONN_FLAG_CLIENT)) {
+    if (!(conn->flags & CONN_FLAG_NO_OFFLOAD)) {
         return C_ERR;
     }
 

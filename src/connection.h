@@ -56,7 +56,7 @@ typedef enum {
 
 #define CONN_FLAG_CLOSE_SCHEDULED (1 << 0) /* Closed scheduled by a handler */
 #define CONN_FLAG_WRITE_BARRIER (1 << 1)   /* Write barrier requested */
-#define CONN_FLAG_CLIENT (1 << 2)          /* Connection is of a client - not a cluster link. */
+#define CONN_FLAG_NO_OFFLOAD (1 << 2)      /* Connection should not be offloaded to IO threads. */
 
 #define CONN_TYPE_SOCKET "tcp"
 #define CONN_TYPE_UNIX "unix"

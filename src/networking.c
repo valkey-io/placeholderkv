@@ -134,7 +134,7 @@ client *createClient(connection *conn) {
         if (server.tcpkeepalive) connKeepAlive(conn, server.tcpkeepalive);
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
-        conn->flags |= CONN_FLAG_CLIENT;
+        conn->flags |= CONN_FLAG_NO_OFFLOAD;
     }
     c->buf = zmalloc_usable(PROTO_REPLY_CHUNK_BYTES, &c->buf_usable_size);
     selectDb(c, 0);
