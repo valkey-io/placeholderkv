@@ -433,13 +433,6 @@ ifeq ($(USE_FAST_FLOAT),yes)
 	DEPENDENCY_TARGETS += fast_float_c_interface
 	FAST_FLOAT_STRTOD_OBJECT := ../deps/fast_float_c_interface/fast_float_strtod.o
 	FINAL_LIBS += $(FAST_FLOAT_STRTOD_OBJECT)
-	# fast_float_strtod uses functions from c++ std library, so let's add it for linking as well.
-	# Clang uses libc++ for standard c++ library vs libstdc++ used by gcc.
-	ifeq (clang,$(CLANG))
-		FINAL_LIBS += -lc++
-	else
-		FINAL_LIBS += -lstdc++
-	endif
 endif
 
 all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE)

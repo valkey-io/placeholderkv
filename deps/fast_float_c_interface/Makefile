@@ -26,7 +26,7 @@ endif
 # 32-bit machine and 64-bit on 64-bit machine, CFLAGS are empty. No other flags are set that can conflict with C++,
 # therefore let's use CFLAGS without changes for now.
 # 2) FASTFLOAT_ALLOWS_LEADING_PLUS allows +inf to be parsed as inf, instead of error.
-CXXFLAGS=$(STD) $(OPT) $(WARN) -fPIC $(CFLAGS) -D FASTFLOAT_ALLOWS_LEADING_PLUS
+CXXFLAGS=$(STD) $(OPT) $(WARN) -static -fPIC -fno-exceptions $(CFLAGS) -D FASTFLOAT_ALLOWS_LEADING_PLUS 
 
 .PHONY: all clean
 
