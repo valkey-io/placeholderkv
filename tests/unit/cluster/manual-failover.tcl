@@ -272,7 +272,6 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
     }
 } ;# start_cluster
 
-<<<<<<< HEAD
 start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 1000}} {
     test "Broadcast PONG to the cluster when the node role changes" {
         # R0 is a primary and R3 is a replica, we will do multiple cluster failover
