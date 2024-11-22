@@ -2261,7 +2261,6 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
  * Once 'CONFIG REWRITE' command is called, the updated argument values can be saved into conf file.
  *
  * Returns:
- * - VALKEYMODULE_OK on successfully updating.
  * - VALKEYMODULE_ERR on failure.
  */
 int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
