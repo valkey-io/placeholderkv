@@ -272,6 +272,48 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
     }
 } ;# start_cluster
 
+start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 15000}} {
+    test "Manual failover will reset the on-going election" {
+        set CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST 5
+        set CLUSTER_PACKET_TYPE_NONE -1
+
+        # Let other primaries drop FAILOVER_AUTH_REQUEST so that the election won't
+        # get the enough votes and the election will time out.
+        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
+        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
+
+        # Replica doing the manual failover.
+        R 3 cluster failover
+
+        # Waiting for primary and replica to confirm manual failover timeout.
+        wait_for_log_messages 0 {"*Manual failover timed out*"} 0 1000 50
+        wait_for_log_messages -3 {"*Manual failover timed out*"} 0 1000 50
+        set loglines1 [count_log_lines 0]
+        set loglines2 [count_log_lines -3]
+
+        # Undo packet drop, so that replica can win the next election.
+        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
+        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
+
+        # Replica doing the manual failover again.
+        R 3 cluster failover
+
+        # Make sure the election is reset.
+        wait_for_log_messages -3 {"*Failover election in progress*Resetting the election*"} $loglines2 1000 50
+
+        # Wait for failover.
+        wait_for_condition 1000 50 {
+            [s -3 role] == "master"
+        } else {
+            fail "No failover detected"
+        }
+
+        # Make sure that the second manual failover does not time out.
+        verify_no_log_message 0 "*Manual failover timed out*" $loglines1
+        verify_no_log_message -3 "*Manual failover timed out*" $loglines2
+    }
+} ;# start_cluster
+
 start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 1000}} {
     test "Broadcast PONG to the cluster when the node role changes" {
         # R0 is a primary and R3 is a replica, we will do multiple cluster failover
@@ -330,47 +372,5 @@ start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval
                 fail "Node role does not changed in the second failover"
             }
         }
-    }
-} ;# start_cluster
-
-start_cluster 3 1 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 15000}} {
-    test "Manual failover will reset the on-going election" {
-        set CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST 5
-        set CLUSTER_PACKET_TYPE_NONE -1
-
-        # Let other primaries drop FAILOVER_AUTH_REQUEST so that the election won't
-        # get the enough votes and the election will time out.
-        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
-        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_FAILOVER_AUTH_REQUEST
-
-        # Replica doing the manual failover.
-        R 3 cluster failover
-
-        # Waiting for primary and replica to confirm manual failover timeout.
-        wait_for_log_messages 0 {"*Manual failover timed out*"} 0 1000 50
-        wait_for_log_messages -3 {"*Manual failover timed out*"} 0 1000 50
-        set loglines1 [count_log_lines 0]
-        set loglines2 [count_log_lines -3]
-
-        # Undo packet drop, so that replica can win the next election.
-        R 1 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
-        R 2 debug drop-cluster-packet-filter $CLUSTER_PACKET_TYPE_NONE
-
-        # Replica doing the manual failover again.
-        R 3 cluster failover
-
-        # Make sure the election is reset.
-        wait_for_log_messages -3 {"*Failover election in progress*Resetting the election*"} $loglines2 1000 50
-
-        # Wait for failover.
-        wait_for_condition 1000 50 {
-            [s -3 role] == "master"
-        } else {
-            fail "No failover detected"
-        }
-
-        # Make sure that the second manual failover does not time out.
-        verify_no_log_message 0 "*Manual failover timed out*" $loglines1
-        verify_no_log_message -3 "*Manual failover timed out*" $loglines2
     }
 } ;# start_cluster
