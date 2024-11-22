@@ -1297,8 +1297,8 @@ void cronUpdateMemoryStats(void) {
          * allocations, and allocator reserved pages that can be pursed (all not actual frag) */
         zmalloc_get_allocator_info(
             &server.cron_malloc_stats.allocator_allocated, &server.cron_malloc_stats.allocator_active,
-            &server.cron_malloc_stats.allocator_resident, NULL, &server.cron_malloc_stats.allocator_muzzy,
-            &server.cron_malloc_stats.allocator_frag_smallbins_bytes);
+            &server.cron_malloc_stats.allocator_resident, NULL, &server.cron_malloc_stats.allocator_muzzy);
+        server.cron_malloc_stats.allocator_frag_smallbins_bytes = allocatorDefragGetFragSmallbins();
         /* in case the allocator isn't providing these stats, fake them so that
          * fragmentation info still shows some (inaccurate metrics) */
         if (!server.cron_malloc_stats.allocator_resident) {
@@ -6795,7 +6795,10 @@ __attribute__((weak)) int main(int argc, char **argv) {
 #endif
     tzset(); /* Populates 'timezone' global. */
     zmalloc_set_oom_handler(serverOutOfMemoryHandler);
-
+#if defined(HAVE_DEFRAG)
+    int res = allocatorDefragInit();
+    serverAssert(res == 0);
+#endif
     /* To achieve entropy, in case of containers, their time() and getpid() can
      * be the same. But value of tv_usec is fast enough to make the difference */
     gettimeofday(&tv, NULL);

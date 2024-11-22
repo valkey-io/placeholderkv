@@ -2091,8 +2091,7 @@ void readSyncBulkPayload(connection *conn) {
             }
             serverLog(LL_WARNING, "I/O error trying to sync with PRIMARY: %s",
                       (nread == -1) ? connGetLastError(conn) : "connection lost");
-            cancelReplicationHandshake(1);
-            return;
+            goto error;
         }
         server.stat_net_repl_input_bytes += nread;
 
@@ -2257,7 +2256,6 @@ void readSyncBulkPayload(connection *conn) {
 
         if (loadingFailed) {
             stopLoading(0);
-            cancelReplicationHandshake(1);
             rioFreeConn(&rdb, NULL);
 
             if (server.repl_diskless_load == REPL_DISKLESS_LOAD_SWAPDB) {
@@ -2277,7 +2275,7 @@ void readSyncBulkPayload(connection *conn) {
             /* Note that there's no point in restarting the AOF on SYNC
              * failure, it'll be restarted when sync succeeds or the replica
              * gets promoted. */
-            return;
+            goto error;
         }
 
         /* RDB loading succeeded if we reach this point. */
@@ -2291,7 +2289,7 @@ void readSyncBulkPayload(connection *conn) {
             swapMainDbWithTempDb(diskless_load_tempDb);
 
             /* swap existing functions ctx with the temporary one */
-            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx);
+            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 0);
 
             moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_COMPLETED,
                                   NULL);
@@ -2319,8 +2317,7 @@ void readSyncBulkPayload(connection *conn) {
                       "Failed trying to sync the temp DB to disk in "
                       "PRIMARY <-> REPLICA synchronization: %s",
                       strerror(errno));
-            cancelReplicationHandshake(1);
-            return;
+            goto error;
         }
 
         /* Rename rdb like renaming rewrite aof asynchronously. */
@@ -2330,9 +2327,8 @@ void readSyncBulkPayload(connection *conn) {
                       "Failed trying to rename the temp DB into %s in "
                       "PRIMARY <-> REPLICA synchronization: %s",
                       server.rdb_filename, strerror(errno));
-            cancelReplicationHandshake(1);
             if (old_rdb_fd != -1) close(old_rdb_fd);
-            return;
+            goto error;
         }
         /* Close old rdb asynchronously. */
         if (old_rdb_fd != -1) bioCreateCloseJob(old_rdb_fd, 0, 0);
@@ -2343,8 +2339,7 @@ void readSyncBulkPayload(connection *conn) {
                       "Failed trying to sync DB directory %s in "
                       "PRIMARY <-> REPLICA synchronization: %s",
                       server.rdb_filename, strerror(errno));
-            cancelReplicationHandshake(1);
-            return;
+            goto error;
         }
 
         /* We will soon start loading the RDB from disk, the replication history is changed,
@@ -2361,7 +2356,6 @@ void readSyncBulkPayload(connection *conn) {
         if (rdbLoad(server.rdb_filename, &rsi, RDBFLAGS_REPLICATION) != RDB_OK) {
             serverLog(LL_WARNING, "Failed trying to load the PRIMARY synchronization "
                                   "DB from disk, check server logs.");
-            cancelReplicationHandshake(1);
             if (server.rdb_del_sync_files && allPersistenceDisabled()) {
                 serverLog(LL_NOTICE, "Removing the RDB file obtained from "
                                      "the primary. This replica has persistence "
@@ -2375,7 +2369,7 @@ void readSyncBulkPayload(connection *conn) {
 
             /* Note that there's no point in restarting the AOF on sync failure,
                it'll be restarted when sync succeeds or replica promoted. */
-            return;
+            goto error;
         }
 
         /* Cleanup. */

@@ -35,6 +35,7 @@
 #include "solarisfixes.h"
 #include "rio.h"
 #include "commands.h"
+#include "allocator_defrag.h"
 
 #include <stdio.h>
 #include <stdlib.h>

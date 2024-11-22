@@ -4849,6 +4849,27 @@ void clusterHandleReplicaMigration(int max_replicas) {
  * data loss due to the asynchronous primary-replica replication.
  * -------------------------------------------------------------------------- */
 
+void manualFailoverCanStart(void) {
+    serverAssert(server.cluster->mf_can_start == 0);
+
+    if (server.cluster->failover_auth_time) {
+        /* There is another manual failover requested by the user.
+         * If we have an ongoing election, reset it because the user may initiate
+         * manual failover again when the previous manual failover timed out.
+         * Otherwise, if the previous election timed out (see auth_timeout) and
+         * before the next retry (see auth_retry_time), the new manual failover
+         * will pause the primary and replica can not do anything to advance the
+         * manual failover, and then the manual failover eventually times out. */
+        server.cluster->failover_auth_time = 0;
+        serverLog(LL_WARNING,
+                  "Failover election in progress for epoch %llu, but received a new manual failover. "
+                  "Resetting the election.",
+                  (unsigned long long)server.cluster->failover_auth_epoch);
+    }
+
+    server.cluster->mf_can_start = 1;
+}
+
 /* Reset the manual failover state. This works for both primaries and replicas
  * as all the state about manual failover is cleared.
  *
@@ -4889,7 +4910,7 @@ void clusterHandleManualFailover(void) {
     if (server.cluster->mf_primary_offset == replicationGetReplicaOffset()) {
         /* Our replication offset matches the primary replication offset
          * announced after clients were paused. We can start the failover. */
-        server.cluster->mf_can_start = 1;
+        manualFailoverCanStart();
         serverLog(LL_NOTICE, "All primary replication stream processed, "
                              "manual failover can start.");
         clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
@@ -5596,12 +5617,12 @@ sds representClusterNodeFlags(sds ci, uint16_t flags) {
  * else each slot is added separately. */
 sds representSlotInfo(sds ci, uint16_t *slot_info_pairs, int slot_info_pairs_count) {
     for (int i = 0; i < slot_info_pairs_count; i += 2) {
-        unsigned long start = slot_info_pairs[i];
-        unsigned long end = slot_info_pairs[i + 1];
+        unsigned int start = slot_info_pairs[i];
+        unsigned int end = slot_info_pairs[i + 1];
         if (start == end) {
-            ci = sdscatfmt(ci, " %i", start);
+            ci = sdscatfmt(ci, " %u", start);
         } else {
-            ci = sdscatfmt(ci, " %i-%i", start, end);
+            ci = sdscatfmt(ci, " %u-%u", start, end);
         }
     }
     return ci;
@@ -6792,7 +6813,7 @@ int clusterCommandSpecial(client *c) {
              * primary to agree about the offset. We just failover taking over
              * it without coordination. */
             serverLog(LL_NOTICE, "Forced failover user request accepted (user request from '%s').", client);
-            server.cluster->mf_can_start = 1;
+            manualFailoverCanStart();
             /* We can start a manual failover as soon as possible, setting a flag
              * here so that we don't need to waiting for the cron to kick in. */
             clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_MANUALFAILOVER);

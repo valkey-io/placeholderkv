@@ -4391,7 +4391,7 @@ static sds clusterManagerNodeInfo(clusterManagerNode *node, int indent) {
     if (node->replicate != NULL)
         info = sdscatfmt(info, "\n%s   replicates %S", spaces, node->replicate);
     else if (node->replicas_count)
-        info = sdscatfmt(info, "\n%s   %U additional replica(s)", spaces, node->replicas_count);
+        info = sdscatfmt(info, "\n%s   %i additional replica(s)", spaces, node->replicas_count);
     sdsfree(spaces);
     return info;
 }

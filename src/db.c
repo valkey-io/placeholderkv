@@ -59,6 +59,7 @@ int keyIsExpired(serverDb *db, robj *key);
 static void dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, dictEntry *de);
 static int getKVStoreIndexForKey(sds key);
 dictEntry *dbFindExpiresWithDictIndex(serverDb *db, void *key, int dict_index);
+dictEntry *dbFindWithDictIndex(serverDb *db, void *key, int dict_index);
 
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
@@ -97,7 +98,8 @@ void updateLFU(robj *val) {
  * expired on replicas even if the primary is lagging expiring our key via DELs
  * in the replication link. */
 robj *lookupKey(serverDb *db, robj *key, int flags) {
-    dictEntry *de = dbFind(db, key->ptr);
+    int dict_index = getKVStoreIndexForKey(key->ptr);
+    dictEntry *de = dbFindWithDictIndex(db, key->ptr, dict_index);
     robj *val = NULL;
     if (de) {
         val = dictGetVal(de);
@@ -113,7 +115,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        if (expireIfNeeded(db, key, expire_flags) != KEY_VALID) {
+        if (expireIfNeededWithDictIndex(db, key, expire_flags, dict_index) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
         }
@@ -129,7 +131,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)) {
             if (!canUseSharedObject() && val->refcount == OBJ_SHARED_REFCOUNT) {
                 val = dupStringObject(val);
-                kvstoreDictSetVal(db->keys, getKVStoreIndexForKey(key->ptr), de, val);
+                kvstoreDictSetVal(db->keys, dict_index, de, val);
             }
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
@@ -834,13 +836,23 @@ void keysCommand(client *c) {
     } else {
         kvs_it = kvstoreIteratorInit(c->db->keys);
     }
-    robj keyobj;
-    while ((de = kvs_di ? kvstoreDictIteratorNext(kvs_di) : kvstoreIteratorNext(kvs_it)) != NULL) {
+    while (1) {
+        robj keyobj;
+        int dict_index;
+        if (kvs_di) {
+            de = kvstoreDictIteratorNext(kvs_di);
+            dict_index = pslot;
+        } else {
+            de = kvstoreIteratorNext(kvs_it);
+            dict_index = kvstoreIteratorGetCurrentDictIndex(kvs_it);
+        }
+        if (de == NULL) break;
+
         sds key = dictGetKey(de);
 
         if (allkeys || stringmatchlen(pattern, plen, key, sdslen(key), 0)) {
             initStaticStringObject(keyobj, key);
-            if (!keyIsExpired(c->db, &keyobj)) {
+            if (!keyIsExpiredWithDictIndex(c->db, &keyobj, dict_index)) {
                 addReplyBulkCBuffer(c, key, sdslen(key));
                 numkeys++;
             }

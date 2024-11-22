@@ -18,10 +18,12 @@
 /* The flags are the following:
  * --accurate:     Runs tests with more iterations.
  * --large-memory: Enables tests that consume more than 100mb.
- * --single:       A flag to indicate a specific test file was executed. */
+ * --single:       A flag to indicate a specific test file was executed.
+ * --valgrind:     Runs tests with valgrind. */
 #define UNIT_TEST_ACCURATE (1 << 0)
 #define UNIT_TEST_LARGE_MEMORY (1 << 1)
 #define UNIT_TEST_SINGLE (1 << 2)
+#define UNIT_TEST_VALGRIND (1 << 3)
 
 #define KRED "\33[31m"
 #define KGRN "\33[32m"
