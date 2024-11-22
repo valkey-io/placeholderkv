@@ -4325,7 +4325,7 @@ int prepareForShutdown(client *c, int flags) {
     server.shutdown_flags = flags;
 
     if (c != NULL) {
-        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
         serverLog(LL_NOTICE, "User requested shutdown... (user request from '%s')", client);
         sdsfree(client);
     } else {

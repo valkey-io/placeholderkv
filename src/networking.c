@@ -3385,6 +3385,29 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
     return ret;
 }
 
+/* Concatenate a string representing the state of a client in a human
+ * readable format, into the sds string 's'.
+ *
+ * This is a simplified and shortened version of catClientInfoString,
+ * it only added some basic fields for tracking clients. */
+sds catClientInfoShortString(sds s, client *client, int hide_user_data) {
+    if (!server.crashed) waitForClientIO(client);
+    char conninfo[CONN_INFO_LEN];
+
+    sds ret = sdscatfmt(
+        s,
+        FMTARGS(
+            "id=%U", (unsigned long long)client->id,
+            " addr=%s", getClientPeerId(client),
+            " laddr=%s", getClientSockname(client),
+            " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
+            " name=%s", hide_user_data ? "*redacted*" : (client->name ? (char *)client->name->ptr : ""),
+            " user=%s", hide_user_data ? "*redacted*" : (client->user ? client->user->name : "(superuser)"),
+            " lib-name=%s", client->lib_name ? (char *)client->lib_name->ptr : "",
+            " lib-ver=%s", client->lib_ver ? (char *)client->lib_ver->ptr : ""));
+    return ret;
+}
+
 sds getAllClientsInfoString(int type, int hide_user_data) {
     listNode *ln;
     listIter li;

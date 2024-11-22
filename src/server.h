@@ -2853,6 +2853,7 @@ char *getClientPeerId(client *client);
 char *getClientSockName(client *client);
 int isClientConnIpV6(client *c);
 sds catClientInfoString(sds s, client *client, int hide_user_data);
+sds catClientInfoShortString(sds s, client *client, int hide_user_data);
 sds getAllClientsInfoString(int type, int hide_user_data);
 int clientSetName(client *c, robj *name, const char **err);
 void rewriteClientCommandVector(client *c, int argc, ...);
