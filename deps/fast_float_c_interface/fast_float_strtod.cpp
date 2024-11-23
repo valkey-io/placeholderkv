@@ -15,8 +15,6 @@ extern "C"
         auto answer = fast_float::from_chars(str, str + strlen(str), temp);
         if (answer.ec != std::errc()) {
             errno = (answer.ec == std::errc::result_out_of_range) ? ERANGE : EINVAL;
-        } else {
-            errno = 0;
         }
         if (endptr) {
             *endptr = answer.ptr;
