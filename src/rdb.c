@@ -49,6 +49,9 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 
+/* Size of the static buffer used for rdbcompression */
+#define LZF_STATIC_BUFFER_SIZE (8 * 1024)
+
 /* This macro is called when the internal RDB structure is corrupt */
 #define rdbReportCorruptRDB(...) rdbReportError(1, __LINE__, __VA_ARGS__)
 /* This macro is called when RDB read failed (possibly a short read) */
@@ -400,12 +403,8 @@ ssize_t rdbSaveLzfStringObject(rio *rdb, unsigned char *s, size_t len) {
         if ((out = zmalloc(outlen + 1)) == NULL) return 0;
     }
     comprlen = lzf_compress(s, len, out, outlen);
-    if (comprlen == 0) {
-        if (outlen >= LZF_STATIC_BUFFER_SIZE) zfree(out);
-        return 0;
-    }
-    ssize_t nwritten = rdbSaveLzfBlob(rdb, out, comprlen, len);
-    if (outlen >= LZF_STATIC_BUFFER_SIZE) zfree(out);
+    ssize_t nwritten = comprlen ? rdbSaveLzfBlob(rdb, out, comprlen, len) : 0;
+    if (out != buffer) zfree(out);
     return nwritten;
 }
 
