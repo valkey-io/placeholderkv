@@ -15,19 +15,18 @@ on:
         description: The build targets to produce as a JSON matrix.
         type: string
         required: true
-    secrets:
-      token:
-        description: The Github token or similar to authenticate with.
+      region:
+        description: The AWS region to push packages into.
+        type: string
         required: true
-      bucket:
-        description: The name of the S3 bucket to push packages into.
-        required: false
-      access_key_id:
-        description: The S3 access key id for the bucket.
-        required: false
-      secret_access_key:
-        description: The S3 secret access key for the bucket.
-        required: false
+      bucket_name:
+        description: The S3 bucket to push packages into.
+        type: string
+        required: true
+    secrets:
+      role_to_assume:
+        description: The role to assume for the S3 bucket.
+        required: true
 
 permissions:
   contents: read
@@ -65,15 +64,11 @@ jobs:
           mkdir -p packages-files
           cp -rfv $TAR_FILE_NAME.tar* packages-files/
 
-      - name: Install AWS cli.
-        run: |
-          sudo apt-get install -y awscli
-
       - name: Configure AWS credentials
-        run: |
-          aws configure set region us-west-2
-          aws configure set aws_access_key_id ${{ secrets.access_key_id }}
-          aws configure set aws_secret_access_key ${{ secrets.secret_access_key }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ inputs.region }}
+          role-to-assume: ${{ secrets.role_to_assume }}
 
       - name: Sync to S3
-        run: aws s3 sync packages-files s3://${{secrets.bucket}}/releases/
+        run: aws s3 sync packages-files s3://${{ inputs.bucket_name }}/releases/
