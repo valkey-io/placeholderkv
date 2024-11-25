@@ -19,16 +19,16 @@ on:
         description: The AWS region to push packages into.
         type: string
         required: true
+    secrets:
       bucket_name:
         description: The S3 bucket to push packages into.
-        type: string
         required: true
-    secrets:
       role_to_assume:
         description: The role to assume for the S3 bucket.
         required: true
 
 permissions:
+  id-token: write
   contents: read
 
 jobs:
@@ -46,10 +46,10 @@ jobs:
           ref: ${{ inputs.version }}
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ inputs.region }}
-          role-to-assume: arn:aws:iam::156041445810:role/github-action
+          role-to-assume: ${{ secrets.role_to_assume }}
 
       - name: Make Valkey
         uses: uraimo/run-on-arch-action@v2
@@ -71,4 +71,4 @@ jobs:
           cp -rfv $TAR_FILE_NAME.tar* packages-files/
 
       - name: Sync to S3
-        run: aws s3 sync packages-files s3://${{ inputs.bucket_name }}/releases/
+        run: aws s3 sync packages-files s3://${{ secrets.bucket_name }}/releases/
