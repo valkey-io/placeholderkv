@@ -3572,7 +3572,7 @@ long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callbac
 void flushAllDataAndResetRDB(int flags);
 long long dbTotalServerKeyCount(void);
 serverDb *initTempDb(void);
-void discardTempDb(serverDb *tempDb, void(callback)(dict *));
+void discardTempDb(serverDb *tempDb);
 
 
 int selectDb(client *c, int id);

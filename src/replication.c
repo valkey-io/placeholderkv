@@ -1981,7 +1981,20 @@ serverDb *disklessLoadInitTempDb(void) {
 /* Helper function for readSyncBulkPayload() to discard our tempDb
  * when the loading succeeded or failed. */
 void disklessLoadDiscardTempDb(serverDb *tempDb) {
-    discardTempDb(tempDb, replicationEmptyDbCallback);
+    discardTempDb(tempDb);
+}
+
+/* Helper function for to initialize temp function lib context.
+ * The temp ctx may be populated by functionsLibCtxSwapWithCurrent or
+ * freed by disklessLoadDiscardFunctionsLibCtx later. */
+functionsLibCtx *disklessLoadFunctionsLibCtxCreate(void) {
+    return functionsLibCtxCreate();
+}
+
+/* Helper function to discard our temp function lib context
+ * when the loading succeeded or failed. */
+void disklessLoadDiscardFunctionsLibCtx(functionsLibCtx *temp_functions_lib_ctx) {
+    freeFunctionsAsync(temp_functions_lib_ctx);
 }
 
 /* If we know we got an entirely different data set from our primary
@@ -2186,7 +2199,7 @@ void readSyncBulkPayload(connection *conn) {
     if (use_diskless_load && server.repl_diskless_load == REPL_DISKLESS_LOAD_SWAPDB) {
         /* Initialize empty tempDb dictionaries. */
         diskless_load_tempDb = disklessLoadInitTempDb();
-        temp_functions_lib_ctx = functionsLibCtxCreate();
+        temp_functions_lib_ctx = disklessLoadFunctionsLibCtxCreate();
 
         moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_STARTED, NULL);
     }
@@ -2226,7 +2239,6 @@ void readSyncBulkPayload(connection *conn) {
 
             dbarray = server.db;
             functions_lib_ctx = functionsLibCtxGetCurrent();
-            functionsLibCtxClear(functions_lib_ctx);
         }
 
         rioInitWithConn(&rdb, conn, server.repl_transfer_size);
@@ -2264,7 +2276,7 @@ void readSyncBulkPayload(connection *conn) {
                                       NULL);
 
                 disklessLoadDiscardTempDb(diskless_load_tempDb);
-                functionsLibCtxFree(temp_functions_lib_ctx);
+                disklessLoadDiscardFunctionsLibCtx(temp_functions_lib_ctx);
                 serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Discarding temporary DB in background");
             } else {
                 /* Remove the half-loaded data in case we started with an empty replica. */
@@ -2289,7 +2301,7 @@ void readSyncBulkPayload(connection *conn) {
             swapMainDbWithTempDb(diskless_load_tempDb);
 
             /* swap existing functions ctx with the temporary one */
-            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 0);
+            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 1);
 
             moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_COMPLETED,
                                   NULL);
