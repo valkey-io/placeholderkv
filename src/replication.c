@@ -1122,10 +1122,10 @@ void syncCommand(client *c) {
             if (primary_replid[0] != '?') server.stat_sync_partial_err++;
             if (c->replica_capa & REPLICA_CAPA_DUAL_CHANNEL) {
                 dualChannelServerLog(LL_NOTICE,
-                          "Replica %s is capable of dual channel synchronization, and partial sync "
-                          "isn't possible. "
-                          "Full sync will continue with dedicated RDB channel.",
-                          replicationGetReplicaName(c));
+                                     "Replica %s is capable of dual channel synchronization, and partial sync "
+                                     "isn't possible. "
+                                     "Full sync will continue with dedicated RDB channel.",
+                                     replicationGetReplicaName(c));
                 const char *buf = "+DUALCHANNELSYNC\r\n";
                 if (connWrite(c->conn, buf, strlen(buf)) != (int)strlen(buf)) {
                     freeClientAsync(c);
@@ -2639,7 +2639,7 @@ static int dualChannelReplHandleHandshake(connection *conn, sds *err) {
     if (connSetReadHandler(conn, dualChannelFullSyncWithPrimary) == C_ERR) {
         char conninfo[CONN_INFO_LEN];
         dualChannelServerLog(LL_WARNING, "Can't create readable event for SYNC: %s (%s)", strerror(errno),
-                  connGetInfo(conn, conninfo, sizeof(conninfo)));
+                             connGetInfo(conn, conninfo, sizeof(conninfo)));
         return C_ERR;
     }
     return C_OK;
@@ -2668,7 +2668,7 @@ static int dualChannelReplHandleReplconfReply(connection *conn, sds *err) {
 
     if (*err[0] == '-') {
         dualChannelServerLog(LL_NOTICE, "Server does not support sync with offset, dual channel sync approach cannot be used: %s",
-                  *err);
+                             *err);
         return C_ERR;
     }
     if (connSyncWrite(conn, "SYNC\r\n", 6, server.repl_syncio_timeout * 1000) == -1) {
@@ -3070,8 +3070,8 @@ int replicaTryPartialResynchronization(connection *conn, int read_reply) {
             psync_replid = server.repl_provisional_primary.replid;
             snprintf(psync_offset, sizeof(psync_offset), "%lld", server.repl_provisional_primary.reploff + 1);
             dualChannelServerLog(LL_NOTICE,
-                      "Trying a partial resynchronization using main channel (request %s:%s).",
-                      psync_replid, psync_offset);
+                                 "Trying a partial resynchronization using main channel (request %s:%s).",
+                                 psync_replid, psync_offset);
         } else if (server.cached_primary) {
             psync_replid = server.cached_primary->replid;
             snprintf(psync_offset, sizeof(psync_offset), "%lld", server.cached_primary->reploff + 1);
@@ -3284,7 +3284,7 @@ int dualChannelReplMainConnRecvPsyncReply(connection *conn, sds *err) {
 
     if (psync_result == PSYNC_CONTINUE) {
         dualChannelServerLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Primary accepted a Partial Resynchronization%s",
-                  server.repl_rdb_transfer_s != NULL ? ", RDB load in background." : ".");
+                             server.repl_rdb_transfer_s != NULL ? ", RDB load in background." : ".");
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             serverCommunicateSystemd("STATUS=PRIMARY <-> REPLICA sync: Partial Resynchronization accepted. Ready to "
                                      "accept connections in read-write mode.\n");

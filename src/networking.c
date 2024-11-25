@@ -1964,7 +1964,7 @@ int freeClientsInAsyncFreeQueue(void) {
                 if (c->conn) connSetReadHandler(c->conn, NULL);
                 c->rdb_client_disconnect_time = server.unixtime;
                 dualChannelServerLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds",
-                          (unsigned long long)c->id, replicationGetReplicaName(c), server.wait_before_rdb_client_free);
+                                     (unsigned long long)c->id, replicationGetReplicaName(c), server.wait_before_rdb_client_free);
             }
             if (server.unixtime - c->rdb_client_disconnect_time <= server.wait_before_rdb_client_free) continue;
             dualChannelServerLog(
