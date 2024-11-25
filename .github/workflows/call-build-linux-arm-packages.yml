@@ -45,6 +45,12 @@ jobs:
         with:
           ref: ${{ inputs.version }}
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ inputs.region }}
+          role-to-assume: arn:aws:iam::156041445810:role/github-action
+
       - name: Make Valkey
         uses: uraimo/run-on-arch-action@v2
         with:
@@ -63,12 +69,6 @@ jobs:
           sha256sum $TAR_FILE_NAME.tar.gz > $TAR_FILE_NAME.tar.gz.sha256
           mkdir -p packages-files
           cp -rfv $TAR_FILE_NAME.tar* packages-files/
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-region: ${{ inputs.region }}
-          role-to-assume: ${{ secrets.role_to_assume }}
 
       - name: Sync to S3
         run: aws s3 sync packages-files s3://${{ inputs.bucket_name }}/releases/
