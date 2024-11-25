@@ -1891,6 +1891,8 @@ static int timestampIsExpired(mstime_t when) {
 
 /* Use this instead of keyIsExpired if you already have the value object. */
 static int objectIsExpired(robj *val) {
+    /* Don't expire anything while loading. It will be done later. */
+    if (server.loading) return 0;
     return timestampIsExpired(objectGetExpire(val));
 }
 
@@ -2003,7 +2005,7 @@ static keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, robj *val,
  * EXPIRE_AVOID_DELETE_EXPIRED flag.
  *
  * Passing the value 'val' to this function is optional, as an optimization to
- * avoid looking up the key. Pass NULL is it's not already fetched from the
+ * avoid looking up the key. Pass NULL if it's not already fetched from the
  * database.
  *
  * The return value of the function is KEY_VALID if the key is still valid.
