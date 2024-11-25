@@ -676,6 +676,32 @@ tags "modules" {
     }
 }
 
+tags "modules" {
+    start_server [list overrides [list loadmodule "$testmodule"]] {
+        set replica [srv 0 client]
+        set replica_host [srv 0 host]
+        set replica_port [srv 0 port]
+        start_server [list overrides [list loadmodule "$testmodule"]] {
+            set master [srv 0 client]
+            set master_host [srv 0 host]
+            set master_port [srv 0 port]
+            # Start the replication process...
+            $replica replicaof $master_host $master_port
+            wait_for_sync $replica
+            after 1000
+            test {module crash when propagating invalid command} {
+                $master propagate-test.invalid
+                catch {wait_for_sync $replica}
+
+                wait_for_log_messages -1 {"*=== * BUG REPORT START: Cut & paste starting from here ===*"} 0 10 1000
+                wait_for_log_messages -1 {"* This replica panicked sending an error to its primary after processing the command '<unknown>' *"} 0 10 1000
+                
+                assert_equal 1 [count_log_message -1 "=== .* BUG REPORT START: Cut & paste starting from here ==="]
+                assert_equal 1 [count_log_message -1 "This replica panicked sending an error to its primary after processing the command '<unknown>'"]
+            }
+        }
+    }
+}
 
 tags "modules aof" {
     foreach aofload_type {debug_cmd startup} {

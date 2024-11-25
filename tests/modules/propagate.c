@@ -250,7 +250,8 @@ int propagateTestSimpleCommand(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, 
 
     /* Replicate two commands to test MULTI/EXEC wrapping. */
     ValkeyModule_Replicate(ctx,"INCR","c","counter-1");
-    ValkeyModule_Replicate(ctx,"INCR","c","counter-2");
+    ValkeyModule_ReplicateWithFlag(ctx, VALKEYMODULE_FLAG_SKIP_VALIDATION, "INCR",
+                                   "c", "counter-2");
     ValkeyModule_ReplyWithSimpleString(ctx,"OK");
     return VALKEYMODULE_OK;
 }
@@ -266,12 +267,25 @@ int propagateTestMixedCommand(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, i
     ValkeyModule_FreeCallReply(reply);
 
     ValkeyModule_Replicate(ctx,"INCR","c","counter-1");
-    ValkeyModule_Replicate(ctx,"INCR","c","counter-2");
-
+    ValkeyModule_ReplicateWithFlag(ctx, VALKEYMODULE_FLAG_SKIP_VALIDATION, "INCR",
+                                   "c", "counter-2");
     reply = ValkeyModule_Call(ctx, "INCR", "c!", "after-call");
     ValkeyModule_FreeCallReply(reply);
 
     ValkeyModule_ReplyWithSimpleString(ctx,"OK");
+    return VALKEYMODULE_OK;
+}
+
+int propagateTestInvalidCommand(ValkeyModuleCtx *ctx, ValkeyModuleString **argv,
+                                int argc) {
+    VALKEYMODULE_NOT_USED(argv);
+    VALKEYMODULE_NOT_USED(argc);
+    /* Replicate two commands to test MULTI/EXEC wrapping. */
+    ValkeyModule_ReplicateWithFlag(ctx, VALKEYMODULE_FLAG_SKIP_VALIDATION, "INVALID",
+                                   "c", "counter-1");
+    ValkeyModule_ReplicateWithFlag(ctx, VALKEYMODULE_FLAG_SKIP_VALIDATION, "INVALID",
+                                   "c", "counter-2");
+    ValkeyModule_ReplyWithSimpleString(ctx, "OK");
     return VALKEYMODULE_OK;
 }
 
@@ -379,6 +393,11 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int arg
                 propagateTestMixedCommand,
                 "write",1,1,1) == VALKEYMODULE_ERR)
             return VALKEYMODULE_ERR;
+
+    if (ValkeyModule_CreateCommand(ctx, "propagate-test.invalid",
+                                   propagateTestInvalidCommand, "", 1, 1,
+                                   1) == VALKEYMODULE_ERR)
+        return VALKEYMODULE_ERR;
 
     if (ValkeyModule_CreateCommand(ctx,"propagate-test.nested",
                 propagateTestNestedCommand,
