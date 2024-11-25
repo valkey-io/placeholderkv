@@ -912,6 +912,7 @@ void keysCommand(client *c) {
 typedef struct {
     list *keys;     /* elements that collect from dict */
     robj *o;        /* o must be a hash/set/zset object, NULL means current db */
+    serverDb *db;   /* database currently being scanned */
     long long type; /* the particular type when scan the db */
     sds pattern;    /* pattern string, NULL means no pattern */
     long sampled;   /* cumulative number of keys sampled */
@@ -950,6 +951,15 @@ void keysScanCallback(void *privdata, void *entry) {
     /* Filter object if its key does not match the pattern. */
     if (data->pattern) {
         if (!stringmatchlen(data->pattern, sdslen(data->pattern), key, sdslen(key), 0)) {
+            return;
+        }
+    }
+
+    /* Handle and skip expired key. */
+    if (objectIsExpired(obj)) {
+        robj kobj;
+        initStaticStringObject(kobj, key);
+        if (expireIfNeeded(data->db, &kobj, obj, 0) != KEY_VALID) {
             return;
         }
     }
@@ -1184,6 +1194,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
          * only keys are returned. */
         scanData data = {
             .keys = keys,
+            .db = c->db,
             .o = o,
             .type = type,
             .pattern = use_pattern ? pat : NULL,
@@ -1252,25 +1263,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
         serverPanic("Not handled encoding in SCAN.");
     }
 
-    /* Step 3: Filter the expired keys */
-    /* TODO: Do this in the keysScanCallback where we have the valkey objects
-     * that contain the TTL (or add valkey object to the list instead of just
-     * the keys). Then we don't need to look them up again here. */
-    if (o == NULL && listLength(keys)) {
-        robj kobj;
-        listIter li;
-        listNode *ln;
-        listRewind(keys, &li);
-        while ((ln = listNext(&li))) {
-            sds key = listNodeValue(ln);
-            initStaticStringObject(kobj, key);
-            if (expireIfNeeded(c->db, &kobj, NULL, 0) != KEY_VALID) {
-                listDelNode(keys, ln);
-            }
-        }
-    }
-
-    /* Step 4: Reply to the client. */
+    /* Step 3: Reply to the client. */
     addReplyArrayLen(c, 2);
     addReplyBulkLongLong(c, cursor);
 
