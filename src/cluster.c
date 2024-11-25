@@ -1471,12 +1471,24 @@ void askingCommand(client *c) {
  * In this mode replica will not redirect clients as long as clients access
  * with read-only commands to keys that are served by the replica's primary. */
 void readonlyCommand(client *c) {
+    if (server.cluster_enabled == 0 && !(c->capa & CLIENT_CAPA_REDIRECT)) {
+        addReplyError(c, "This instance has cluster support disabled,"
+                         " you need to execute the CLIENT CAPA REDIRECT command,"
+                         " before you can use the READONLY command in standalone mode.");
+        return;
+    }
     c->flag.readonly = 1;
     addReply(c, shared.ok);
 }
 
 /* The READWRITE command just clears the READONLY command state. */
 void readwriteCommand(client *c) {
+    if (server.cluster_enabled == 0 && !(c->capa & CLIENT_CAPA_REDIRECT)) {
+        addReplyError(c, "This instance has cluster support disabled,"
+                         " you need to execute the CLIENT CAPA REDIRECT command,"
+                         " before you can use the READWRITE command in standalone mode.");
+        return;
+    }
     c->flag.readonly = 0;
     addReply(c, shared.ok);
 }

@@ -9,6 +9,11 @@ start_server {tags {needs:repl external:skip}} {
         set replica_port [srv 0 port]
         set replica_pid [srv 0 pid]
 
+        test {READONLY and READWRITE commands are disabled by default} {
+            assert_error {*cluster*disabled*READONLY*standalone*} {r readonly}
+            assert_error {*cluster*disabled*READWRITE*standalone*} {r readwrite}
+        }
+
         test {write command inside MULTI is QUEUED, EXEC should be REDIRECT} {
             set rr [valkey_client]
             $rr client capa redirect
