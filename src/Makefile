@@ -424,6 +424,17 @@ ENGINE_TEST_OBJ:=$(sort $(patsubst unit/%.c,unit/%.o,$(ENGINE_TEST_FILES)))
 ENGINE_UNIT_TESTS:=$(ENGINE_NAME)-unit-tests$(PROG_SUFFIX)
 ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(ENGINE_BENCHMARK_OBJ)))
 
+USE_FAST_FLOAT?=no
+ifeq ($(USE_FAST_FLOAT),yes)
+	# valkey_strtod.h uses this flag to switch valkey_strtod function to fast_float_strtod,
+	# therefore let's pass it to compiler for preprocessing.
+	FINAL_CFLAGS += -D USE_FAST_FLOAT
+	# next, let's build and add actual library containing fast_float_strtod function for linking.
+	DEPENDENCY_TARGETS += fast_float_c_interface
+	FAST_FLOAT_STRTOD_OBJECT := ../deps/fast_float_c_interface/fast_float_strtod.o
+	FINAL_LIBS += $(FAST_FLOAT_STRTOD_OBJECT)
+endif
+
 all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
@@ -588,7 +599,7 @@ bench: $(ENGINE_BENCHMARK_NAME)
 
 32bit:
 	@echo ""
-	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
+	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386 and libstdc++-11-dev-i386-cross"
 	@echo ""
 	$(MAKE) all-with-unit-tests CFLAGS="-m32" LDFLAGS="-m32"
 

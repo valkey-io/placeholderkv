@@ -1981,7 +1981,20 @@ serverDb *disklessLoadInitTempDb(void) {
 /* Helper function for readSyncBulkPayload() to discard our tempDb
  * when the loading succeeded or failed. */
 void disklessLoadDiscardTempDb(serverDb *tempDb) {
-    discardTempDb(tempDb, replicationEmptyDbCallback);
+    discardTempDb(tempDb);
+}
+
+/* Helper function for to initialize temp function lib context.
+ * The temp ctx may be populated by functionsLibCtxSwapWithCurrent or
+ * freed by disklessLoadDiscardFunctionsLibCtx later. */
+functionsLibCtx *disklessLoadFunctionsLibCtxCreate(void) {
+    return functionsLibCtxCreate();
+}
+
+/* Helper function to discard our temp function lib context
+ * when the loading succeeded or failed. */
+void disklessLoadDiscardFunctionsLibCtx(functionsLibCtx *temp_functions_lib_ctx) {
+    freeFunctionsAsync(temp_functions_lib_ctx);
 }
 
 /* If we know we got an entirely different data set from our primary
@@ -2186,7 +2199,7 @@ void readSyncBulkPayload(connection *conn) {
     if (use_diskless_load && server.repl_diskless_load == REPL_DISKLESS_LOAD_SWAPDB) {
         /* Initialize empty tempDb dictionaries. */
         diskless_load_tempDb = disklessLoadInitTempDb();
-        temp_functions_lib_ctx = functionsLibCtxCreate();
+        temp_functions_lib_ctx = disklessLoadFunctionsLibCtxCreate();
 
         moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_STARTED, NULL);
     }
@@ -2226,7 +2239,6 @@ void readSyncBulkPayload(connection *conn) {
 
             dbarray = server.db;
             functions_lib_ctx = functionsLibCtxGetCurrent();
-            functionsLibCtxClear(functions_lib_ctx);
         }
 
         rioInitWithConn(&rdb, conn, server.repl_transfer_size);
@@ -2264,7 +2276,7 @@ void readSyncBulkPayload(connection *conn) {
                                       NULL);
 
                 disklessLoadDiscardTempDb(diskless_load_tempDb);
-                functionsLibCtxFree(temp_functions_lib_ctx);
+                disklessLoadDiscardFunctionsLibCtx(temp_functions_lib_ctx);
                 serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Discarding temporary DB in background");
             } else {
                 /* Remove the half-loaded data in case we started with an empty replica. */
@@ -2289,7 +2301,7 @@ void readSyncBulkPayload(connection *conn) {
             swapMainDbWithTempDb(diskless_load_tempDb);
 
             /* swap existing functions ctx with the temporary one */
-            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 0);
+            functionsLibCtxSwapWithCurrent(temp_functions_lib_ctx, 1);
 
             moduleFireServerEvent(VALKEYMODULE_EVENT_REPL_ASYNC_LOAD, VALKEYMODULE_SUBEVENT_REPL_ASYNC_LOAD_COMPLETED,
                                   NULL);
@@ -3402,7 +3414,6 @@ void dualChannelSetupMainConnForPsync(connection *conn) {
  * establish a connection with the primary. */
 void syncWithPrimary(connection *conn) {
     char tmpfile[256], *err = NULL;
-    int dfd = -1, maxtries = 5;
     int psync_result;
 
     /* If this event fired after the user turned the instance into a primary
@@ -3672,11 +3683,16 @@ void syncWithPrimary(connection *conn) {
 
     /* Prepare a suitable temp file for bulk transfer */
     if (!useDisklessLoad()) {
+        int dfd = -1, maxtries = 5;
         while (maxtries--) {
             snprintf(tmpfile, 256, "temp-%d.%ld.rdb", (int)server.unixtime, (long int)getpid());
             dfd = open(tmpfile, O_CREAT | O_WRONLY | O_EXCL, 0644);
             if (dfd != -1) break;
+            /* We save the errno of open to prevent some systems from modifying it after
+             * the sleep call. For example, sleep in Mac will change errno to ETIMEDOUT. */
+            int saved_errno = errno;
             sleep(1);
+            errno = saved_errno;
         }
         if (dfd == -1) {
             serverLog(LL_WARNING, "Opening the temp file needed for PRIMARY <-> REPLICA synchronization: %s",
@@ -3728,7 +3744,6 @@ no_response_error: /* Handle receiveSynchronousResponse() error when primary has
     /* Fall through to regular error handling */
 
 error:
-    if (dfd != -1) close(dfd);
     connClose(conn);
     server.repl_transfer_s = NULL;
     if (server.repl_rdb_transfer_s) {

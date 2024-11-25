@@ -574,7 +574,7 @@ long long emptyData(int dbnum, int flags, void(callback)(dict *)) {
 
     if (with_functions) {
         serverAssert(dbnum == -1);
-        functionsLibCtxClearCurrent(async);
+        functionsLibCtxClearCurrent(async, callback);
     }
 
     /* Also fire the end event. Note that this event will fire almost
@@ -602,12 +602,10 @@ serverDb *initTempDb(void) {
     return tempDb;
 }
 
-/* Discard tempDb, this can be slow (similar to FLUSHALL), but it's always async. */
-void discardTempDb(serverDb *tempDb, void(callback)(dict *)) {
-    int async = 1;
-
+/* Discard tempDb, it's always async. */
+void discardTempDb(serverDb *tempDb) {
     /* Release temp DBs. */
-    emptyDbStructure(tempDb, -1, async, callback);
+    emptyDbStructure(tempDb, -1, 1, NULL);
     for (int i = 0; i < server.dbnum; i++) {
         kvstoreRelease(tempDb[i].keys);
         kvstoreRelease(tempDb[i].expires);

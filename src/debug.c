@@ -46,6 +46,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "valkey_strtod.h"
+
 #ifdef HAVE_BACKTRACE
 #include <execinfo.h>
 #ifndef __OpenBSD__
@@ -846,7 +848,7 @@ void debugCommand(client *c) {
                              "string|integer|double|bignum|null|array|set|map|attrib|push|verbatim|true|false");
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "sleep") && c->argc == 3) {
-        double dtime = strtod(c->argv[2]->ptr, NULL);
+        double dtime = valkey_strtod(c->argv[2]->ptr, NULL);
         long long utime = dtime * 1000000;
         struct timespec tv;
 

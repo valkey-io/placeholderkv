@@ -161,9 +161,9 @@ static void engineLibraryDispose(void *obj) {
 }
 
 /* Clear all the functions from the given library ctx */
-void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
-    dictEmpty(lib_ctx->functions, NULL);
-    dictEmpty(lib_ctx->libraries, NULL);
+void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *)) {
+    dictEmpty(lib_ctx->functions, callback);
+    dictEmpty(lib_ctx->libraries, callback);
     dictIterator *iter = dictGetIterator(lib_ctx->engines_stats);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -175,13 +175,13 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
     lib_ctx->cache_memory = 0;
 }
 
-void functionsLibCtxClearCurrent(int async) {
+void functionsLibCtxClearCurrent(int async, void(callback)(dict *)) {
     if (async) {
         functionsLibCtx *old_l_ctx = curr_functions_lib_ctx;
         curr_functions_lib_ctx = functionsLibCtxCreate();
         freeFunctionsAsync(old_l_ctx);
     } else {
-        functionsLibCtxClear(curr_functions_lib_ctx);
+        functionsLibCtxClear(curr_functions_lib_ctx, callback);
     }
 }
 
@@ -196,7 +196,7 @@ static void functionsLibCtxFreeGeneric(functionsLibCtx *functions_lib_ctx, int a
 
 /* Free the given functions ctx */
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
-    functionsLibCtxClear(functions_lib_ctx);
+    functionsLibCtxClear(functions_lib_ctx, NULL);
     dictRelease(functions_lib_ctx->functions);
     dictRelease(functions_lib_ctx->libraries);
     dictRelease(functions_lib_ctx->engines_stats);
@@ -380,7 +380,7 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
     dictReleaseIterator(iter);
     iter = NULL;
 
-    functionsLibCtxClear(functions_lib_ctx_src);
+    functionsLibCtxClear(functions_lib_ctx_src, NULL);
     if (old_libraries_list) {
         listRelease(old_libraries_list);
         old_libraries_list = NULL;
@@ -820,7 +820,7 @@ void functionFlushCommand(client *c) {
         return;
     }
 
-    functionsLibCtxClearCurrent(async);
+    functionsLibCtxClearCurrent(async, NULL);
 
     /* Indicate that the command changed the data so it will be replicated and
      * counted as a data change (for persistence configuration) */
