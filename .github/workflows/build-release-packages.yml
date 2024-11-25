@@ -69,8 +69,8 @@ jobs:
       ref: ${{ inputs.version || github.ref_name }}
       build_matrix: ${{ needs.generate-build-matrix.outputs.x86_64-build-matrix }}
       region: us-west-2
-      bucket_name: valkey-build
     secrets:
+      bucket_name: ${{ secrets.AWS_S3_BUCKET }}
       role_to_assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
   release-build-linux-arm-packages:
@@ -83,6 +83,6 @@ jobs:
       ref: ${{ inputs.version || github.ref_name }}
       build_matrix: ${{ needs.generate-build-matrix.outputs.arm64-build-matrix }}
       region: us-west-2
-      bucket_name: valkey-build
     secrets:
+      bucket_name: ${{ secrets.AWS_S3_BUCKET }}
       role_to_assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
