@@ -31,6 +31,7 @@
 #include "sds.h"
 #include "dict.h"
 #include "adlist.h"
+#include "module.h"
 
 #define LOAD_TIMEOUT_MS 500
 
@@ -454,6 +455,7 @@ int functionsRegisterEngine(const char *engine_name,
     *ei = (engineInfo){
         .name = engine_name_sds,
         .engineModule = engine_module,
+        .module_ctx = engine_module ? moduleAllocateContext() : NULL,
         .engine = engine,
         .c = c,
     };
@@ -496,6 +498,10 @@ int functionsUnregisterEngine(const char *engine_name) {
     zfree(ei->engine);
     sdsfree(ei->name);
     freeClient(ei->c);
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        zfree(ei->module_ctx);
+    }
     zfree(ei);
 
     sdsfree(engine_name_sds);
@@ -688,18 +694,70 @@ uint64_t fcallGetCommandFlags(client *c, uint64_t cmd_flags) {
     return scriptFlagsToCmdFlags(cmd_flags, script_flags);
 }
 
+static void fcallCommandGeneric(client *c, int ro) {
+    /* Functions need to be fed to monitors before the commands they execute. */
+    replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
+
+    robj *function_name = c->argv[1];
+    dictEntry *de = c->cur_script;
+    if (!de) de = dictFind(curr_functions_lib_ctx->functions, function_name->ptr);
+    if (!de) {
+        addReplyError(c, "Function not found");
+        return;
+    }
+    functionInfo *fi = dictGetVal(de);
+    engine *engine = fi->li->ei->engine;
+
+    long long numkeys;
+    /* Get the number of arguments that are keys */
+    if (getLongLongFromObject(c->argv[2], &numkeys) != C_OK) {
+        addReplyError(c, "Bad number of keys provided");
+        return;
+    }
+    if (numkeys > (c->argc - 3)) {
+        addReplyError(c, "Number of keys can't be greater than number of args");
+        return;
+    } else if (numkeys < 0) {
+        addReplyError(c, "Number of keys can't be negative");
+        return;
+    }
+
+    scriptRunCtx run_ctx;
+    if (scriptPrepareForRun(&run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK) return;
+
+    if (fi->li->ei->engineModule != NULL) {
+        moduleScriptingEngineInitContext(fi->li->ei->module_ctx,
+                                         fi->li->ei->engineModule,
+                                         run_ctx.original_client);
+    }
+
+    engine->call(fi->li->ei->module_ctx,
+                 engine->engine_ctx,
+                 &run_ctx,
+                 fi->function,
+                 c->argv + 3,
+                 numkeys,
+                 c->argv + 3 + numkeys,
+                 c->argc - 3 - numkeys);
+    scriptResetRun(&run_ctx);
+
+    if (fi->li->ei->engineModule != NULL) {
+        moduleFreeContext(fi->li->ei->module_ctx);
+    }
+}
+
 /*
  * FCALL <FUNCTION NAME> nkeys <key1 .. keyn> <arg1 .. argn>
  */
 void fcallCommand(client *c) {
-    fcallCommandGeneric(curr_functions_lib_ctx->functions, c, 0);
+    fcallCommandGeneric(c, 0);
 }
 
 /*
  * FCALL_RO <FUNCTION NAME> nkeys <key1 .. keyn> <arg1 .. argn>
  */
 void fcallroCommand(client *c) {
-    fcallCommandGeneric(curr_functions_lib_ctx->functions, c, 1);
+    fcallCommandGeneric(c, 1);
 }
 
 /*

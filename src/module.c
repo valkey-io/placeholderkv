@@ -174,11 +174,6 @@ struct ValkeyModuleCtx {
 };
 typedef struct ValkeyModuleCtx ValkeyModuleCtx;
 
-struct ValkeyModuleScriptingEngineFunctionCallCtx {
-    ValkeyModuleCtx module_ctx;
-    scriptRunCtx run_ctx;
-};
-
 #define VALKEYMODULE_CTX_NONE (0)
 #define VALKEYMODULE_CTX_AUTO_MEMORY (1 << 0)
 #define VALKEYMODULE_CTX_KEYS_POS_REQUEST (1 << 1)
@@ -884,6 +879,15 @@ void moduleCallCommandUnblockedHandler(client *c) {
     moduleReleaseTempClient(c);
 }
 
+/* Allocates the memory necessary to hold the ValkeyModuleCtx structure, and
+ * returns the pointer to the allocated memory.
+ *
+ * Used by the scripting engines implementation to cache the context structure.
+ */
+ValkeyModuleCtx *moduleAllocateContext(void) {
+    return (ValkeyModuleCtx *)zcalloc(sizeof(ValkeyModuleCtx));
+}
+
 /* Create a module ctx and keep track of the nesting level.
  *
  * Note: When creating ctx for threads (VM_GetThreadSafeContext and
@@ -924,6 +928,16 @@ void moduleCreateContext(ValkeyModuleCtx *out_ctx, ValkeyModule *module, int ctx
     if (!(ctx_flags & (VALKEYMODULE_CTX_THREAD_SAFE | VALKEYMODULE_CTX_COMMAND))) {
         enterExecutionUnit(1, 0);
     }
+}
+
+/* Initialize a module context to be used by scripting engines callback
+ * functions.
+ */
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
+                                      ValkeyModule *module,
+                                      client *client) {
+    moduleCreateContext(out_ctx, module, VALKEYMODULE_CTX_NONE);
+    out_ctx->client = client;
 }
 
 /* This command binds the normal command invocation with commands
@@ -13139,66 +13153,6 @@ int VM_RegisterScriptingEngineFunction(const char *name,
     return VALKEYMODULE_OK;
 }
 
-/* Implements the scripting engine function call logic.
- *
- */
-void fcallCommandGeneric(dict *functions, client *c, int ro) {
-    /* Functions need to be fed to monitors before the commands they execute. */
-    replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
-
-    robj *function_name = c->argv[1];
-    dictEntry *de = c->cur_script;
-    if (!de) de = dictFind(functions, function_name->ptr);
-    if (!de) {
-        addReplyError(c, "Function not found");
-        return;
-    }
-    functionInfo *fi = dictGetVal(de);
-    engine *engine = fi->li->ei->engine;
-
-    long long numkeys;
-    /* Get the number of arguments that are keys */
-    if (getLongLongFromObject(c->argv[2], &numkeys) != C_OK) {
-        addReplyError(c, "Bad number of keys provided");
-        return;
-    }
-    if (numkeys > (c->argc - 3)) {
-        addReplyError(c, "Number of keys can't be greater than number of args");
-        return;
-    } else if (numkeys < 0) {
-        addReplyError(c, "Number of keys can't be negative");
-        return;
-    }
-
-    struct ValkeyModuleScriptingEngineFunctionCallCtx func_ctx;
-
-    if (scriptPrepareForRun(&func_ctx.run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK) return;
-
-    if (fi->li->ei->engineModule != NULL) {
-        moduleCreateContext(&func_ctx.module_ctx, fi->li->ei->engineModule, VALKEYMODULE_CTX_NONE);
-        func_ctx.module_ctx.client = func_ctx.run_ctx.original_client;
-    }
-
-    engine->call(&func_ctx, engine->engine_ctx, fi->function, c->argv + 3, numkeys, c->argv + 3 + numkeys,
-                 c->argc - 3 - numkeys);
-    scriptResetRun(&func_ctx.run_ctx);
-
-    if (fi->li->ei->engineModule != NULL) {
-        moduleFreeContext(&func_ctx.module_ctx);
-    }
-}
-
-/* Allows to get the module context pointer from the function call context pointer.
- *
- */
-ValkeyModuleCtx *VM_GetModuleCtxFromFunctionCallCtx(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx) {
-    return &func_ctx->module_ctx;
-}
-
-scriptRunCtx *moduleGetScriptRunCtxFromFunctionCtx(ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx) {
-    return &func_ctx->run_ctx;
-}
-
 /* MODULE command.
  *
  * MODULE LIST
@@ -14071,5 +14025,4 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RegisterScriptingEngine);
     REGISTER_API(UnregisterScriptingEngine);
     REGISTER_API(RegisterScriptingEngineFunction);
-    REGISTER_API(GetModuleCtxFromFunctionCallCtx);
 }
