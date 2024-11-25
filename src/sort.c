@@ -34,6 +34,8 @@
 #include <math.h>   /* isnan() */
 #include "cluster.h"
 
+#include "valkey_strtod.h"
+
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
 serverSortOperation *createSortOperation(int type, robj *pattern) {
@@ -479,9 +481,9 @@ void sortCommandGeneric(client *c, int readonly) {
             } else {
                 if (sdsEncodedObject(byval)) {
                     char *eptr;
-
-                    vector[j].u.score = strtod(byval->ptr, &eptr);
-                    if (eptr[0] != '\0' || errno == ERANGE || isnan(vector[j].u.score)) {
+                    errno = 0;
+                    vector[j].u.score = valkey_strtod(byval->ptr, &eptr);
+                    if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }
                 } else if (byval->encoding == OBJ_ENCODING_INT) {

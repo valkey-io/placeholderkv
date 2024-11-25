@@ -49,6 +49,8 @@ int main(int argc, char **argv) {
         else if (!strcasecmp(arg, "--single") && (j + 1 < argc)) {
             flags |= UNIT_TEST_SINGLE;
             file = argv[j + 1];
+        } else if (!strcasecmp(arg, "--valgrind")) {
+            flags |= UNIT_TEST_VALGRIND;
         }
     }
 

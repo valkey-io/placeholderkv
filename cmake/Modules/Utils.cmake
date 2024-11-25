@@ -100,3 +100,16 @@ function (valkey_parse_build_option OPTION_VALUE OUT_ARG_ENUM)
             PARENT_SCOPE)
     endif ()
 endfunction ()
+
+function (valkey_pkg_config PKGNAME OUT_VARIABLE)
+    if (NOT FOUND_PKGCONFIG)
+        # Locate pkg-config once
+        find_package(PkgConfig REQUIRED)
+        set(FOUND_PKGCONFIG 1)
+    endif ()
+    pkg_check_modules(__PREFIX REQUIRED ${PKGNAME})
+    message(STATUS "Found library for '${PKGNAME}': ${__PREFIX_LIBRARIES}")
+    set(${OUT_VARIABLE}
+        "${__PREFIX_LIBRARIES}"
+        PARENT_SCOPE)
+endfunction ()
