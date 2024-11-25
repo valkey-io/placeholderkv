@@ -33,7 +33,6 @@ typedef struct PrefetchCommandsBatch {
     void **keys;                    /* Array of keys to prefetch in the current batch */
     client **clients;               /* Array of clients in the current batch */
     hashtable **keys_tables;        /* Main table for each key */
-    hashtable **expire_tables;      /* Expire table for each key */
     KeyPrefetchInfo *prefetch_info; /* Prefetch info for each key */
 } PrefetchCommandsBatch;
 
@@ -47,7 +46,6 @@ void freePrefetchCommandsBatch(void) {
     zfree(batch->clients);
     zfree(batch->keys);
     zfree(batch->keys_tables);
-    zfree(batch->expire_tables);
     zfree(batch->slots);
     zfree(batch->prefetch_info);
     zfree(batch);
@@ -67,7 +65,6 @@ void prefetchCommandsBatchInit(void) {
     batch->clients = zcalloc(max_prefetch_size * sizeof(client *));
     batch->keys = zcalloc(max_prefetch_size * sizeof(void *));
     batch->keys_tables = zcalloc(max_prefetch_size * sizeof(hashtable *));
-    batch->expire_tables = zcalloc(max_prefetch_size * sizeof(hashtable *));
     batch->slots = zcalloc(max_prefetch_size * sizeof(int));
     batch->prefetch_info = zcalloc(max_prefetch_size * sizeof(KeyPrefetchInfo));
 }
@@ -118,16 +115,12 @@ static void initBatchInfo(hashtable **tables) {
     }
 }
 
-static void prefetchEntry(KeyPrefetchInfo *info, int prefetch_value) {
+static void prefetchEntry(KeyPrefetchInfo *info) {
     if (hashtableIncrementalFindStep(&info->hashtab_state) == 1) {
         /* Not done yet */
         moveToNextKey();
     } else {
-        if (prefetch_value) {
-            info->state = PREFETCH_VALUE;
-        } else {
-            markKeyAsdone(info);
-        }
+        info->state = PREFETCH_VALUE;
     }
 }
 
@@ -153,12 +146,12 @@ static void prefetchValue(KeyPrefetchInfo *info) {
  * prefetch_value - If true, we prefetch the value data for each key.
  * to bring the key's value data closer to the L1 cache as well.
  */
-static void hashtablePrefetch(hashtable **tables, int prefetch_value) {
+static void hashtablePrefetch(hashtable **tables) {
     initBatchInfo(tables);
     KeyPrefetchInfo *info;
     while ((info = getNextPrefetchInfo())) {
         switch (info->state) {
-        case PREFETCH_ENTRY: prefetchEntry(info, prefetch_value); break;
+        case PREFETCH_ENTRY: prefetchEntry(info); break;
         case PREFETCH_VALUE: prefetchValue(info); break;
         default: serverPanic("Unknown prefetch state %d", info->state);
         }
@@ -175,7 +168,7 @@ static void resetCommandsBatch(void) {
 
 /* Prefetch command-related data:
  * 1. Prefetch the command arguments allocated by the I/O thread to bring them closer to the L1 cache.
- * 2. Prefetch the keys and values for all commands in the current batch from the main and expires hashtables. */
+ * 2. Prefetch the keys and values for all commands in the current batch from the main hashtable. */
 static void prefetchCommands(void) {
     /* Prefetch argv's for all clients */
     for (size_t i = 0; i < batch->client_count; i++) {
@@ -207,9 +200,7 @@ static void prefetchCommands(void) {
     if (batch->key_count > 1) {
         server.stat_total_prefetch_batches++;
         /* Prefetch keys from the main hashtable */
-        hashtablePrefetch(batch->keys_tables, 1);
-        /* Prefetch keys from the expires hashtable - no value data to prefetch */
-        hashtablePrefetch(batch->expire_tables, 0);
+        hashtablePrefetch(batch->keys_tables);
     }
 }
 
@@ -260,7 +251,6 @@ int addCommandToBatchAndProcessIfFull(client *c) {
             batch->keys[batch->key_count] = c->argv[result.keys[i].pos];
             batch->slots[batch->key_count] = c->slot > 0 ? c->slot : 0;
             batch->keys_tables[batch->key_count] = kvstoreGetHashtable(c->db->keys, batch->slots[batch->key_count]);
-            batch->expire_tables[batch->key_count] = kvstoreGetHashtable(c->db->expires, batch->slots[batch->key_count]);
             batch->key_count++;
         }
         getKeysFreeResult(&result);
