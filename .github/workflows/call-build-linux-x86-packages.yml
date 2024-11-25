@@ -19,16 +19,16 @@ on:
         description: The AWS region to upload the packages to.
         type: string
         required: true
+    secrets:
       bucket_name:
         description: The name of the S3 bucket to upload the packages to.
-        type: string
         required: true
-    secrets:
       role_to_assume:
         description: The role to assume for the S3 bucket.
         required: true
 
 permissions:
+  id-token: write
   contents: read
 
 jobs:
@@ -44,12 +44,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.version }}
-          
+
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ inputs.region }}
-          role-to-assume: arn:aws:iam::156041445810:role/github-action
+          role-to-assume: ${{ secrets.role_to_assume }}
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev libsystemd-dev
@@ -68,6 +68,5 @@ jobs:
           mkdir -p packages-files
           cp -rfv $TAR_FILE_NAME.tar* packages-files/
 
-
       - name: Sync to S3
-        run: aws s3 sync packages-files s3://${{ inputs.bucket_name }}/releases/
+        run: aws s3 sync packages-files s3://${{ secrets.bucket_name }}/releases/
