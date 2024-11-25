@@ -3414,7 +3414,6 @@ void dualChannelSetupMainConnForPsync(connection *conn) {
  * establish a connection with the primary. */
 void syncWithPrimary(connection *conn) {
     char tmpfile[256], *err = NULL;
-    int dfd = -1, maxtries = 5;
     int psync_result;
 
     /* If this event fired after the user turned the instance into a primary
@@ -3684,6 +3683,7 @@ void syncWithPrimary(connection *conn) {
 
     /* Prepare a suitable temp file for bulk transfer */
     if (!useDisklessLoad()) {
+        int dfd = -1, maxtries = 5;
         while (maxtries--) {
             snprintf(tmpfile, 256, "temp-%d.%ld.rdb", (int)server.unixtime, (long int)getpid());
             dfd = open(tmpfile, O_CREAT | O_WRONLY | O_EXCL, 0644);
