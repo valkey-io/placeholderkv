@@ -3688,7 +3688,11 @@ void syncWithPrimary(connection *conn) {
             snprintf(tmpfile, 256, "temp-%d.%ld.rdb", (int)server.unixtime, (long int)getpid());
             dfd = open(tmpfile, O_CREAT | O_WRONLY | O_EXCL, 0644);
             if (dfd != -1) break;
+            /* We save the errno of open to prevent some systems from modifying it after
+             * the sleep call. For example, sleep in Mac will change errno to ETIMEDOUT. */
+            int saved_errno = errno;
             sleep(1);
+            errno = saved_errno;
         }
         if (dfd == -1) {
             serverLog(LL_WARNING, "Opening the temp file needed for PRIMARY <-> REPLICA synchronization: %s",
