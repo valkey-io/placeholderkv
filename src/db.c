@@ -52,13 +52,13 @@ typedef enum {
     KEY_DELETED    /* The key was deleted now. */
 } keyStatus;
 
-keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index);
-keyStatus expireIfNeeded(serverDb *db, robj *key, int flags);
-int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index);
-int keyIsExpired(serverDb *db, robj *key);
+static keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, robj *val, int flags, int dict_index);
+static keyStatus expireIfNeeded(serverDb *db, robj *key, robj *val, int flags);
+static int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index);
+static int objectIsExpired(robj *val);
 static valkey *dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, void **oldref);
 static int getKVStoreIndexForKey(sds key);
-valkey *dbFindExpiresWithDictIndex(serverDb *db, sds key, int dict_index);
+static valkey *dbFindExpiresWithDictIndex(serverDb *db, sds key, int dict_index);
 
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
@@ -111,9 +111,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        /* TODO: Use a better design for expireIfNeeded, now that the expire is
-         * stored in the value, for example passing val to expireIfNeeded. */
-        if (objectGetExpire(val) != -1 && expireIfNeeded(db, key, expire_flags) != KEY_VALID) {
+        if (expireIfNeeded(db, key, val, expire_flags) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
         }
@@ -435,7 +433,7 @@ robj *dbRandomKey(serverDb *db) {
 
         key = objectGetKey(valkey);
         keyobj = createStringObject(key, sdslen(key));
-        if (dbFindExpiresWithDictIndex(db, key, randomDictIndex)) {
+        if (objectIsExpired(valkey)) {
             if (allvolatile && (server.primary_host || server.import_mode) && --maxtries == 0) {
                 /* If the DB is composed only of keys with an expire set,
                  * it could happen that all the keys are already logically
@@ -447,7 +445,7 @@ robj *dbRandomKey(serverDb *db) {
                  * return a key name that may be already expired. */
                 return keyobj;
             }
-            if (expireIfNeededWithDictIndex(db, keyobj, 0, randomDictIndex) != KEY_VALID) {
+            if (expireIfNeededWithDictIndex(db, keyobj, valkey, 0, randomDictIndex) != KEY_VALID) {
                 decrRefCount(keyobj);
                 continue; /* search for another key. This expired. */
             }
@@ -815,7 +813,7 @@ void delGenericCommand(client *c, int lazy) {
     int numdel = 0, j;
 
     for (j = 1; j < c->argc; j++) {
-        if (expireIfNeeded(c->db, c->argv[j], 0) == KEY_DELETED) continue;
+        if (expireIfNeeded(c->db, c->argv[j], NULL, 0) == KEY_DELETED) continue;
         int deleted = lazy ? dbAsyncDelete(c->db, c->argv[j]) : dbSyncDelete(c->db, c->argv[j]);
         if (deleted) {
             signalModifiedKey(c, c->db, c->argv[j]);
@@ -1266,7 +1264,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
         while ((ln = listNext(&li))) {
             sds key = listNodeValue(ln);
             initStaticStringObject(kobj, key);
-            if (expireIfNeeded(c->db, &kobj, 0) != KEY_VALID) {
+            if (expireIfNeeded(c->db, &kobj, NULL, 0) != KEY_VALID) {
                 listDelNode(keys, ln);
             }
         }
@@ -1881,20 +1879,26 @@ void propagateDeletion(serverDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
-    /* Don't expire anything while loading. It will be done later. */
-    if (server.loading) return 0;
-
-    mstime_t when = getExpireWithDictIndex(db, key, dict_index);
-    mstime_t now;
-
-    if (when < 0) return 0; /* No expire for this key */
-
-    now = commandTimeSnapshot();
+/* Returns 1 if the expire value is expired, 0 otherwise. */
+static int timestampIsExpired(mstime_t when) {
+    if (when < 0) return 0; /* no expire */
+    mstime_t now = commandTimeSnapshot();
 
     /* The key expired if the current (virtual or real) time is greater
      * than the expire time of the key. */
     return now > when;
+}
+
+/* Use this instead of keyIsExpired if you already have the value object. */
+static int objectIsExpired(robj *val) {
+    return timestampIsExpired(objectGetExpire(val));
+}
+
+static int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+    /* Don't expire anything while loading. It will be done later. */
+    if (server.loading) return 0;
+    mstime_t when = getExpireWithDictIndex(db, key, dict_index);
+    return timestampIsExpired(when);
 }
 
 /* Check if the key is expired. */
@@ -1903,9 +1907,14 @@ int keyIsExpired(serverDb *db, robj *key) {
     return keyIsExpiredWithDictIndex(db, key, dict_index);
 }
 
-keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index) {
+/* val is optional. Pass NULL if val is not yet fetched from the database. */
+static keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, robj *val, int flags, int dict_index) {
     if (server.lazy_expire_disabled) return KEY_VALID;
-    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return KEY_VALID;
+    if (val != NULL) {
+        if (!objectIsExpired(val)) return KEY_VALID;
+    } else {
+        if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return KEY_VALID;
+    }
 
     /* If we are running in the context of a replica, instead of
      * evicting the expired key from the database, we return ASAP:
@@ -1993,12 +2002,17 @@ keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int di
  * the actual key deletion and propagation of the deletion, use the
  * EXPIRE_AVOID_DELETE_EXPIRED flag.
  *
+ * Passing the value 'val' to this function is optional, as an optimization to
+ * avoid looking up the key. Pass NULL is it's not already fetched from the
+ * database.
+ *
  * The return value of the function is KEY_VALID if the key is still valid.
  * The function returns KEY_EXPIRED if the key is expired BUT not deleted,
  * or returns KEY_DELETED if the key is expired and deleted. */
-keyStatus expireIfNeeded(serverDb *db, robj *key, int flags) {
+static keyStatus expireIfNeeded(serverDb *db, robj *key, robj *val, int flags) {
+    if (val != NULL && !objectIsExpired(val)) return KEY_VALID; /* shortcut */
     int dict_index = getKVStoreIndexForKey(key->ptr);
-    return expireIfNeededWithDictIndex(db, key, flags, dict_index);
+    return expireIfNeededWithDictIndex(db, key, val, flags, dict_index);
 }
 
 /* CB passed to kvstoreExpand.
@@ -2054,7 +2068,7 @@ valkey *dbFind(serverDb *db, sds key) {
     return dbFindWithDictIndex(db, key, dict_index);
 }
 
-valkey *dbFindExpiresWithDictIndex(serverDb *db, sds key, int dict_index) {
+static valkey *dbFindExpiresWithDictIndex(serverDb *db, sds key, int dict_index) {
     void *existing = NULL;
     kvstoreHashtableFind(db->expires, dict_index, key, &existing);
     return existing;
