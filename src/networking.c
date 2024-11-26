@@ -1713,10 +1713,10 @@ void freeClient(client *c) {
 
     /* Log link disconnection with replica */
     if (getClientType(c) == CLIENT_TYPE_REPLICA) {
-        serverLog(LL_NOTICE,
-                  c->flag.repl_rdb_channel ? "Replica %s rdb channel disconnected."
-                                           : "Connection with replica %s lost.",
-                  replicationGetReplicaName(c));
+        if (c->flag.repl_rdb_channel)
+            dualChannelServerLog(LL_NOTICE, "Replica %s rdb channel disconnected.", replicationGetReplicaName(c));
+        else
+            serverLog(LL_NOTICE, "Connection with replica %s lost.", replicationGetReplicaName(c));
     }
 
     /* Free the query buffer */
@@ -1963,14 +1963,15 @@ int freeClientsInAsyncFreeQueue(void) {
             if (!c->rdb_client_disconnect_time) {
                 if (c->conn) connSetReadHandler(c->conn, NULL);
                 c->rdb_client_disconnect_time = server.unixtime;
-                serverLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds", (unsigned long long)c->id,
-                          replicationGetReplicaName(c), server.wait_before_rdb_client_free);
+                dualChannelServerLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds",
+                                     (unsigned long long)c->id, replicationGetReplicaName(c), server.wait_before_rdb_client_free);
             }
             if (server.unixtime - c->rdb_client_disconnect_time <= server.wait_before_rdb_client_free) continue;
-            serverLog(LL_NOTICE,
-                      "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
-                      "Freeing RDB client %llu.",
-                      (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
+            dualChannelServerLog(
+                LL_NOTICE,
+                "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
+                "Freeing RDB client %llu.",
+                (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
             c->flag.protected_rdb_channel = 0;
         }
 
