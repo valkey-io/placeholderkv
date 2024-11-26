@@ -9,7 +9,7 @@ int inMainThread(void);
 int trySendReadToIOThreads(client *c);
 int trySendWriteToIOThreads(client *c);
 int tryOffloadFreeObjToIOThreads(robj *o);
-int tryOffloadFreeArgvToIOThreads(client *c);
+int tryOffloadFreeArgvToIOThreads(client *c, int free_original_argv);
 void adjustIOThreadsByEventLoad(int numevents, int increase_only);
 void drainIOThreadsQueue(void);
 void trySendPollJobToIOThreads(void);

@@ -439,11 +439,27 @@ void IOThreadFreeArgv(void *data) {
 }
 
 /* This function attempts to offload the client's argv to an IO thread.
+ *
+ * If free_original_argv is set to 1, the function will offload the free of the client's original argv.
+ * Otherwise, it will offload the free of the client's current argv.
+ *
  * Returns C_OK if the client's argv were successfully offloaded to an IO thread,
  * C_ERR otherwise. */
-int tryOffloadFreeArgvToIOThreads(client *c) {
+int tryOffloadFreeArgvToIOThreads(client *c, int free_original_argv) {
     if (server.active_io_threads_num <= 1 || c->argc == 0) {
         return C_ERR;
+    }
+
+    if (!free_original_argv && c->original_argv != NULL) {
+        /* If original_argv exist We offload only the original argv that may have been allocated by the IO thread. */
+        return C_ERR;
+    }
+
+    robj **argv = c->argv;
+    int argc = c->argc;
+    if (free_original_argv) {
+        argv = c->original_argv;
+        argc = c->original_argc;
     }
 
     size_t tid = (c->id % (server.active_io_threads_num - 1)) + 1;
@@ -456,11 +472,11 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
     int last_arg_to_free = -1;
 
     /* Prepare the argv */
-    for (int j = 0; j < c->argc; j++) {
-        if (c->argv[j]->refcount > 1) {
-            decrRefCount(c->argv[j]);
+    for (int j = 0; j < argc; j++) {
+        if (argv[j]->refcount > 1) {
+            decrRefCount(argv[j]);
             /* Set argv[j] to NULL to avoid double free */
-            c->argv[j] = NULL;
+            argv[j] = NULL;
         } else {
             last_arg_to_free = j;
         }
@@ -468,17 +484,17 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
 
     /* If no argv to free, free the argv array at the main thread */
     if (last_arg_to_free == -1) {
-        zfree(c->argv);
+        zfree(argv);
         return C_OK;
     }
 
     /* We set the refcount of the last arg to free to 0 to indicate that
      * this is the last argument to free. With this approach, we don't need to
      * send the argc to the IO thread and we can send just the argv ptr. */
-    c->argv[last_arg_to_free]->refcount = 0;
+    argv[last_arg_to_free]->refcount = 0;
 
     /* Must succeed as we checked the free space before. */
-    IOJobQueue_push(jq, IOThreadFreeArgv, c->argv);
+    IOJobQueue_push(jq, IOThreadFreeArgv, argv);
 
     return C_OK;
 }
