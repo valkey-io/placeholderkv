@@ -13,7 +13,7 @@
 #define CLUSTER_NAMELEN 40                                          /* sha1 hex length */
 
 /* Reason why the cluster state changes to fail. When adding new reasons,
- * make sure to update getClusterFailReasonString and clusterLogFailReason. */
+ * make sure to update clusterLogFailReason. */
 #define CLUSTER_FAIL_NONE 0
 #define CLUSTER_FAIL_NOT_FULL_COVERAGE 1
 #define CLUSTER_FAIL_MINORITY_PARTITION 2

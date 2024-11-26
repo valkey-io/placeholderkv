@@ -5363,15 +5363,6 @@ void clusterCloseAllSlots(void) {
  * Cluster state evaluation function
  * -------------------------------------------------------------------------- */
 
-const char *getClusterFailReasonString(void) {
-    switch (server.cluster->fail_reason) {
-    case CLUSTER_FAIL_NONE: return "none";
-    case CLUSTER_FAIL_NOT_FULL_COVERAGE: return "not-full-coverage";
-    case CLUSTER_FAIL_MINORITY_PARTITION: return "minority-partition";
-    default: serverPanic("Unknown fail reason code.");
-    }
-}
-
 void clusterLogFailReason(int reason) {
     if (reason == CLUSTER_FAIL_NONE) return;
 
@@ -6105,7 +6096,6 @@ sds genClusterInfoString(void) {
 
     info = sdscatprintf(info,
                         "cluster_state:%s\r\n"
-                        "cluster_fail_reason:%s\r\n"
                         "cluster_slots_assigned:%d\r\n"
                         "cluster_slots_ok:%d\r\n"
                         "cluster_slots_pfail:%d\r\n"
@@ -6114,7 +6104,7 @@ sds genClusterInfoString(void) {
                         "cluster_size:%d\r\n"
                         "cluster_current_epoch:%llu\r\n"
                         "cluster_my_epoch:%llu\r\n",
-                        statestr[server.cluster->state], getClusterFailReasonString(),
+                        statestr[server.cluster->state],
                         slots_assigned, slots_ok, slots_pfail, slots_fail,
                         dictSize(server.cluster->nodes), server.cluster->size,
                         (unsigned long long)server.cluster->currentEpoch, (unsigned long long)nodeEpoch(myself));
