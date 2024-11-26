@@ -1238,6 +1238,21 @@ typedef struct ClientFlags {
     uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
+/* Tracking struct used to decremenet reference count of repl backlog block
+ * once written to replica by the kernel. */
+typedef struct zeroCopyRecord {
+    replBufBlock *block;
+    int active;
+    int last_write_for_block;
+} zeroCopyRecord;
+
+typedef struct zeroCopyRecordBuffer {
+    zeroCopyRecord *records;
+    size_t start;
+    size_t len;
+    size_t capacity;
+} zeroCopyRecordBuffer;
+
 typedef struct client {
     uint64_t id; /* Client incremental unique ID. */
     union {
@@ -1363,6 +1378,8 @@ typedef struct client {
                                   * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                   * i.e. the next offset to send. */
+    zeroCopyRecordBuffer *zero_copy_buffer; /* Circular buffer of active writes, indexed
+                                        * by sequence number. */
 
     /* list node in clients_pending_write or in clients_pending_io_write list */
     listNode clients_pending_write_node;
