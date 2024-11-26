@@ -5,19 +5,15 @@ uint64_t hashCallback(const void *key) {
     return dictGenHashFunction((unsigned char *)key, strlen((char *)key));
 }
 
-int compareCallback(dict *d, const void *key1, const void *key2) {
+int compareCallback(const void *key1, const void *key2) {
     int l1, l2;
-    UNUSED(d);
-
     l1 = strlen((char *)key1);
     l2 = strlen((char *)key2);
     if (l1 != l2) return 0;
     return memcmp(key1, key2, l1) == 0;
 }
 
-void freeCallback(dict *d, void *val) {
-    UNUSED(d);
-
+void freeCallback(void *val) {
     zfree(val);
 }
 

@@ -65,6 +65,8 @@
 #include "mt19937-64.h"
 #include "cli_commands.h"
 
+#include "valkey_strtod.h"
+
 #define UNUSED(V) ((void)V)
 
 #define OUTPUT_STANDARD 0
@@ -172,9 +174,9 @@ static struct termios orig_termios; /* To restore terminal at exit.*/
 
 /* Dict Helpers */
 static uint64_t dictSdsHash(const void *key);
-static int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
-static void dictSdsDestructor(dict *d, void *val);
-static void dictListDestructor(dict *d, void *val);
+static int dictSdsKeyCompare(const void *key1, const void *key2);
+static void dictSdsDestructor(void *val);
+static void dictListDestructor(void *val);
 
 /* Cluster Manager Command Info */
 typedef struct clusterManagerCommand {
@@ -371,23 +373,19 @@ static uint64_t dictSdsHash(const void *key) {
     return dictGenHashFunction((unsigned char *)key, sdslen((char *)key));
 }
 
-static int dictSdsKeyCompare(dict *d, const void *key1, const void *key2) {
+static int dictSdsKeyCompare(const void *key1, const void *key2) {
     int l1, l2;
-    UNUSED(d);
-
     l1 = sdslen((sds)key1);
     l2 = sdslen((sds)key2);
     if (l1 != l2) return 0;
     return memcmp(key1, key2, l1) == 0;
 }
 
-static void dictSdsDestructor(dict *d, void *val) {
-    UNUSED(d);
+static void dictSdsDestructor(void *val) {
     sdsfree(val);
 }
 
-void dictListDestructor(dict *d, void *val) {
-    UNUSED(d);
+void dictListDestructor(void *val) {
     listRelease((list *)val);
 }
 
@@ -2541,9 +2539,10 @@ static int parseOptions(int argc, char **argv) {
                 exit(1);
             }
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
+            errno = 0;
             char *eptr;
-            double seconds = strtod(argv[++i], &eptr);
-            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0) {
+            double seconds = valkey_strtod(argv[++i], &eptr);
+            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {
                 fprintf(stderr, "Invalid connection timeout for -t.\n");
                 exit(1);
             }
@@ -4395,7 +4394,7 @@ static sds clusterManagerNodeInfo(clusterManagerNode *node, int indent) {
     if (node->replicate != NULL)
         info = sdscatfmt(info, "\n%s   replicates %S", spaces, node->replicate);
     else if (node->replicas_count)
-        info = sdscatfmt(info, "\n%s   %U additional replica(s)", spaces, node->replicas_count);
+        info = sdscatfmt(info, "\n%s   %i additional replica(s)", spaces, node->replicas_count);
     sdsfree(spaces);
     return info;
 }
@@ -8663,9 +8662,8 @@ static typeinfo *typeinfo_add(dict *types, char *name, typeinfo *type_template) 
     return info;
 }
 
-void type_free(dict *d, void *val) {
+void type_free(void *val) {
     typeinfo *info = val;
-    UNUSED(d);
     if (info->biggest_key) sdsfree(info->biggest_key);
     sdsfree(info->name);
     zfree(info);

@@ -127,6 +127,8 @@ typedef struct rdma_listener {
  * handler into pending list */
 static list *pending_list;
 
+static rdma_listener *rdma_listeners;
+
 static ConnectionType CT_RDMA;
 
 static int valkey_rdma_rx_size = VALKEY_RDMA_DEFAULT_RX_SIZE;
@@ -141,11 +143,33 @@ static void serverRdmaError(char *err, const char *fmt, ...) {
     va_end(ap);
 }
 
+static inline int connRdmaAllowCommand(void) {
+    /* RDMA MR is not accessible in a child process, avoid segment fault due to
+     * invalid MR access, close it rather than server random crash */
+    if (server.in_fork_child != CHILD_TYPE_NONE) {
+        return C_ERR;
+    }
+
+    return C_OK;
+}
+
+static inline int connRdmaAllowRW(connection *conn) {
+    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+        return C_ERR;
+    }
+
+    return connRdmaAllowCommand();
+}
+
 static int rdmaPostRecv(RdmaContext *ctx, struct rdma_cm_id *cm_id, ValkeyRdmaCmd *cmd) {
     struct ibv_sge sge;
     size_t length = sizeof(ValkeyRdmaCmd);
     struct ibv_recv_wr recv_wr, *bad_wr;
     int ret;
+
+    if (connRdmaAllowCommand()) {
+        return C_ERR;
+    }
 
     sge.addr = (uint64_t)cmd;
     sge.length = length;
@@ -449,13 +473,22 @@ static int rdmaHandleEstablished(struct rdma_cm_event *ev) {
     return C_OK;
 }
 
+static inline void rdmaDelKeepalive(aeEventLoop *el, RdmaContext *ctx) {
+    if (ctx->keepalive_te == AE_ERR) {
+        return;
+    }
+
+    aeDeleteTimeEvent(el, ctx->keepalive_te);
+    ctx->keepalive_te = AE_ERR;
+}
+
 static int rdmaHandleDisconnect(aeEventLoop *el, struct rdma_cm_event *ev) {
     struct rdma_cm_id *cm_id = ev->id;
     RdmaContext *ctx = cm_id->context;
     connection *conn = ctx->conn;
     rdma_connection *rdma_conn = (rdma_connection *)conn;
 
-    aeDeleteTimeEvent(el, ctx->keepalive_te);
+    rdmaDelKeepalive(el, ctx);
     conn->state = CONN_STATE_CLOSED;
 
     /* we can't close connection now, let's mark this connection as closed state */
@@ -748,7 +781,7 @@ static rdma_listener *rdmaFdToListener(connListener *listener, int fd) {
     for (int i = 0; i < listener->count; i++) {
         if (listener->fd[i] != fd) continue;
 
-        return (rdma_listener *)listener->priv1 + i;
+        return &rdma_listeners[i];
     }
 
     return NULL;
@@ -1166,11 +1199,20 @@ static void connRdmaClose(connection *conn) {
         conn->fd = -1;
     }
 
+    /* If called from within a handler, schedule the close but
+     * keep the connection until the handler returns.
+     */
+    if (connHasRefs(conn)) {
+        conn->flags |= CONN_FLAG_CLOSE_SCHEDULED;
+        return;
+    }
+
     if (!cm_id) {
         return;
     }
 
     ctx = cm_id->context;
+    rdmaDelKeepalive(server.el, ctx);
     rdma_disconnect(cm_id);
 
     /* poll all CQ before close */
@@ -1201,6 +1243,10 @@ static size_t connRdmaSend(connection *conn, const void *data, size_t data_len) 
     char *addr = ctx->tx.addr + off;
     char *remote_addr = ctx->tx_addr + ctx->tx.offset;
     int ret;
+
+    if (connRdmaAllowCommand()) {
+        return C_ERR;
+    }
 
     memcpy(addr, data, data_len);
 
@@ -1235,7 +1281,7 @@ static int connRdmaWrite(connection *conn, const void *data, size_t data_len) {
     RdmaContext *ctx = cm_id->context;
     uint32_t towrite;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1278,7 +1324,7 @@ static int connRdmaRead(connection *conn, void *buf, size_t buf_len) {
     struct rdma_cm_id *cm_id = rdma_conn->cm_id;
     RdmaContext *ctx = cm_id->context;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1300,7 +1346,7 @@ static ssize_t connRdmaSyncWrite(connection *conn, char *ptr, ssize_t size, long
     long long start = mstime();
     uint32_t towrite;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1343,7 +1389,7 @@ static ssize_t connRdmaSyncRead(connection *conn, char *ptr, ssize_t size, long 
     long long start = mstime();
     uint32_t toread;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1378,7 +1424,7 @@ static ssize_t connRdmaSyncReadLine(connection *conn, char *ptr, ssize_t size, l
     char *c;
     char nl = 0;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1537,7 +1583,7 @@ int connRdmaListen(connListener *listener) {
         bindaddr = default_bindaddr;
     }
 
-    listener->priv1 = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
+    rdma_listeners = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
     for (j = 0; j < bindaddr_count; j++) {
         char *addr = bindaddr[j];
         int optional = *addr == '-';
@@ -1651,7 +1697,6 @@ static int rdmaProcessPendingData(void) {
     listNode *ln;
     rdma_connection *rdma_conn;
     connection *conn;
-    listNode *node;
     int processed;
 
     processed = listLength(pending_list);
@@ -1659,17 +1704,17 @@ static int rdmaProcessPendingData(void) {
     while ((ln = listNext(&li))) {
         rdma_conn = listNodeValue(ln);
         conn = &rdma_conn->c;
-        node = rdma_conn->pending_list_node;
 
         /* a connection can be disconnected by remote peer, CM event mark state as CONN_STATE_CLOSED, kick connection
          * read/write handler to close connection */
         if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
-            listDelNode(pending_list, node);
-            /* do NOT call callHandler(conn, conn->read_handler) here, conn is freed in handler! */
-            if (conn->read_handler) {
-                conn->read_handler(conn);
-            } else if (conn->write_handler) {
-                conn->write_handler(conn);
+            listDelNode(pending_list, rdma_conn->pending_list_node);
+            rdma_conn->pending_list_node = NULL;
+            /* Invoke both read_handler and write_handler, unless read_handler
+               returns 0, indicating the connection has closed, in which case
+               write_handler will be skipped. */
+            if (callHandler(conn, conn->read_handler)) {
+                callHandler(conn, conn->write_handler);
             }
 
             continue;
@@ -1757,13 +1802,14 @@ static int rdmaChangeListener(void) {
 
         aeDeleteFileEvent(server.el, listener->fd[i], AE_READABLE);
         listener->fd[i] = -1;
-        struct rdma_listener *rdma_listener = (struct rdma_listener *)listener->priv1 + i;
+        struct rdma_listener *rdma_listener = &rdma_listeners[i];
         rdma_destroy_id(rdma_listener->cm_id);
         rdma_destroy_event_channel(rdma_listener->cm_channel);
     }
 
     listener->count = 0;
-    zfree(listener->priv1);
+    zfree(rdma_listeners);
+    rdma_listeners = NULL;
 
     closeListener(listener);
 

@@ -60,6 +60,8 @@
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
 
+#include "valkey_strtod.h"
+
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API
  *----------------------------------------------------------------------------*/
@@ -546,11 +548,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->min = (long)min->ptr;
     } else {
         if (((char *)min->ptr)[0] == '(') {
-            spec->min = strtod((char *)min->ptr + 1, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
             spec->minex = 1;
         } else {
-            spec->min = strtod((char *)min->ptr, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
         }
     }
@@ -558,11 +560,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->max = (long)max->ptr;
     } else {
         if (((char *)max->ptr)[0] == '(') {
-            spec->max = strtod((char *)max->ptr + 1, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
             spec->maxex = 1;
         } else {
-            spec->max = strtod((char *)max->ptr, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
         }
     }
@@ -757,7 +759,7 @@ double zzlStrtod(unsigned char *vstr, unsigned int vlen) {
     if (vlen > sizeof(buf) - 1) vlen = sizeof(buf) - 1;
     memcpy(buf, vstr, vlen);
     buf[vlen] = '\0';
-    return strtod(buf, NULL);
+    return valkey_strtod(buf, NULL);
 }
 
 double zzlGetScore(unsigned char *sptr) {
