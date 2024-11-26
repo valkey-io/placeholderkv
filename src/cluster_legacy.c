@@ -5478,6 +5478,7 @@ void clusterUpdateState(void) {
         /* Cluster state changes from ok to fail, print a log. */
         if (new_state == CLUSTER_FAIL) {
             clusterLogFailReason(new_reason);
+            server.cluster->fail_reason = new_reason;
         }
     }
 
