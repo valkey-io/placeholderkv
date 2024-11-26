@@ -5375,7 +5375,6 @@ void clusterLogFailReason(int reason) {
     case CLUSTER_FAIL_MINORITY_PARTITION: msg = "I am part of a minority partition."; break;
     default: serverPanic("Unknown fail reason code.");
     }
-    server.cluster->fail_reason = reason;
     serverLog(LL_WARNING, "Cluster is currently down: %s", msg);
 }
 
@@ -5477,11 +5476,16 @@ void clusterUpdateState(void) {
         server.cluster->state = new_state;
 
         /* Cluster state changes from ok to fail, print a log. */
-        if (new_state == CLUSTER_FAIL) clusterLogFailReason(new_reason);
+        if (new_state == CLUSTER_FAIL) {
+            clusterLogFailReason(new_reason);
+        }
     }
 
     /* Cluster state is still fail, but the reason has changed, print a log. */
-    if (new_state == CLUSTER_FAIL && new_reason != server.cluster->fail_reason) clusterLogFailReason(new_reason);
+    if (new_state == CLUSTER_FAIL && new_reason != server.cluster->fail_reason) {
+        clusterLogFailReason(new_reason);
+        server.cluster->fail_reason = new_reason;
+    }
 
     if (new_state == CLUSTER_OK) server.cluster->fail_reason = CLUSTER_FAIL_NONE;
 }
