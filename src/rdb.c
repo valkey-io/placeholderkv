@@ -1303,7 +1303,7 @@ ssize_t rdbSaveFunctions(rio *rdb) {
     while ((entry = dictNext(iter))) {
         if ((ret = rdbSaveType(rdb, RDB_OPCODE_FUNCTION2)) < 0) goto werr;
         written += ret;
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
+        functionLibInfo *li = dictGetVal(entry);
         if ((ret = rdbSaveRawString(rdb, (unsigned char *)li->code, sdslen(li->code))) < 0) goto werr;
         written += ret;
     }

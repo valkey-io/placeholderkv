@@ -52,7 +52,7 @@
 #include "script.h"
 #include "valkeymodule.h"
 
-typedef struct ValkeyModuleCtx ValkeyModuleCtx;
+typedef struct functionLibInfo functionLibInfo;
 
 typedef struct engine {
     /* engine specific context */
@@ -113,17 +113,17 @@ typedef struct engineInfo {
 /* Hold information about the specific function.
  * Used on rdb.c so it must be declared here. */
 typedef struct functionInfo {
-    sds name;                                       /* Function name */
-    void *function;                                 /* Opaque object that set by the function's engine and allow it
-                                                       to run the function, usually it's the function compiled code. */
-    ValkeyModuleScriptingEngineFunctionLibrary *li; /* Pointer to the library created the function */
-    sds desc;                                       /* Function description */
-    uint64_t f_flags;                               /* Function flags */
+    sds name;            /* Function name */
+    void *function;      /* Opaque object that set by the function's engine and allow it
+                            to run the function, usually it's the function compiled code. */
+    functionLibInfo *li; /* Pointer to the library created the function */
+    sds desc;            /* Function description */
+    uint64_t f_flags;    /* Function flags */
 } functionInfo;
 
 /* Hold information about the specific library.
  * Used on rdb.c so it must be declared here. */
-struct ValkeyModuleScriptingEngineFunctionLibrary {
+struct functionLibInfo {
     sds name;        /* Library name */
     dict *functions; /* Functions dictionary */
     engineInfo *ei;  /* Pointer to the function engine */
@@ -157,7 +157,7 @@ void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
 
 int functionLibCreateFunction(sds name,
                               void *function,
-                              ValkeyModuleScriptingEngineFunctionLibrary *li,
+                              functionLibInfo *li,
                               sds desc,
                               uint64_t f_flags,
                               char **err);

@@ -2175,7 +2175,7 @@ static int rewriteFunctions(rio *aof) {
     dictIterator *iter = dictGetIterator(functions);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
+        functionLibInfo *li = dictGetVal(entry);
         if (rioWrite(aof, "*3\r\n", 4) == 0) goto werr;
         char function_load[] = "$8\r\nFUNCTION\r\n$4\r\nLOAD\r\n";
         if (rioWrite(aof, function_load, sizeof(function_load) - 1) == 0) goto werr;

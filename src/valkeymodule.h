@@ -797,10 +797,10 @@ typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 
 /* Type definitions for implementing scripting engines modules. */
 typedef void ValkeyModuleScriptingEngineCtx;
-typedef struct ValkeyModuleScriptingEngineFunctionLibrary ValkeyModuleScriptingEngineFunctionLibrary;
-typedef void ValkeyModuleScriptingEngineFunctionCallCtx;
+typedef void ValkeyModuleScriptingEngineFunctionLibrary;
+typedef void ValkeyModuleScriptingEngineFunctionCtx;
 typedef int (*ValkeyModuleScriptingEngineCreateFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx, ValkeyModuleScriptingEngineFunctionLibrary *li, const char *code, size_t timeout, char **err);
-typedef void (*ValkeyModuleScriptingEngineFunctionCallFunc)(ValkeyModuleCtx *module_ctx, ValkeyModuleScriptingEngineCtx *engine_ctx, ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx, void *compiled_function, ValkeyModuleString **keys, size_t nkeys, ValkeyModuleString **args, size_t nargs);
+typedef void (*ValkeyModuleScriptingEngineFunctionCallFunc)(ValkeyModuleCtx *module_ctx, ValkeyModuleScriptingEngineCtx *engine_ctx, ValkeyModuleScriptingEngineFunctionCtx *func_ctx, void *compiled_function, ValkeyModuleString **keys, size_t nkeys, ValkeyModuleString **args, size_t nargs);
 typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx);
 typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(void *compiled_function);
 typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx);

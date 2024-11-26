@@ -306,7 +306,7 @@ static int createHelloLangEngine(ValkeyModuleScriptingEngineCtx *engine_ctx,
 static void
 callHelloLangFunction(ValkeyModuleCtx *module_ctx,
                       ValkeyModuleScriptingEngineCtx *engine_ctx,
-                      ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx,
+                      ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
                       void *compiled_function,
                       ValkeyModuleString **keys, size_t nkeys,
                       ValkeyModuleString **args, size_t nargs) {

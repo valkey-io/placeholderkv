@@ -164,7 +164,7 @@ done:
  */
 static void luaEngineCall(ValkeyModuleCtx *module_ctx,
                           ValkeyModuleScriptingEngineCtx *engine_ctx,
-                          ValkeyModuleScriptingEngineFunctionCallCtx *func_ctx,
+                          ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
                           void *compiled_function,
                           robj **keys,
                           size_t nkeys,

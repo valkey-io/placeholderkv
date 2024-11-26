@@ -123,7 +123,7 @@ static size_t functionMallocSize(functionInfo *fi) {
            fi->li->ei->engine->get_function_memory_overhead(fi->function);
 }
 
-static size_t libraryMallocSize(ValkeyModuleScriptingEngineFunctionLibrary *li) {
+static size_t libraryMallocSize(functionLibInfo *li) {
     return zmalloc_size(li) + sdsAllocSize(li->name) + sdsAllocSize(li->code);
 }
 
@@ -147,7 +147,7 @@ static void engineFunctionDispose(void *obj) {
     zfree(fi);
 }
 
-static void engineLibraryFree(ValkeyModuleScriptingEngineFunctionLibrary *li) {
+static void engineLibraryFree(functionLibInfo *li) {
     if (!li) {
         return;
     }
@@ -254,7 +254,7 @@ void functionsAddEngineStats(engineInfo *ei) {
  */
 int functionLibCreateFunction(sds name,
                               void *function,
-                              ValkeyModuleScriptingEngineFunctionLibrary *li,
+                              functionLibInfo *li,
                               sds desc,
                               uint64_t f_flags,
                               char **err) {
@@ -285,9 +285,9 @@ int functionLibCreateFunction(sds name,
     return C_OK;
 }
 
-static ValkeyModuleScriptingEngineFunctionLibrary *engineLibraryCreate(sds name, engineInfo *ei, sds code) {
-    ValkeyModuleScriptingEngineFunctionLibrary *li = zmalloc(sizeof(*li));
-    *li = (ValkeyModuleScriptingEngineFunctionLibrary){
+static functionLibInfo *engineLibraryCreate(sds name, engineInfo *ei, sds code) {
+    functionLibInfo *li = zmalloc(sizeof(*li));
+    *li = (functionLibInfo){
         .name = sdsdup(name),
         .functions = dictCreate(&libraryFunctionDictType),
         .ei = ei,
@@ -296,7 +296,7 @@ static ValkeyModuleScriptingEngineFunctionLibrary *engineLibraryCreate(sds name,
     return li;
 }
 
-static void libraryUnlink(functionsLibCtx *lib_ctx, ValkeyModuleScriptingEngineFunctionLibrary *li) {
+static void libraryUnlink(functionsLibCtx *lib_ctx, functionLibInfo *li) {
     dictIterator *iter = dictGetIterator(li->functions);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -318,7 +318,7 @@ static void libraryUnlink(functionsLibCtx *lib_ctx, ValkeyModuleScriptingEngineF
     stats->n_functions -= dictSize(li->functions);
 }
 
-static void libraryLink(functionsLibCtx *lib_ctx, ValkeyModuleScriptingEngineFunctionLibrary *li) {
+static void libraryLink(functionsLibCtx *lib_ctx, functionLibInfo *li) {
     dictIterator *iter = dictGetIterator(li->functions);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -354,8 +354,8 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
     dictEntry *entry = NULL;
     iter = dictGetIterator(functions_lib_ctx_src->libraries);
     while ((entry = dictNext(iter))) {
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
-        ValkeyModuleScriptingEngineFunctionLibrary *old_li = dictFetchValue(functions_lib_ctx_dst->libraries, li->name);
+        functionLibInfo *li = dictGetVal(entry);
+        functionLibInfo *old_li = dictFetchValue(functions_lib_ctx_dst->libraries, li->name);
         if (old_li) {
             if (!replace) {
                 /* library already exists, failed the restore. */
@@ -389,7 +389,7 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
     /* No collision, it is safe to link all the new libraries. */
     iter = dictGetIterator(functions_lib_ctx_src->libraries);
     while ((entry = dictNext(iter))) {
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
+        functionLibInfo *li = dictGetVal(entry);
         libraryLink(functions_lib_ctx_dst, li);
         dictSetVal(functions_lib_ctx_src->libraries, entry, NULL);
     }
@@ -409,7 +409,7 @@ done:
         /* Link back all libraries on tmp_l_ctx */
         while (listLength(old_libraries_list) > 0) {
             listNode *head = listFirst(old_libraries_list);
-            ValkeyModuleScriptingEngineFunctionLibrary *li = listNodeValue(head);
+            functionLibInfo *li = listNodeValue(head);
             listNodeValue(head) = NULL;
             libraryLink(functions_lib_ctx_dst, li);
             listDelNode(old_libraries_list, head);
@@ -496,7 +496,7 @@ int functionsUnregisterEngine(const char *engine_name) {
 
     dictIterator *iter = dictGetSafeIterator(curr_functions_lib_ctx->libraries);
     while ((entry = dictNext(iter))) {
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
+        functionLibInfo *li = dictGetVal(entry);
         if (li->ei == ei) {
             libraryUnlink(curr_functions_lib_ctx, li);
             engineLibraryFree(li);
@@ -624,7 +624,7 @@ void functionListCommand(client *c) {
     dictIterator *iter = dictGetIterator(curr_functions_lib_ctx->libraries);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
-        ValkeyModuleScriptingEngineFunctionLibrary *li = dictGetVal(entry);
+        functionLibInfo *li = dictGetVal(entry);
         if (library_name) {
             if (!stringmatchlen(library_name, sdslen(library_name), li->name, sdslen(li->name), 1)) {
                 continue;
@@ -673,7 +673,7 @@ void functionListCommand(client *c) {
  */
 void functionDeleteCommand(client *c) {
     robj *function_name = c->argv[2];
-    ValkeyModuleScriptingEngineFunctionLibrary *li = dictFetchValue(curr_functions_lib_ctx->libraries, function_name->ptr);
+    functionLibInfo *li = dictFetchValue(curr_functions_lib_ctx->libraries, function_name->ptr);
     if (!li) {
         addReplyError(c, "Library not found");
         return;
@@ -1056,9 +1056,9 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
 sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLibCtx *lib_ctx, size_t timeout) {
     dictIterator *iter = NULL;
     dictEntry *entry = NULL;
-    ValkeyModuleScriptingEngineFunctionLibrary *old_li = NULL;
+    functionLibInfo *old_li = NULL;
     functionsLibMetaData md = {0};
-    ValkeyModuleScriptingEngineFunctionLibrary *new_li = NULL;
+    functionLibInfo *new_li = NULL;
 
     if (functionExtractLibMetaData(code, &md, err) != C_OK) {
         return NULL;

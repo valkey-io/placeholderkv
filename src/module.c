@@ -13138,7 +13138,7 @@ int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) 
  */
 int VM_RegisterScriptingEngineFunction(const char *name,
                                        void *function,
-                                       ValkeyModuleScriptingEngineFunctionLibrary *li,
+                                       functionLibInfo *li,
                                        const char *desc,
                                        uint64_t f_flags,
                                        char **err) {
