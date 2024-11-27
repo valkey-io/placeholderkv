@@ -14,23 +14,27 @@ start_server [list overrides [list "key-load-delay" 50 loading-process-events-in
 
         set rd [valkey_deferring_client]
 
-        # The ping at the end should still return LOADING error
-        $rd memory doctor
-        $rd memory malloc-stats
-        $rd memory stats
+        # Allowed during loading
         $rd memory help
-        # Memory usage on key while loading is not well defined -> keep error
-        $rd memory usage key:1
+        $rd memory malloc-stats
         $rd memory purge
-        $rd ping
 
-        assert_match {Hi Sam, *} [$rd read]
-        assert_match {*} [$rd read]
-        assert_match {peak.allocated *} [$rd read]
+        # Disallowed during loading (because directly dependent on the dataset)
+        $rd memory doctor
+        $rd memory stats
+        $rd memory usage key:1
+
+        # memory help
         assert_match {{MEMORY <subcommand> *}} [$rd read]
-        # Memory usage keeps getting rejected in loading because the dataset is not visible
-        assert_error {*LOADING*} {$rd read}
+        # memory malloc-stats
+        assert_match {*alloc*} [$rd read]
+        # memory purge
         assert_match OK [$rd read]
+        # memory doctor
+        assert_error {*LOADING*} {$rd read}
+        # memory stats
+        assert_error {*LOADING*} {$rd read}
+        # memory usage key:1
         assert_error {*LOADING*} {$rd read}
 
         $rd close

@@ -7289,11 +7289,11 @@ struct COMMAND_ARG MEMORY_USAGE_Args[] = {
 
 /* MEMORY command table */
 struct COMMAND_STRUCT MEMORY_Subcommands[] = {
-{MAKE_CMD("doctor","Outputs a memory problems report.","O(1)","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_DOCTOR_History,0,MEMORY_DOCTOR_Tips,3,memoryCommand,2,CMD_LOADING,0,MEMORY_DOCTOR_Keyspecs,0,NULL,0)},
+{MAKE_CMD("doctor","Outputs a memory problems report.","O(1)","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_DOCTOR_History,0,MEMORY_DOCTOR_Tips,3,memoryCommand,2,0,0,MEMORY_DOCTOR_Keyspecs,0,NULL,0)},
 {MAKE_CMD("help","Returns helpful text about the different subcommands.","O(1)","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_HELP_History,0,MEMORY_HELP_Tips,0,memoryCommand,2,CMD_LOADING|CMD_STALE,0,MEMORY_HELP_Keyspecs,0,NULL,0)},
 {MAKE_CMD("malloc-stats","Returns the allocator statistics.","Depends on how much memory is allocated, could be slow","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_MALLOC_STATS_History,0,MEMORY_MALLOC_STATS_Tips,3,memoryCommand,2,CMD_LOADING,0,MEMORY_MALLOC_STATS_Keyspecs,0,NULL,0)},
 {MAKE_CMD("purge","Asks the allocator to release memory.","Depends on how much memory is allocated, could be slow","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_PURGE_History,0,MEMORY_PURGE_Tips,2,memoryCommand,2,CMD_LOADING,0,MEMORY_PURGE_Keyspecs,0,NULL,0)},
-{MAKE_CMD("stats","Returns details about memory usage.","O(1)","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_STATS_History,0,MEMORY_STATS_Tips,3,memoryCommand,2,CMD_LOADING,0,MEMORY_STATS_Keyspecs,0,NULL,0)},
+{MAKE_CMD("stats","Returns details about memory usage.","O(1)","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_STATS_History,0,MEMORY_STATS_Tips,3,memoryCommand,2,0,0,MEMORY_STATS_Keyspecs,0,NULL,0)},
 {MAKE_CMD("usage","Estimates the memory usage of a key.","O(N) where N is the number of samples.","4.0.0",CMD_DOC_NONE,NULL,NULL,"server",COMMAND_GROUP_SERVER,MEMORY_USAGE_History,0,MEMORY_USAGE_Tips,0,memoryCommand,-3,CMD_READONLY,0,MEMORY_USAGE_Keyspecs,1,NULL,2),.args=MEMORY_USAGE_Args},
 {0}
 };

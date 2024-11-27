@@ -12,9 +12,6 @@
             "REQUEST_POLICY:ALL_SHARDS",
             "RESPONSE_POLICY:SPECIAL"
         ],
-        "command_flags": [
-            "LOADING"
-        ],
         "reply_schema": {
             "description": "Memory problems report.",
             "type": "string"
