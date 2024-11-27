@@ -3237,8 +3237,8 @@ int clusterProcessPacket(clusterLink *link) {
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
 
                 /* If this is a MEET packet from an unknown node, we still process
-                * the gossip section here since we have to trust the sender because
-                * of the message type. */
+                 * the gossip section here since we have to trust the sender because
+                 * of the message type. */
                 clusterProcessGossipSection(hdr, link);
             } else if (sender->link) {
                 /* The MEET packet is from a known node, so the sender thinks that I do not know it.
