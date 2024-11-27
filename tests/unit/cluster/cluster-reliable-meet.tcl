@@ -88,29 +88,33 @@ proc cluster_get_first_node_in_handshake id {
     return {}
 }
 
-proc cluster_3_nodes_all_know_each_other {} {
-    set node0_id [dict get [get_myself 0] id]
-    set node1_id [dict get [get_myself 1] id]
-    set node2_id [dict get [get_myself 2] id]
-
-    if {
-        [cluster_get_node_by_id 0 $node0_id] != {} &&
-        [cluster_get_node_by_id 0 $node1_id] != {} &&
-        [cluster_get_node_by_id 0 $node2_id] != {} &&
-        [cluster_get_node_by_id 1 $node0_id] != {} &&
-        [cluster_get_node_by_id 1 $node1_id] != {} &&
-        [cluster_get_node_by_id 1 $node2_id] != {} &&
-        [cluster_get_node_by_id 2 $node0_id] != {} &&
-        [cluster_get_node_by_id 2 $node1_id] != {} &&
-        [cluster_get_node_by_id 2 $node2_id] != {} &&
-        [llength [R 0 CLUSTER LINKS]] == 4 &&
-        [llength [R 1 CLUSTER LINKS]] == 4 &&
-        [llength [R 2 CLUSTER LINKS]] == 4
-    } {
-        return 1
-    } else {
-        return 0
+proc cluster_nodes_all_know_each_other {num_nodes} {
+    # Collect node IDs dynamically
+    set node_ids {}
+    for {set i 0} {$i < $num_nodes} {incr i} {
+        lappend node_ids [dict get [get_myself $i] id]
     }
+
+    # Check if all nodes know each other
+    foreach node_id $node_ids {
+        foreach check_node_id $node_ids {
+            for {set node_index 0} {$node_index < $num_nodes} {incr node_index} {
+                if {[cluster_get_node_by_id $node_index $check_node_id] == {}} {
+                    return 0
+                }
+            }
+        }
+    }
+
+    # Verify cluster link counts for each node
+    set expected_links [expr {2 * ($num_nodes - 1)}]
+    for {set i 0} {$i < $num_nodes} {incr i} {
+        if {[llength [R $i CLUSTER LINKS]] != $expected_links} {
+            return 0
+        }
+    }
+
+    return 1
 }
 
 start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 4000 cluster-replica-no-failover yes}} {
@@ -196,7 +200,7 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             # Now Node 0 will send a MEET packet to Node 1 & 2 since it has an outbound link to these nodes but no inbound link.
             # Handshake should now complete successfully.
             wait_for_condition 50 200 {
-                [cluster_3_nodes_all_know_each_other]
+                [cluster_nodes_all_know_each_other 3]
             } else {
                 fail "Unexpected CLUSTER NODES output, all nodes should know each other."
             }
@@ -239,12 +243,11 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
 
             # Wait for node 0 to know about the other nodes in the cluster
             wait_for_condition 50 100 {
-                [cluster_get_node_by_id 0 $node1_id] != {} &&
-                [cluster_get_node_by_id 0 $node2_id] != {}
+                [cluster_get_node_by_id 0 $node1_id] != {}
             } else {
-                fail "Node 0 never learned about node 1 and 2"
+                fail "Node 0 never learned about node 1"
             }
-            # At this point, node 0 learned about the other nodes in the cluster from meeting node 1.
+            # At this point, node 0 knows about node 1 and might know node 2 if node 1 gossiped about it.
             wait_for_condition 50 100 {
                 [cluster_get_first_node_in_handshake 0] eq {}
             } else {
@@ -267,7 +270,7 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
             # Now Node 0 will send a MEET packet to Node 1 & 2 since it has an outbound link to these nodes but no inblound link.
             # Handshake should now complete successfully.
             wait_for_condition 50 200 {
-                [cluster_3_nodes_all_know_each_other]
+                [cluster_nodes_all_know_each_other 3]
             } else {
                 fail "Unexpected CLUSTER NODES output, all nodes should know each other."
             }

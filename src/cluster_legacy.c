@@ -1702,7 +1702,7 @@ void clusterAddNode(clusterNode *node) {
  */
 void clusterDelNode(clusterNode *delnode) {
     serverAssert(delnode != NULL);
-    serverLog(LL_DEBUG, "Deleting node %s from cluster view", delnode->name);
+    serverLog(LL_DEBUG, "Deleting node %.40s from cluster view", delnode->name);
 
     int j;
     dictIterator *di;
@@ -3214,31 +3214,40 @@ int clusterProcessPacket(clusterLink *link) {
             }
         }
 
-        /* Add this node if it is new for us and the msg type is MEET.
-         * In this stage we don't try to add the node with the right
-         * flags, replicaof pointer, and so forth, as this details will be
-         * resolved when we'll receive PONGs from the node. The exception
-         * to this is the flag that indicates extensions are supported, as
-         * we want to send extensions right away in the return PONG in order
-         * to reduce the amount of time needed to stabilize the shard ID. */
-        if (!sender && type == CLUSTERMSG_TYPE_MEET) {
-            clusterNode *node;
+        if (type == CLUSTERMSG_TYPE_MEET) {
+            if (!sender) {
+                /* Add this node if it is new for us and the msg type is MEET.
+                 * In this stage we don't try to add the node with the right
+                 * flags, replicaof pointer, and so forth, as this details will be
+                 * resolved when we'll receive PONGs from the node. The exception
+                 * to this is the flag that indicates extensions are supported, as
+                 * we want to send extensions right away in the return PONG in order
+                 * to reduce the amount of time needed to stabilize the shard ID. */
+                clusterNode *node;
 
-            node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
-            serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
-            getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
-            node->cport = ntohs(hdr->cport);
-            if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
-                node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
+                serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
+                getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
+                node->cport = ntohs(hdr->cport);
+                if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
+                    node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                }
+                setClusterNodeToInboundClusterLink(node, link);
+                clusterAddNode(node);
+                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
+
+                /* If this is a MEET packet from an unknown node, we still process
+                * the gossip section here since we have to trust the sender because
+                * of the message type. */
+                clusterProcessGossipSection(hdr, link);
+            } else if (sender->link) {
+                /* The MEET packet is from a known node, so the sender thinks that I do not know it.
+                 * Freeing my outbound link to that node, to force a reconnect and sending a PING.
+                 * Once that node receives our PING, it should recognize the new connection as an inbound link from me. */
+                serverAssert(link != sender->link); // we should always receive a MEET packet on an inbound link
+                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s after receiving a MEET packet from this known node", sender->name);
+                freeClusterLink(sender->link);
             }
-            setClusterNodeToInboundClusterLink(node, link);
-            clusterAddNode(node);
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
-
-            /* If this is a MEET packet from an unknown node, we still process
-             * the gossip section here since we have to trust the sender because
-             * of the message type. */
-            clusterProcessGossipSection(hdr, link);
         }
 
         /* Anyway reply with a PONG */
@@ -3695,9 +3704,6 @@ void clusterLinkConnectHandler(connection *conn) {
      */
 
     serverLog(LL_DEBUG, "Connecting with Node %.40s at %s:%d", node->name, node->ip, node->cport);
-    if (nodeInMeetState(node)) {
-        serverLog(LL_DEBUG, "Sending MEET packet on connection to node %.40s", node->name);
-    }
 }
 
 /* Performs sanity check on the message signature and length depending on the type. */
@@ -3940,6 +3946,11 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
 /* Send a PING or PONG packet to the specified node, making sure to add enough
  * gossip information. */
 void clusterSendPing(clusterLink *link, int type) {
+    serverLog(LL_DEBUG, "Sending %s packet to node %.40s (%s)",
+              clusterGetMessageTypeString(type),
+              link->node ? link->node->name : "<unknown>",
+              link->inbound ? "inbound" : "outbound");
+
     static unsigned long long cluster_pings_sent = 0;
     cluster_pings_sent++;
     int gossipcount = 0; /* Number of gossip sections added so far. */
