@@ -1,4 +1,4 @@
-start_server [list overrides [list "key-load-delay" 50 loading-process-events-interval-bytes 1024]] {
+start_server [list overrides [list "key-load-delay" 50 loading-process-events-interval-bytes 1024] tags [list "external:skip"]] {
     test "Memory inspection commands no longer return loading errors" {
         # Set up some initial data
         r debug populate 100000 key 1000
