@@ -43,9 +43,9 @@ typedef enum {
 static size_t engine_cache_memory = 0;
 
 /* Forward declaration */
-static void engineFunctionDispose(dict *d, void *obj);
-static void engineStatsDispose(dict *d, void *obj);
-static void engineLibraryDispose(dict *d, void *obj);
+static void engineFunctionDispose(void *obj);
+static void engineStatsDispose(void *obj);
+static void engineLibraryDispose(void *obj);
 static int functionsVerifyName(sds name);
 
 typedef struct functionsLibEngineStats {
@@ -126,15 +126,13 @@ static size_t libraryMallocSize(functionLibInfo *li) {
     return zmalloc_size(li) + sdsAllocSize(li->name) + sdsAllocSize(li->code);
 }
 
-static void engineStatsDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineStatsDispose(void *obj) {
     functionsLibEngineStats *stats = obj;
     zfree(stats);
 }
 
 /* Dispose function memory */
-static void engineFunctionDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineFunctionDispose(void *obj) {
     if (!obj) {
         return;
     }
@@ -158,15 +156,14 @@ static void engineLibraryFree(functionLibInfo *li) {
     zfree(li);
 }
 
-static void engineLibraryDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineLibraryDispose(void *obj) {
     engineLibraryFree(obj);
 }
 
 /* Clear all the functions from the given library ctx */
-void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
-    dictEmpty(lib_ctx->functions, NULL);
-    dictEmpty(lib_ctx->libraries, NULL);
+void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *)) {
+    dictEmpty(lib_ctx->functions, callback);
+    dictEmpty(lib_ctx->libraries, callback);
     dictIterator *iter = dictGetIterator(lib_ctx->engines_stats);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -178,19 +175,28 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
     lib_ctx->cache_memory = 0;
 }
 
-void functionsLibCtxClearCurrent(int async) {
+void functionsLibCtxClearCurrent(int async, void(callback)(dict *)) {
     if (async) {
         functionsLibCtx *old_l_ctx = curr_functions_lib_ctx;
         curr_functions_lib_ctx = functionsLibCtxCreate();
         freeFunctionsAsync(old_l_ctx);
     } else {
-        functionsLibCtxClear(curr_functions_lib_ctx);
+        functionsLibCtxClear(curr_functions_lib_ctx, callback);
+    }
+}
+
+/* Free the given functions ctx */
+static void functionsLibCtxFreeGeneric(functionsLibCtx *functions_lib_ctx, int async) {
+    if (async) {
+        freeFunctionsAsync(functions_lib_ctx);
+    } else {
+        functionsLibCtxFree(functions_lib_ctx);
     }
 }
 
 /* Free the given functions ctx */
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
-    functionsLibCtxClear(functions_lib_ctx);
+    functionsLibCtxClear(functions_lib_ctx, NULL);
     dictRelease(functions_lib_ctx->functions);
     dictRelease(functions_lib_ctx->libraries);
     dictRelease(functions_lib_ctx->engines_stats);
@@ -199,8 +205,8 @@ void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
 
 /* Swap the current functions ctx with the given one.
  * Free the old functions ctx. */
-void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx) {
-    functionsLibCtxFree(curr_functions_lib_ctx);
+void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async) {
+    functionsLibCtxFreeGeneric(curr_functions_lib_ctx, async);
     curr_functions_lib_ctx = new_lib_ctx;
 }
 
@@ -374,7 +380,7 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
     dictReleaseIterator(iter);
     iter = NULL;
 
-    functionsLibCtxClear(functions_lib_ctx_src);
+    functionsLibCtxClear(functions_lib_ctx_src, NULL);
     if (old_libraries_list) {
         listRelease(old_libraries_list);
         old_libraries_list = NULL;
@@ -772,7 +778,7 @@ void functionRestoreCommand(client *c) {
     }
 
     if (restore_replicy == restorePolicy_Flush) {
-        functionsLibCtxSwapWithCurrent(functions_lib_ctx);
+        functionsLibCtxSwapWithCurrent(functions_lib_ctx, server.lazyfree_lazy_user_flush);
         functions_lib_ctx = NULL; /* avoid releasing the f_ctx in the end */
     } else {
         if (libraryJoin(curr_functions_lib_ctx, functions_lib_ctx, restore_replicy == restorePolicy_Replace, &err) !=
@@ -792,7 +798,7 @@ load_error:
         addReply(c, shared.ok);
     }
     if (functions_lib_ctx) {
-        functionsLibCtxFree(functions_lib_ctx);
+        functionsLibCtxFreeGeneric(functions_lib_ctx, server.lazyfree_lazy_user_flush);
     }
 }
 
@@ -814,7 +820,7 @@ void functionFlushCommand(client *c) {
         return;
     }
 
-    functionsLibCtxClearCurrent(async);
+    functionsLibCtxClearCurrent(async, NULL);
 
     /* Indicate that the command changed the data so it will be replicated and
      * counted as a data change (for persistence configuration) */

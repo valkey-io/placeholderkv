@@ -576,7 +576,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing) {
     if (!position) return NULL;
 
     /* Dup the key if necessary. */
-    if (d->type->keyDup) key = d->type->keyDup(d, key);
+    if (d->type->keyDup) key = d->type->keyDup(key);
 
     return dictInsertAtPosition(d, key, position);
 }
@@ -640,7 +640,7 @@ int dictReplace(dict *d, void *key, void *val) {
      * reverse. */
     void *oldval = dictGetVal(existing);
     dictSetVal(d, existing, val);
-    if (d->type->valDestructor) d->type->valDestructor(d, oldval);
+    if (d->type->valDestructor) d->type->valDestructor(oldval);
     return 0;
 }
 
@@ -740,6 +740,18 @@ int dictDelete(dict *ht, const void *key) {
  */
 dictEntry *dictUnlink(dict *d, const void *key) {
     return dictGenericDelete(d, key, 1);
+}
+
+inline static void dictFreeKey(dict *d, dictEntry *entry) {
+    if (d->type->keyDestructor) {
+        d->type->keyDestructor(dictGetKey(entry));
+    }
+}
+
+inline static void dictFreeVal(dict *d, dictEntry *entry) {
+    if (d->type->valDestructor) {
+        d->type->valDestructor(dictGetVal(entry));
+    }
 }
 
 /* You need to call this function to really free the entry after a call
@@ -919,7 +931,7 @@ void dictTwoPhaseUnlinkFree(dict *d, dictEntry *he, dictEntry **plink, int table
          : (entryIsEmbedded(de) ? &decodeEntryEmbedded(de)->field : (panic("Entry type not supported"), NULL)))
 
 void dictSetKey(dict *d, dictEntry *de, void *key) {
-    void *k = d->type->keyDup ? d->type->keyDup(d, key) : key;
+    void *k = d->type->keyDup ? d->type->keyDup(key) : key;
     if (entryIsNormal(de)) {
         dictEntryNormal *_de = decodeEntryNormal(de);
         _de->key = k;
