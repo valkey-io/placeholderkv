@@ -13060,7 +13060,7 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
  *
  * - `create_functions_library_func`: Library create function callback. When a
  *   new script is loaded, this callback will be called with the script code,
- *   and returs a list of ValkeyModuleScriptingEngineCompiledFunc objects.
+ *   and returns a list of ValkeyModuleScriptingEngineCompiledFunc objects.
  *
  * - `call_function_func`: the callback function called when `FCALL` command is
  *   called on a function registered in this engine.
