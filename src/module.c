@@ -13054,37 +13054,34 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
 /* Registers a new scripting engine in the server.
  *
  * - `engine_name`: the name of the scripting engine. This name will match
- *                   against the engine name specified in the script header
- *                   using a shebang.
+ *   against the engine name specified in the script header using a shebang.
  *
  * - `engine_ctx`: engine specific context pointer.
  *
- * - `create_func`: Library create function callback. When a new script is
- *                  loaded, this callback will be called with the script code.
- *                  `VM_RegisterScriptingEngineFunction` function should be
- *                  called inside this callback to register the library
- *                  functions declared in the script code.
+ * - `create_functions_library_func`: Library create function callback. When a
+ *   new script is loaded, this callback will be called with the script code,
+ *   and returs a list of ValkeyModuleScriptingEngineCompiledFunc objects.
  *
- * - `call_func`: the callback function called when `FCALL` command is called
- *                on a function registered in this engine.
+ * - `call_function_func`: the callback function called when `FCALL` command is
+ *   called on a function registered in this engine.
  *
  * - `get_used_memory_func`: function callback to get current used memory by the
- *                           engine.
+ *   engine.
  *
  * - `get_function_memory_overhead_func`: function callback to return memory
- *                                        overhead for a given function.
+ *   overhead for a given function.
  *
  * - `get_engine_memory_overhead_func`: function callback to return memory
- *                                      overhead of the engine.
+ *   overhead of the engine.
  *
  * - `free_function_func`: function callback to free the memory of a registered
- *                         engine function.
+ *   engine function.
  */
 int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
                                const char *engine_name,
                                void *engine_ctx,
-                               ValkeyModuleScriptingEngineCreateFunc create_func,
-                               ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                               ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
+                               ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
                                ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
                                ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
                                ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
@@ -13094,8 +13091,8 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
     if (functionsRegisterEngine(engine_name,
                                 ctx->module,
                                 engine_ctx,
-                                create_func,
-                                call_func,
+                                create_functions_library_func,
+                                call_function_func,
                                 get_used_memory_func,
                                 get_function_memory_overhead_func,
                                 get_engine_memory_overhead_func,
@@ -13114,42 +13111,6 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
 int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
     UNUSED(ctx);
     functionsUnregisterEngine(engine_name);
-    return VALKEYMODULE_OK;
-}
-
-
-/* Registers a new scripting function in the engine function library.
- *
- * This function should only be called in the context of the scripting engine
- * creation callback function.
- *
- * - `name`: the name of the function.
- *
- * - `function`: the generic pointer to the function being registered.
- *
- * - `li`: the pointer to the opaque structure that holds the functions
- *         registered in the library that is currently being created.
- *
- * - `desc`: an optional description for the function.
- *
- * - `flags`: optional flags of the function. See `SCRIPT_FLAG_*` constants.
- *
- * - `err`: the pointer that will hold the error message in case of an error.
- */
-int VM_RegisterScriptingEngineFunction(const char *name,
-                                       void *function,
-                                       functionLibInfo *li,
-                                       const char *desc,
-                                       uint64_t f_flags,
-                                       char **err) {
-    sds fname = sdsnew(name);
-    sds fdesc = sdsnew(desc);
-    if (functionLibCreateFunction(fname, function, li, fdesc, f_flags, err) != C_OK) {
-        sdsfree(fname);
-        sdsfree(fdesc);
-        return VALKEYMODULE_ERR;
-    }
-
     return VALKEYMODULE_OK;
 }
 
@@ -14024,5 +13985,4 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbSave);
     REGISTER_API(RegisterScriptingEngine);
     REGISTER_API(UnregisterScriptingEngine);
-    REGISTER_API(RegisterScriptingEngineFunction);
 }

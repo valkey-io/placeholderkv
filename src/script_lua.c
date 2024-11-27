@@ -1269,6 +1269,37 @@ sds luaGetStringSds(lua_State *lua, int index) {
     return str_sds;
 }
 
+char *luaGetStringCStr(lua_State *lua, int index) {
+    if (!lua_isstring(lua, index)) {
+        return NULL;
+    }
+
+    size_t len;
+    const char *str = lua_tolstring(lua, index, &len);
+
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (str[i] == '\0') {
+            n++;
+        }
+    }
+
+    char *ret_str = zcalloc(len + n + 1);
+
+    n = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (str[i] != '\0') {
+            ret_str[n] = str[i];
+        } else {
+            ret_str[n++] = '\\';
+            ret_str[n] = '0';
+        }
+        n++;
+    }
+
+    return ret_str;
+}
+
 static int luaProtectedTableError(lua_State *lua) {
     int argc = lua_gettop(lua);
     if (argc != 2) {

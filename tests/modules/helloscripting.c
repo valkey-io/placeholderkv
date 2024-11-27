@@ -269,10 +269,14 @@ static void engineFreeFunction(ValkeyModuleScriptingEngineCtx *engine_ctx, void 
     ValkeyModule_Free(func);
 }
 
-static int createHelloLangEngine(ValkeyModuleScriptingEngineCtx *engine_ctx,
-                                 ValkeyModuleScriptingEngineFunctionLibrary *li,
-                                 const char *code, size_t timeout, char **err) {
+static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    const char *code,
+    size_t timeout,
+    size_t *out_num_compiled_functions,
+    char **err) {
     VALKEYMODULE_NOT_USED(timeout);
+    VALKEYMODULE_NOT_USED(err);
 
     HelloLangCtx *ctx = (HelloLangCtx *)engine_ctx;
 
@@ -285,22 +289,27 @@ static int createHelloLangEngine(ValkeyModuleScriptingEngineCtx *engine_ctx,
 
     ctx->program = helloLangParseCode(code, ctx->program);
 
+    ValkeyModuleScriptingEngineCompiledFunction **compiled_functions =
+        ValkeyModule_Alloc(sizeof(ValkeyModuleScriptingEngineCompiledFunction *) * ctx->program->num_functions);
+
     for (uint32_t i = 0; i < ctx->program->num_functions; i++) {
         HelloFunc *func = ctx->program->functions[i];
-        int ret = ValkeyModule_RegisterScriptingEngineFunction(func->name, func, li,
-                                                               NULL, 0, err);
-        if (ret != 0) {
-            // We need to cleanup all parsed functions that were not registered.
-            for (uint32_t j = i; j < ctx->program->num_functions; j++) {
-                engineFreeFunction(NULL, ctx->program->functions[j]);
-                ctx->program->functions[j] = NULL;
-                ctx->program->num_functions--;
-            }
-            return ret;
-        }
+
+        ValkeyModuleScriptingEngineCompiledFunction *cfunc =
+            ValkeyModule_Alloc(sizeof(ValkeyModuleScriptingEngineCompiledFunction));
+        *cfunc = (ValkeyModuleScriptingEngineCompiledFunction) {
+            .name = ValkeyModule_Strdup(func->name),
+            .function = func,
+            .desc = NULL,
+            .f_flags = 0,
+        };
+
+        compiled_functions[i] = cfunc;
     }
 
-    return 0;
+    *out_num_compiled_functions = ctx->program->num_functions;
+
+    return compiled_functions;
 }
 
 static void

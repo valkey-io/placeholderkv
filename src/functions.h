@@ -65,11 +65,12 @@ typedef struct engine {
      * timeout - timeout for the library creation (0 for no timeout)
      * err - description of error (if occurred)
      * returns C_ERR on error and set err to be the error message */
-    int (*create)(ValkeyModuleScriptingEngineCtx *engine_ctx,
-                  ValkeyModuleScriptingEngineFunctionLibrary *li,
-                  const char *code,
-                  size_t timeout,
-                  char **err);
+    ValkeyModuleScriptingEngineCompiledFunction **(*create)(
+        ValkeyModuleScriptingEngineCtx *engine_ctx,
+        const char *code,
+        size_t timeout,
+        size_t *out_num_compiled_functions,
+        char **err);
 
     /* Invoking a function, func_ctx is an opaque object (from engine POV).
      * The func_ctx should be used by the engine to interaction with the server,
@@ -133,8 +134,8 @@ struct functionLibInfo {
 int functionsRegisterEngine(const char *engine_name,
                             ValkeyModule *engine_module,
                             void *engine_ctx,
-                            ValkeyModuleScriptingEngineCreateFunc create_func,
-                            ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                            ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
+                            ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
                             ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
                             ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
                             ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
@@ -154,13 +155,6 @@ void functionsLibCtxClearCurrent(int async, void(callback)(dict *));
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx);
 void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *));
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
-
-int functionLibCreateFunction(sds name,
-                              void *function,
-                              functionLibInfo *li,
-                              sds desc,
-                              uint64_t f_flags,
-                              char **err);
 
 int luaEngineInitEngine(void);
 int functionsInit(void);

@@ -797,14 +797,45 @@ typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 
 /* Type definitions for implementing scripting engines modules. */
 typedef void ValkeyModuleScriptingEngineCtx;
-typedef void ValkeyModuleScriptingEngineFunctionLibrary;
 typedef void ValkeyModuleScriptingEngineFunctionCtx;
-typedef int (*ValkeyModuleScriptingEngineCreateFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx, ValkeyModuleScriptingEngineFunctionLibrary *li, const char *code, size_t timeout, char **err);
-typedef void (*ValkeyModuleScriptingEngineFunctionCallFunc)(ValkeyModuleCtx *module_ctx, ValkeyModuleScriptingEngineCtx *engine_ctx, ValkeyModuleScriptingEngineFunctionCtx *func_ctx, void *compiled_function, ValkeyModuleString **keys, size_t nkeys, ValkeyModuleString **args, size_t nargs);
-typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx);
-typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(void *compiled_function);
-typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx);
-typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(ValkeyModuleScriptingEngineCtx *engine_ctx, void *compiled_function);
+
+typedef struct ValkeyModuleScriptingEngineCompiledFunction {
+    char *name;       /* Function name */
+    void *function;   /* Opaque object representing a function, usually it'
+                         the function compiled code. */
+    char *desc;       /* Function description */
+    uint64_t f_flags; /* Function flags */
+} ValkeyModuleScriptingEngineCompiledFunction;
+
+typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    const char *code,
+    size_t timeout,
+    size_t *out_num_compiled_functions,
+    char **err);
+
+typedef void (*ValkeyModuleScriptingEngineCallFunctionFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
+    void *compiled_function,
+    ValkeyModuleString **keys,
+    size_t nkeys,
+    ValkeyModuleString **args,
+    size_t nargs);
+
+typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(
+    ValkeyModuleScriptingEngineCtx *engine_ctx);
+
+typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(
+    void *compiled_function);
+
+typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(
+    ValkeyModuleScriptingEngineCtx *engine_ctx);
+
+typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    void *compiled_function);
 
 /* ------------------------- End of common defines ------------------------ */
 
@@ -1663,8 +1694,8 @@ VALKEYMODULE_API int (*ValkeyModule_RdbSave)(ValkeyModuleCtx *ctx,
 VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *ctx,
                                                              const char *engine_name,
                                                              void *engine_ctx,
-                                                             ValkeyModuleScriptingEngineCreateFunc create_func,
-                                                             ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                                                             ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
+                                                             ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
                                                              ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
                                                              ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
                                                              ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
@@ -1672,13 +1703,6 @@ VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *ct
 
 VALKEYMODULE_API int (*ValkeyModule_UnregisterScriptingEngine)(ValkeyModuleCtx *ctx,
                                                                const char *engine_name) VALKEYMODULE_ATTR;
-
-VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngineFunction)(const char *name,
-                                                                     void *function,
-                                                                     ValkeyModuleScriptingEngineFunctionLibrary *li,
-                                                                     const char *desc,
-                                                                     uint64_t f_flags,
-                                                                     char **err) VALKEYMODULE_ATTR;
 
 #define ValkeyModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
@@ -2048,7 +2072,6 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(RdbSave);
     VALKEYMODULE_GET_API(RegisterScriptingEngine);
     VALKEYMODULE_GET_API(UnregisterScriptingEngine);
-    VALKEYMODULE_GET_API(RegisterScriptingEngineFunction);
 
     if (ValkeyModule_IsModuleNameBusy && ValkeyModule_IsModuleNameBusy(name)) return VALKEYMODULE_ERR;
     ValkeyModule_SetModuleAttribs(ctx, name, ver, apiver);

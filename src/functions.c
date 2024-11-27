@@ -47,7 +47,7 @@ static size_t engine_cache_memory = 0;
 static void engineFunctionDispose(void *obj);
 static void engineStatsDispose(void *obj);
 static void engineLibraryDispose(void *obj);
-static int functionsVerifyName(sds name);
+static int functionsVerifyName(const char *name);
 
 typedef struct functionsLibEngineStats {
     size_t n_lib;
@@ -119,7 +119,9 @@ static dict *engines = NULL;
 static functionsLibCtx *curr_functions_lib_ctx = NULL;
 
 static size_t functionMallocSize(functionInfo *fi) {
-    return zmalloc_size(fi) + sdsAllocSize(fi->name) + (fi->desc ? sdsAllocSize(fi->desc) : 0) +
+    return zmalloc_size(fi) +
+           sdsAllocSize(fi->name) +
+           (fi->desc ? sdsAllocSize(fi->desc) : 0) +
            fi->li->ei->engine->get_function_memory_overhead(fi->function);
 }
 
@@ -252,12 +254,12 @@ void functionsAddEngineStats(engineInfo *ei) {
  *       the function will verify that the given name is following the naming format
  *       and return an error if its not.
  */
-int functionLibCreateFunction(sds name,
-                              void *function,
-                              functionLibInfo *li,
-                              sds desc,
-                              uint64_t f_flags,
-                              char **err) {
+static int functionLibCreateFunction(char *name,
+                                     void *function,
+                                     functionLibInfo *li,
+                                     char *desc,
+                                     uint64_t f_flags,
+                                     char **err) {
     if (functionsVerifyName(name) != C_OK) {
         *err = valkey_asprintf("Function names can only contain letters, numbers,"
                                " or underscores(_) and must be at least one "
@@ -265,17 +267,19 @@ int functionLibCreateFunction(sds name,
         return C_ERR;
     }
 
-    if (dictFetchValue(li->functions, name)) {
+    sds name_sds = sdsnew(name);
+    if (dictFetchValue(li->functions, name_sds)) {
         *err = valkey_asprintf("Function already exists in the library");
+        sdsfree(name_sds);
         return C_ERR;
     }
 
     functionInfo *fi = zmalloc(sizeof(*fi));
     *fi = (functionInfo){
-        .name = name,
+        .name = name_sds,
         .function = function,
         .li = li,
-        .desc = desc,
+        .desc = sdsnew(desc),
         .f_flags = f_flags,
     };
 
@@ -424,16 +428,17 @@ done:
  * - engine_name - name of the engine to register
  * - engine_module - the valkey module that implements this engine
  * - engine_ctx - the engine ctx that should be used by the server to interact with the engine
- * - create_func - the callback function that is called when a new script is loaded, which adds
- *                 adds new functions to the engine function library.
- * - call_func - the callback function that is called when a function is called e.g., using the
- *               'FCALL' command.
+ * - create_functions_library_func - the callback function that is called when a new script is
+ *                                   loaded, which adds new functions to the engine function
+ *                                   library.
+ * - call_function_func - the callback function that is called when a function is called e.g.,
+ *                        using the 'FCALL' command.
  */
 int functionsRegisterEngine(const char *engine_name,
                             ValkeyModule *engine_module,
                             void *engine_ctx,
-                            ValkeyModuleScriptingEngineCreateFunc create_func,
-                            ValkeyModuleScriptingEngineFunctionCallFunc call_func,
+                            ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
+                            ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
                             ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
                             ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
                             ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
@@ -448,8 +453,8 @@ int functionsRegisterEngine(const char *engine_name,
     engine *engine = zmalloc(sizeof(struct engine));
     *engine = (struct engine){
         .engine_ctx = engine_ctx,
-        .create = create_func,
-        .call = call_func,
+        .create = create_functions_library_func,
+        .call = call_function_func,
         .get_used_memory = get_used_memory_func,
         .get_function_memory_overhead = get_function_memory_overhead_func,
         .get_engine_memory_overhead = get_engine_memory_overhead_func,
@@ -971,11 +976,11 @@ void functionHelpCommand(client *c) {
 }
 
 /* Verify that the function name is of the format: [a-zA-Z0-9_][a-zA-Z0-9_]? */
-static int functionsVerifyName(sds name) {
-    if (sdslen(name) == 0) {
+static int functionsVerifyName(const char *name) {
+    if (strlen(name) == 0) {
         return C_ERR;
     }
-    for (size_t i = 0; i < sdslen(name); ++i) {
+    for (size_t i = 0; i < strlen(name); ++i) {
         char curr_char = name[i];
         if ((curr_char >= 'a' && curr_char <= 'z') || (curr_char >= 'A' && curr_char <= 'Z') ||
             (curr_char >= '0' && curr_char <= '9') || (curr_char == '_')) {
@@ -1051,6 +1056,23 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
     if (md->engine) sdsfree(md->engine);
 }
 
+static void freeCompiledFunctions(engine *engine,
+                                  ValkeyModuleScriptingEngineCompiledFunction **compiled_functions,
+                                  size_t num_compiled_functions,
+                                  size_t free_function_from_idx) {
+    for (size_t i = 0; i < num_compiled_functions; i++) {
+        ValkeyModuleScriptingEngineCompiledFunction *func = compiled_functions[i];
+        zfree(func->name);
+        zfree(func->desc);
+        if (i >= free_function_from_idx) {
+            engine->free_function(engine->engine_ctx, func->function);
+        }
+        zfree(func);
+    }
+
+    zfree(compiled_functions);
+}
+
 /* Compile and save the given library, return the loaded library name on success
  * and NULL on failure. In case on failure the err out param is set with relevant error message */
 sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLibCtx *lib_ctx, size_t timeout) {
@@ -1090,9 +1112,39 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     }
 
     new_li = engineLibraryCreate(md.name, ei, code);
-    if (engine->create(engine->engine_ctx, new_li, md.code, timeout, err) != C_OK) {
+    size_t num_compiled_functions = 0;
+    ValkeyModuleScriptingEngineCompiledFunction **compiled_functions =
+        engine->create(engine->engine_ctx,
+                       md.code,
+                       timeout,
+                       &num_compiled_functions,
+                       err);
+    if (compiled_functions == NULL) {
+        serverAssert(num_compiled_functions == 0);
         goto error;
     }
+
+    for (size_t i = 0; i < num_compiled_functions; i++) {
+        ValkeyModuleScriptingEngineCompiledFunction *func = compiled_functions[i];
+        int ret = functionLibCreateFunction(func->name,
+                                            func->function,
+                                            new_li,
+                                            func->desc,
+                                            func->f_flags,
+                                            err);
+        if (ret == C_ERR) {
+            freeCompiledFunctions(engine,
+                                  compiled_functions,
+                                  num_compiled_functions,
+                                  i);
+            goto error;
+        }
+    }
+
+    freeCompiledFunctions(engine,
+                          compiled_functions,
+                          num_compiled_functions,
+                          num_compiled_functions);
 
     if (dictSize(new_li->functions) == 0) {
         *err = valkey_asprintf("No functions registered");
