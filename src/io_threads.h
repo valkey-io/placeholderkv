@@ -13,6 +13,6 @@ int tryOffloadFreeArgvToIOThreads(client *c);
 void adjustIOThreadsByEventLoad(int numevents, int increase_only);
 void drainIOThreadsQueue(void);
 void trySendPollJobToIOThreads(void);
-int trySendTLSNegotiationToIOThreads(connection *conn);
-void setTLSNegotiationCallback(void (*cb)(void *));
+int trySendAcceptToIOThreads(connection *conn);
+
 #endif /* IO_THREADS_H */

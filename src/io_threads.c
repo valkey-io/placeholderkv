@@ -9,8 +9,6 @@
 static __thread int thread_id = 0; /* Thread local var */
 static pthread_t io_threads[IO_THREADS_MAX_NUM] = {0};
 static pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
-typedef void (*tls_negotiation_callback)(void *);
-tls_negotiation_callback tls_negotiation_cb;
 
 /* IO jobs queue functions - Used to send jobs from the main-thread to the IO thread. */
 typedef void (*job_handler)(void *);
@@ -557,29 +555,29 @@ void trySendPollJobToIOThreads(void) {
     IOJobQueue_push(jq, IOThreadPoll, server.el);
 }
 
-void setTLSNegotiationCallback(tls_negotiation_callback cb) {
-    tls_negotiation_cb = cb;
-}
-
-static void ioThreadTLSNegotiation(void *data) {
+static void ioThreadAccept(void *data) {
     client *c = (client *)data;
-    tls_negotiation_cb(c->conn);
+    connAccept(c->conn, NULL);
     c->io_read_state = CLIENT_COMPLETED_IO;
 }
 
 /*
- * This function attempts to offload TLS negotiation for a client connection to an I/O thread.
- * Returns C_OK if the TLS negotiation was successfully queued for processing by an I/O thread,
- * or C_ERR if the client is not eligible for offloading.
+ * Attempts to offload an Accept operation (currently used for TLS accept) for a client
+ * connection to I/O threads.
+ *
+ * Returns:
+ *   C_OK  - If the accept operation was successfully queued for processing
+ *   C_ERR - If the connection is not eligible for offloading
+ *
  * Parameters:
- *   conn: The connection object for which TLS negotiation should be performed
+ *   conn - The connection object to perform the accept operation on
  */
-int trySendTLSNegotiationToIOThreads(connection *conn) {
+int trySendAcceptToIOThreads(connection *conn) {
     if (server.io_threads_num <= 1) {
         return C_ERR;
     }
 
-    if (!(conn->flags & CONN_FLAG_NO_OFFLOAD)) {
+    if (!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD)) {
         return C_ERR;
     }
 
@@ -599,13 +597,12 @@ int trySendTLSNegotiationToIOThreads(connection *conn) {
         return C_ERR;
     }
 
-    c->read_flags = READ_FLAGS_TLS_NEGOTIATION;
     c->io_read_state = CLIENT_PENDING_IO;
     c->flag.pending_read = 1;
     listLinkNodeTail(server.clients_pending_io_read, &c->pending_read_list_node);
     connSetPostponeUpdateState(c->conn, 1);
-    server.stat_io_tls_negotiation_offloaded++;
-    IOJobQueue_push(job_queue, ioThreadTLSNegotiation, c);
+    server.stat_io_accept_offloaded++;
+    IOJobQueue_push(job_queue, ioThreadAccept, c);
 
     return C_OK;
 }
