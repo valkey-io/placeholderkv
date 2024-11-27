@@ -1789,7 +1789,7 @@ void propagateDeletion(serverDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+static int keyIsExpiredWithDictIndexImpl(serverDb *db, robj *key, int dict_index) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
 
@@ -1806,9 +1806,8 @@ int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
 }
 
 /* Check if the key is expired. */
-int keyIsExpired(serverDb *db, robj *key) {
-    int dict_index = getKVStoreIndexForKey(key->ptr);
-    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return 0;
+int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return 0;
 
     /* See expireIfNeededWithDictIndex for more details. */
     if (server.primary_host == NULL && server.import_mode) {
@@ -1817,9 +1816,15 @@ int keyIsExpired(serverDb *db, robj *key) {
     return 1;
 }
 
+/* Check if the key is expired. */
+int keyIsExpired(serverDb *db, robj *key) {
+    int dict_index = getKVStoreIndexForKey(key->ptr);
+    return keyIsExpiredWithDictIndex(db, key, dict_index);
+}
+
 keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index) {
     if (server.lazy_expire_disabled) return KEY_VALID;
-    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return KEY_VALID;
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return KEY_VALID;
 
     /* If we are running in the context of a replica, instead of
      * evicting the expired key from the database, we return ASAP:
