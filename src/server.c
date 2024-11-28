@@ -889,9 +889,10 @@ int clientsCronResizeOutputBuffer(client *c, mstime_t now_ms) {
 
     if (new_buffer_size) {
         oldbuf = c->buf;
+        size_t oldbuf_size = c->buf_usable_size;
         c->buf = zmalloc_usable(new_buffer_size, &c->buf_usable_size);
         memcpy(c->buf, oldbuf, c->bufpos);
-        zfree(oldbuf);
+        zfree_with_size(oldbuf, oldbuf_size);
     }
     return 0;
 }

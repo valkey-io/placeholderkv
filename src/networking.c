@@ -1753,7 +1753,7 @@ void freeClient(client *c) {
     /* Free data structures. */
     listRelease(c->reply);
     c->reply = NULL;
-    zfree(c->buf);
+    zfree_with_size(c->buf, c->buf_usable_size);
     c->buf = NULL;
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
