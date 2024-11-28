@@ -650,6 +650,7 @@ static void updateSSLEvent(tls_connection *conn) {
 }
 
 static int TLSHandleAcceptResult(tls_connection *conn, int call_handler_on_error) {
+    serverAssert(conn->c.state == CONN_STATE_ACCEPTING);
     if (conn->flags & TLS_CONN_FLAG_ACCEPT_SUCCESS) {
         conn->c.state = CONN_STATE_CONNECTED;
     } else if (conn->flags & TLS_CONN_FLAG_ACCEPT_ERROR) {
