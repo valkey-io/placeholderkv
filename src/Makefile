@@ -25,7 +25,7 @@ ifeq ($(OPTIMIZATION),-O3)
 	ifeq (clang,$(CLANG))
 		OPTIMIZATION+=-flto
 	else
-		OPTIMIZATION+=-flto=auto
+		OPTIMIZATION+=-flto=auto -ffat-lto-objects
 	endif
 endif
 ifneq ($(OPTIMIZATION),-O0)
@@ -131,9 +131,6 @@ ifdef REDIS_LDFLAGS
 endif
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(SERVER_CFLAGS)
-ifeq ($(SERVER_TEST),yes)
-	FINAL_CFLAGS +=-DSERVER_TEST=1
-endif
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(SERVER_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
 DEBUG=-g -ggdb
@@ -414,7 +411,7 @@ endif
 ENGINE_NAME=valkey
 SERVER_NAME=$(ENGINE_NAME)-server$(PROG_SUFFIX)
 ENGINE_SENTINEL_NAME=$(ENGINE_NAME)-sentinel$(PROG_SUFFIX)
-ENGINE_SERVER_OBJ=threads_mngr.o adlist.o quicklist.o ae.o anet.o dict.o kvstore.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o memory_prefetch.o io_threads.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o cluster_legacy.o cluster_slot_stats.o crc16.o endianconv.o commandlog.o eval.o bio.o rio.o rand.o memtest.o syscheck.o crcspeed.o crccombine.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o valkey-check-rdb.o valkey-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o tracking.o socket.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o resp_parser.o call_reply.o script_lua.o script.o functions.o function_lua.o commands.o strl.o connection.o unix.o logreqres.o
+ENGINE_SERVER_OBJ=threads_mngr.o adlist.o quicklist.o ae.o anet.o dict.o kvstore.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o memory_prefetch.o io_threads.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o cluster_legacy.o cluster_slot_stats.o crc16.o endianconv.o commandlog.o eval.o bio.o rio.o rand.o memtest.o syscheck.o crcspeed.o crccombine.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o valkey-check-rdb.o valkey-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o allocator_defrag.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o tracking.o socket.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o resp_parser.o call_reply.o script_lua.o script.o functions.o function_lua.o commands.o strl.o connection.o unix.o logreqres.o
 ENGINE_CLI_NAME=$(ENGINE_NAME)-cli$(PROG_SUFFIX)
 ENGINE_CLI_OBJ=anet.o adlist.o dict.o valkey-cli.o zmalloc.o release.o ae.o serverassert.o crcspeed.o crccombine.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o strl.o cli_commands.o
 ENGINE_BENCHMARK_NAME=$(ENGINE_NAME)-benchmark$(PROG_SUFFIX)
@@ -426,6 +423,17 @@ ENGINE_TEST_FILES:=$(wildcard unit/*.c)
 ENGINE_TEST_OBJ:=$(sort $(patsubst unit/%.c,unit/%.o,$(ENGINE_TEST_FILES)))
 ENGINE_UNIT_TESTS:=$(ENGINE_NAME)-unit-tests$(PROG_SUFFIX)
 ALL_SOURCES=$(sort $(patsubst %.o,%.c,$(ENGINE_SERVER_OBJ) $(ENGINE_CLI_OBJ) $(ENGINE_BENCHMARK_OBJ)))
+
+USE_FAST_FLOAT?=no
+ifeq ($(USE_FAST_FLOAT),yes)
+	# valkey_strtod.h uses this flag to switch valkey_strtod function to fast_float_strtod,
+	# therefore let's pass it to compiler for preprocessing.
+	FINAL_CFLAGS += -D USE_FAST_FLOAT
+	# next, let's build and add actual library containing fast_float_strtod function for linking.
+	DEPENDENCY_TARGETS += fast_float_c_interface
+	FAST_FLOAT_STRTOD_OBJECT := ../deps/fast_float_c_interface/fast_float_strtod.o
+	FINAL_LIBS += $(FAST_FLOAT_STRTOD_OBJECT)
+endif
 
 all: $(SERVER_NAME) $(ENGINE_SENTINEL_NAME) $(ENGINE_CLI_NAME) $(ENGINE_BENCHMARK_NAME) $(ENGINE_CHECK_RDB_NAME) $(ENGINE_CHECK_AOF_NAME) $(TLS_MODULE) $(RDMA_MODULE)
 	@echo ""
@@ -591,7 +599,7 @@ bench: $(ENGINE_BENCHMARK_NAME)
 
 32bit:
 	@echo ""
-	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386"
+	@echo "WARNING: if it fails under Linux you probably need to install libc6-dev-i386 and libstdc++-11-dev-i386-cross"
 	@echo ""
 	$(MAKE) all-with-unit-tests CFLAGS="-m32" LDFLAGS="-m32"
 

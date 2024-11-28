@@ -681,6 +681,7 @@ void moduleReleaseTempClient(client *c) {
     c->bufpos = 0;
     c->raw_flag = 0;
     c->flag.module = 1;
+    c->flag.fake = 1;
     c->user = NULL; /* Root user */
     c->cmd = c->lastcmd = c->realcmd = c->io_parsed_cmd = NULL;
     if (c->bstate.async_rm_call_handle) {
@@ -11816,8 +11817,7 @@ uint64_t dictCStringKeyHash(const void *key) {
     return dictGenHashFunction((unsigned char *)key, strlen((char *)key));
 }
 
-int dictCStringKeyCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictCStringKeyCompare(const void *key1, const void *key2) {
     return strcmp(key1, key2) == 0;
 }
 

@@ -5,8 +5,7 @@ uint64_t hashTestCallback(const void *key) {
     return dictGenHashFunction((unsigned char *)key, strlen((char *)key));
 }
 
-void freeTestCallback(dict *d, void *val) {
-    UNUSED(d);
+void freeTestCallback(void *val) {
     zfree(val);
 }
 

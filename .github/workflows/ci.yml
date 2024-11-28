@@ -17,7 +17,7 @@ jobs:
       - name: make
         # Fail build if there are warnings
         # build with TLS just for compilation coverage
-        run: make -j4 all-with-unit-tests SERVER_CFLAGS='-Werror' BUILD_TLS=yes
+        run: make -j4 all-with-unit-tests SERVER_CFLAGS='-Werror' BUILD_TLS=yes USE_FAST_FLOAT=yes
       - name: test
         run: |
           sudo apt-get install tcl8.6 tclx
@@ -108,23 +108,30 @@ jobs:
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
-        run: make -j3 all-with-unit-tests SERVER_CFLAGS='-Werror'
+        # Build with additional upcoming features
+        run: make -j3 all-with-unit-tests SERVER_CFLAGS='-Werror' USE_FAST_FLOAT=yes
 
   build-32bit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
+        # Fast float requires C++ 32-bit libraries to compile on 64-bit ubuntu
+        # machine i.e. "-cross" suffixed version. Cross-compiling c++ to 32-bit
+        # also requires multilib support for g++ compiler i.e. "-multilib"
+        # suffixed version of g++. g++-multilib generally includes libstdc++.
+        # *cross version as well, but it is also added explicitly just in case.
         run: |
-          sudo apt-get update && sudo apt-get install libc6-dev-i386
-          make -j4 SERVER_CFLAGS='-Werror' 32bit
+          sudo apt-get update
+          sudo apt-get install libc6-dev-i386 libstdc++-11-dev-i386-cross gcc-multilib g++-multilib
+          make -j4 SERVER_CFLAGS='-Werror' 32bit USE_FAST_FLOAT=yes
 
   build-libc-malloc:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - name: make
-        run: make -j4 SERVER_CFLAGS='-Werror' MALLOC=libc
+        run: make -j4 SERVER_CFLAGS='-Werror' MALLOC=libc USE_FAST_FLOAT=yes
 
   build-almalinux8-jemalloc:
     runs-on: ubuntu-latest
@@ -134,8 +141,8 @@ jobs:
 
       - name: make
         run: |
-          dnf -y install epel-release gcc make procps-ng which
-          make -j4 SERVER_CFLAGS='-Werror'
+          dnf -y install epel-release gcc gcc-c++ make procps-ng which
+          make -j4 SERVER_CFLAGS='-Werror' USE_FAST_FLOAT=yes
 
   format-yaml:
     runs-on: ubuntu-latest

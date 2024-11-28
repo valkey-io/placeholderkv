@@ -22,6 +22,16 @@ if (VALKEY_RELEASE_BUILD)
     set_property(TARGET valkey-server PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif ()
 
+if (BUILD_SANITIZER)
+    # 'BUILD_SANITIZER' is defined in ValkeySetup module (based on user input)
+    # If defined, the variables 'VALKEY_SANITAIZER_CFLAGS' and 'VALKEY_SANITAIZER_LDFLAGS'
+    # are set with the link & compile flags required
+    message(STATUS "Adding sanitizer flags for target valkey-server")
+    target_compile_options(valkey-server PRIVATE ${VALKEY_SANITAIZER_CFLAGS})
+    target_link_options(valkey-server PRIVATE ${VALKEY_SANITAIZER_LDFLAGS})
+endif ()
+unset(BUILD_SANITIZER CACHE)
+
 # Target: valkey-cli
 list(APPEND CLI_LIBS "linenoise")
 valkey_build_and_install_bin(valkey-cli "${VALKEY_CLI_SRCS}" "${VALKEY_SERVER_LDFLAGS}" "${CLI_LIBS}" "redis-cli")

@@ -57,8 +57,7 @@ void evalGenericCommandWithDebugging(client *c, int evalsha);
 sds ldbCatStackValue(sds s, lua_State *lua, int idx);
 listNode *luaScriptsLRUAdd(client *c, sds sha, int evalsha);
 
-static void dictLuaScriptDestructor(dict *d, void *val) {
-    UNUSED(d);
+static void dictLuaScriptDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
     decrRefCount(((luaScript *)val)->body);
     zfree(val);
@@ -200,10 +199,12 @@ void scriptingInit(int setup) {
     }
 
     /* Initialize a dictionary we use to map SHAs to scripts.
-     * Initialize a list we use for lua script evictions, it shares the
-     * sha with the dictionary, so free fn is not set. */
+     * Initialize a list we use for lua script evictions.
+     * Note that we duplicate the sha when adding to the lru list due to defrag,
+     * and we need to free them respectively. */
     lctx.lua_scripts = dictCreate(&shaScriptObjectDictType);
     lctx.lua_scripts_lru_list = listCreate();
+    listSetFreeMethod(lctx.lua_scripts_lru_list, (void (*)(void *))sdsfree);
     lctx.lua_scripts_mem = 0;
 
     luaRegisterServerAPI(lua);
@@ -519,9 +520,6 @@ void luaDeleteFunction(client *c, sds sha) {
     dictEntry *de = dictUnlink(lctx.lua_scripts, sha);
     serverAssertWithInfo(c ? c : lctx.lua_client, NULL, de);
     luaScript *l = dictGetVal(de);
-    /* We only delete `EVAL` scripts, which must exist in the LRU list. */
-    serverAssert(l->node);
-    listDelNode(lctx.lua_scripts_lru_list, l->node);
     lctx.lua_scripts_mem -= sdsAllocSize(sha) + getStringObjectSdsUsedMemory(l->body);
     dictFreeUnlinkedEntry(lctx.lua_scripts, de);
 }
@@ -550,11 +548,12 @@ listNode *luaScriptsLRUAdd(client *c, sds sha, int evalsha) {
         listNode *ln = listFirst(lctx.lua_scripts_lru_list);
         sds oldest = listNodeValue(ln);
         luaDeleteFunction(c, oldest);
+        listDelNode(lctx.lua_scripts_lru_list, ln);
         server.stat_evictedscripts++;
     }
 
     /* Add current. */
-    listAddNodeTail(lctx.lua_scripts_lru_list, sha);
+    listAddNodeTail(lctx.lua_scripts_lru_list, sdsdup(sha));
     return listLast(lctx.lua_scripts_lru_list);
 }
 
