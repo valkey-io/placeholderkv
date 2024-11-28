@@ -456,13 +456,15 @@ start_server {tags {"maxmemory external:skip"}} {
     } {4098}
 }
 
-start_server {tags {"maxmemory external:skip"}} {
+# Skip the following test when running with IO threads
+# With IO threads, we asynchronously write to tracking clients.
+# This invalidates the assumption that their output buffers will be free within the same event loop.
+start_server {tags {"maxmemory external:skip io-threads:skip"}} {
     test {client tracking don't cause eviction feedback loop} {
         r config set latency-tracking no
         r config set maxmemory 0
         r config set maxmemory-policy allkeys-lru
         r config set maxmemory-eviction-tenacity 100
-
         # 10 clients listening on tracking messages
         set clients {}
         for {set j 0} {$j < 10} {incr j} {
@@ -548,9 +550,9 @@ start_server {tags {"maxmemory" "external:skip"}} {
             {set asdf1 1}
             {set asdf2 2}
             {set asdf3 3}
-            {del asdf*}
-            {del asdf*}
-            {del asdf*}
+            {unlink asdf*}
+            {unlink asdf*}
+            {unlink asdf*}
             {set asdf4 4}
         }
         close_replication_stream $repl
@@ -584,7 +586,7 @@ start_server {tags {"maxmemory" "external:skip"}} {
             {incr x}
             {incr x}
             {exec}
-            {del x}
+            {unlink x}
         }
         close_replication_stream $repl
 
@@ -607,5 +609,23 @@ start_server {tags {"maxmemory" "external:skip"}} {
         r del foo 
         r set foo a
         assert {[r object freq foo] == 5}
+    }
+}
+
+start_server {tags {"maxmemory" "external:skip"}} {
+    test {Import mode should forbid eviction} {
+        r set key val
+        r config set import-mode yes
+        assert_equal [r client import-source on] {OK}  
+        r config set maxmemory-policy allkeys-lru
+        r config set maxmemory 1      
+
+        assert_equal [r dbsize] {1}
+        assert_error {OOM command not allowed*} {r set key1 val1}
+
+        assert_equal [r client import-source off] {OK}  
+        r config set import-mode no
+
+        assert_equal [r dbsize] {0}
     }
 }

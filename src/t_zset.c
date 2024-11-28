@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * Copyright (c) 2009-2012, Pieter Noordhuis <pcnoordhuis at gmail dot com>
  * All rights reserved.
  *
@@ -59,6 +59,8 @@
 #include "server.h"
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
+
+#include "valkey_strtod.h"
 
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API
@@ -546,11 +548,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->min = (long)min->ptr;
     } else {
         if (((char *)min->ptr)[0] == '(') {
-            spec->min = strtod((char *)min->ptr + 1, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
             spec->minex = 1;
         } else {
-            spec->min = strtod((char *)min->ptr, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
         }
     }
@@ -558,11 +560,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->max = (long)max->ptr;
     } else {
         if (((char *)max->ptr)[0] == '(') {
-            spec->max = strtod((char *)max->ptr + 1, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
             spec->maxex = 1;
         } else {
-            spec->max = strtod((char *)max->ptr, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
         }
     }
@@ -757,7 +759,7 @@ double zzlStrtod(unsigned char *vstr, unsigned int vlen) {
     if (vlen > sizeof(buf) - 1) vlen = sizeof(buf) - 1;
     memcpy(buf, vstr, vlen);
     buf[vlen] = '\0';
-    return strtod(buf, NULL);
+    return valkey_strtod(buf, NULL);
 }
 
 double zzlGetScore(unsigned char *sptr) {
@@ -2529,15 +2531,6 @@ static void zdiff(zsetopsrc *src, long setnum, zset *dstzset, size_t *maxelelen,
     }
 }
 
-dictType setAccumulatorDictType = {
-    dictSdsHash,       /* hash function */
-    NULL,              /* key dup */
-    dictSdsKeyCompare, /* key compare */
-    NULL,              /* key destructor */
-    NULL,              /* val destructor */
-    NULL               /* allow to expand */
-};
-
 /* The zunionInterDiffGenericCommand() function is called in order to implement the
  * following commands: ZUNION, ZINTER, ZDIFF, ZUNIONSTORE, ZINTERSTORE, ZDIFFSTORE,
  * ZINTERCARD.
@@ -2724,7 +2717,6 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
             zuiClearIterator(&src[0]);
         }
     } else if (op == SET_OP_UNION) {
-        dict *accumulator = dictCreate(&setAccumulatorDictType);
         dictIterator *di;
         dictEntry *de, *existing;
         double score;
@@ -2732,7 +2724,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
         if (setnum) {
             /* Our union is at least as large as the largest set.
              * Resize the dictionary ASAP to avoid useless rehashing. */
-            dictExpand(accumulator, zuiLength(&src[setnum - 1]));
+            dictExpand(dstzset->dict, zuiLength(&src[setnum - 1]));
         }
 
         /* Step 1: Create a dictionary of elements -> aggregated-scores
@@ -2747,7 +2739,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                 if (isnan(score)) score = 0;
 
                 /* Search for this element in the accumulating dictionary. */
-                de = dictAddRaw(accumulator, zuiSdsFromValue(&zval), &existing);
+                de = dictAddRaw(dstzset->dict, zuiSdsFromValue(&zval), &existing);
                 /* If we don't have it, we need to create a new entry. */
                 if (!existing) {
                     tmp = zuiNewSdsFromValue(&zval);
@@ -2757,7 +2749,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                     totelelen += sdslen(tmp);
                     if (sdslen(tmp) > maxelelen) maxelelen = sdslen(tmp);
                     /* Update the element with its initial score. */
-                    dictSetKey(accumulator, de, tmp);
+                    dictSetKey(dstzset->dict, de, tmp);
                     dictSetDoubleVal(de, score);
                 } else {
                     /* Update the score with the score of the new instance
@@ -2774,21 +2766,15 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
         }
 
         /* Step 2: convert the dictionary into the final sorted set. */
-        di = dictGetIterator(accumulator);
-
-        /* We now are aware of the final size of the resulting sorted set,
-         * let's resize the dictionary embedded inside the sorted set to the
-         * right size, in order to save rehashing time. */
-        dictExpand(dstzset->dict, dictSize(accumulator));
+        di = dictGetIterator(dstzset->dict);
 
         while ((de = dictNext(di)) != NULL) {
             sds ele = dictGetKey(de);
             score = dictGetDoubleVal(de);
             znode = zslInsert(dstzset->zsl, score, ele);
-            dictAdd(dstzset->dict, ele, &znode->score);
+            dictSetVal(dstzset->dict, de, &znode->score);
         }
         dictReleaseIterator(di);
-        dictRelease(accumulator);
     } else if (op == SET_OP_DIFF) {
         zdiff(src, setnum, dstzset, &maxelelen, &totelelen);
     } else {
@@ -2873,9 +2859,16 @@ void zdiffCommand(client *c) {
     zunionInterDiffGenericCommand(c, NULL, 1, SET_OP_DIFF, 0);
 }
 
-typedef enum { ZRANGE_DIRECTION_AUTO = 0, ZRANGE_DIRECTION_FORWARD, ZRANGE_DIRECTION_REVERSE } zrange_direction;
+typedef enum {
+    ZRANGE_DIRECTION_AUTO = 0,
+    ZRANGE_DIRECTION_FORWARD,
+    ZRANGE_DIRECTION_REVERSE
+} zrange_direction;
 
-typedef enum { ZRANGE_CONSUMER_TYPE_CLIENT = 0, ZRANGE_CONSUMER_TYPE_INTERNAL } zrange_consumer_type;
+typedef enum {
+    ZRANGE_CONSUMER_TYPE_CLIENT = 0,
+    ZRANGE_CONSUMER_TYPE_INTERNAL
+} zrange_consumer_type;
 
 typedef struct zrange_result_handler zrange_result_handler;
 

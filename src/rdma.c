@@ -74,6 +74,7 @@ typedef enum ValkeyRdmaOpcode {
 #define VALKEY_RDMA_MAX_RX_SIZE (16 * 1024 * 1024)
 #define VALKEY_RDMA_SYNCIO_RES 10
 #define VALKEY_RDMA_INVALID_OPCODE 0xffff
+#define VALKEY_RDMA_KEEPALIVE_MS 3000
 
 typedef struct rdma_connection {
     connection c;
@@ -94,6 +95,7 @@ typedef struct RdmaContext {
     connection *conn;
     char *ip;
     int port;
+    long long keepalive_te; /* RDMA has no transport layer keepalive */
     struct ibv_pd *pd;
     struct rdma_event_channel *cm_channel;
     struct ibv_comp_channel *comp_channel;
@@ -125,6 +127,8 @@ typedef struct rdma_listener {
  * handler into pending list */
 static list *pending_list;
 
+static rdma_listener *rdma_listeners;
+
 static ConnectionType CT_RDMA;
 
 static int valkey_rdma_rx_size = VALKEY_RDMA_DEFAULT_RX_SIZE;
@@ -139,11 +143,33 @@ static void serverRdmaError(char *err, const char *fmt, ...) {
     va_end(ap);
 }
 
+static inline int connRdmaAllowCommand(void) {
+    /* RDMA MR is not accessible in a child process, avoid segment fault due to
+     * invalid MR access, close it rather than server random crash */
+    if (server.in_fork_child != CHILD_TYPE_NONE) {
+        return C_ERR;
+    }
+
+    return C_OK;
+}
+
+static inline int connRdmaAllowRW(connection *conn) {
+    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+        return C_ERR;
+    }
+
+    return connRdmaAllowCommand();
+}
+
 static int rdmaPostRecv(RdmaContext *ctx, struct rdma_cm_id *cm_id, ValkeyRdmaCmd *cmd) {
     struct ibv_sge sge;
     size_t length = sizeof(ValkeyRdmaCmd);
     struct ibv_recv_wr recv_wr, *bad_wr;
     int ret;
+
+    if (connRdmaAllowCommand()) {
+        return C_ERR;
+    }
 
     sge.addr = (uint64_t)cmd;
     sge.length = length;
@@ -405,7 +431,7 @@ static int rdmaSendCommand(RdmaContext *ctx, struct rdma_cm_id *cm_id, ValkeyRdm
 }
 
 static int connRdmaRegisterRx(RdmaContext *ctx, struct rdma_cm_id *cm_id) {
-    ValkeyRdmaCmd cmd;
+    ValkeyRdmaCmd cmd = {0};
 
     cmd.memory.opcode = htons(RegisterXferMemory);
     cmd.memory.addr = htonu64((uint64_t)ctx->rx.addr);
@@ -419,7 +445,7 @@ static int connRdmaRegisterRx(RdmaContext *ctx, struct rdma_cm_id *cm_id) {
 }
 
 static int connRdmaGetFeature(RdmaContext *ctx, struct rdma_cm_id *cm_id, ValkeyRdmaCmd *cmd) {
-    ValkeyRdmaCmd _cmd;
+    ValkeyRdmaCmd _cmd = {0};
 
     _cmd.feature.opcode = htons(GetServerFeature);
     _cmd.feature.select = cmd->feature.select;
@@ -447,12 +473,22 @@ static int rdmaHandleEstablished(struct rdma_cm_event *ev) {
     return C_OK;
 }
 
-static int rdmaHandleDisconnect(struct rdma_cm_event *ev) {
+static inline void rdmaDelKeepalive(aeEventLoop *el, RdmaContext *ctx) {
+    if (ctx->keepalive_te == AE_ERR) {
+        return;
+    }
+
+    aeDeleteTimeEvent(el, ctx->keepalive_te);
+    ctx->keepalive_te = AE_ERR;
+}
+
+static int rdmaHandleDisconnect(aeEventLoop *el, struct rdma_cm_event *ev) {
     struct rdma_cm_id *cm_id = ev->id;
     RdmaContext *ctx = cm_id->context;
     connection *conn = ctx->conn;
     rdma_connection *rdma_conn = (rdma_connection *)conn;
 
+    rdmaDelKeepalive(el, ctx);
     conn->state = CONN_STATE_CLOSED;
 
     /* we can't close connection now, let's mark this connection as closed state */
@@ -669,7 +705,27 @@ static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientDat
     }
 }
 
-static int rdmaHandleConnect(char *err, struct rdma_cm_event *ev, char *ip, size_t ip_len, int *port) {
+static long long rdmaKeepaliveTimeProc(struct aeEventLoop *el, long long id, void *clientData) {
+    struct rdma_cm_id *cm_id = clientData;
+    RdmaContext *ctx = cm_id->context;
+    connection *conn = ctx->conn;
+    ValkeyRdmaCmd cmd = {0};
+
+    UNUSED(el);
+    UNUSED(id);
+    if (conn->state != CONN_STATE_CONNECTED) {
+        return AE_NOMORE;
+    }
+
+    cmd.keepalive.opcode = htons(Keepalive);
+    if (rdmaSendCommand(ctx, cm_id, &cmd) != C_OK) {
+        return AE_NOMORE;
+    }
+
+    return VALKEY_RDMA_KEEPALIVE_MS;
+}
+
+static int rdmaHandleConnect(aeEventLoop *el, char *err, struct rdma_cm_event *ev, char *ip, size_t ip_len, int *port) {
     int ret = C_OK;
     struct rdma_cm_id *cm_id = ev->id;
     struct sockaddr_storage caddr;
@@ -694,6 +750,11 @@ static int rdmaHandleConnect(char *err, struct rdma_cm_event *ev, char *ip, size
     ctx = zcalloc(sizeof(RdmaContext));
     ctx->ip = zstrdup(ip);
     ctx->port = *port;
+    ctx->keepalive_te = aeCreateTimeEvent(el, VALKEY_RDMA_KEEPALIVE_MS, rdmaKeepaliveTimeProc, cm_id, NULL);
+    if (ctx->keepalive_te == AE_ERR) {
+        return C_ERR;
+    }
+
     cm_id->context = ctx;
     if (rdmaCreateResource(ctx, cm_id) == C_ERR) {
         goto reject;
@@ -720,7 +781,7 @@ static rdma_listener *rdmaFdToListener(connListener *listener, int fd) {
     for (int i = 0; i < listener->count; i++) {
         if (listener->fd[i] != fd) continue;
 
-        return (rdma_listener *)listener->priv + i;
+        return &rdma_listeners[i];
     }
 
     return NULL;
@@ -732,7 +793,8 @@ static rdma_listener *rdmaFdToListener(connListener *listener, int fd) {
  * 1, handle RDMA_CM_EVENT_CONNECT_REQUEST and return CM fd on success
  * 2, handle RDMA_CM_EVENT_ESTABLISHED and return C_OK on success
  */
-static int rdmaAccept(connListener *listener, char *err, int fd, char *ip, size_t ip_len, int *port, void **priv) {
+static int
+rdmaAccept(aeEventLoop *el, connListener *listener, char *err, int fd, char *ip, size_t ip_len, int *port, void **priv) {
     struct rdma_cm_event *ev;
     enum rdma_cm_event_type ev_type;
     int ret = C_OK;
@@ -755,7 +817,7 @@ static int rdmaAccept(connListener *listener, char *err, int fd, char *ip, size_
     ev_type = ev->event;
     switch (ev_type) {
     case RDMA_CM_EVENT_CONNECT_REQUEST:
-        ret = rdmaHandleConnect(err, ev, ip, ip_len, port);
+        ret = rdmaHandleConnect(el, err, ev, ip, ip_len, port);
         if (ret == C_OK) {
             RdmaContext *ctx = (RdmaContext *)ev->id->context;
             *priv = ev->id;
@@ -773,7 +835,7 @@ static int rdmaAccept(connListener *listener, char *err, int fd, char *ip, size_
     case RDMA_CM_EVENT_ADDR_CHANGE:
     case RDMA_CM_EVENT_DISCONNECTED:
     case RDMA_CM_EVENT_TIMEWAIT_EXIT:
-        rdmaHandleDisconnect(ev);
+        rdmaHandleDisconnect(el, ev);
         ret = C_OK;
         break;
 
@@ -804,7 +866,7 @@ static void connRdmaAcceptHandler(aeEventLoop *el, int fd, void *privdata, int m
     UNUSED(mask);
 
     while (max--) {
-        cfd = rdmaAccept(listener, server.neterr, fd, cip, sizeof(cip), &cport, &connpriv);
+        cfd = rdmaAccept(el, listener, server.neterr, fd, cip, sizeof(cip), &cport, &connpriv);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK) serverLog(LL_WARNING, "RDMA Accepting client connection: %s", server.neterr);
             return;
@@ -951,7 +1013,7 @@ static void rdmaCMeventHandler(struct aeEventLoop *el, int fd, void *clientData,
     case RDMA_CM_EVENT_TIMEWAIT_EXIT:
     case RDMA_CM_EVENT_CONNECT_REQUEST:
     case RDMA_CM_EVENT_ADDR_CHANGE:
-    case RDMA_CM_EVENT_DISCONNECTED: rdmaHandleDisconnect(ev); break;
+    case RDMA_CM_EVENT_DISCONNECTED: rdmaHandleDisconnect(el, ev); break;
 
     case RDMA_CM_EVENT_MULTICAST_JOIN:
     case RDMA_CM_EVENT_MULTICAST_ERROR:
@@ -1137,11 +1199,20 @@ static void connRdmaClose(connection *conn) {
         conn->fd = -1;
     }
 
+    /* If called from within a handler, schedule the close but
+     * keep the connection until the handler returns.
+     */
+    if (connHasRefs(conn)) {
+        conn->flags |= CONN_FLAG_CLOSE_SCHEDULED;
+        return;
+    }
+
     if (!cm_id) {
         return;
     }
 
     ctx = cm_id->context;
+    rdmaDelKeepalive(server.el, ctx);
     rdma_disconnect(cm_id);
 
     /* poll all CQ before close */
@@ -1172,6 +1243,10 @@ static size_t connRdmaSend(connection *conn, const void *data, size_t data_len) 
     char *addr = ctx->tx.addr + off;
     char *remote_addr = ctx->tx_addr + ctx->tx.offset;
     int ret;
+
+    if (connRdmaAllowCommand()) {
+        return C_ERR;
+    }
 
     memcpy(addr, data, data_len);
 
@@ -1206,7 +1281,7 @@ static int connRdmaWrite(connection *conn, const void *data, size_t data_len) {
     RdmaContext *ctx = cm_id->context;
     uint32_t towrite;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1249,7 +1324,7 @@ static int connRdmaRead(connection *conn, void *buf, size_t buf_len) {
     struct rdma_cm_id *cm_id = rdma_conn->cm_id;
     RdmaContext *ctx = cm_id->context;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1271,7 +1346,7 @@ static ssize_t connRdmaSyncWrite(connection *conn, char *ptr, ssize_t size, long
     long long start = mstime();
     uint32_t towrite;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1314,7 +1389,7 @@ static ssize_t connRdmaSyncRead(connection *conn, char *ptr, ssize_t size, long 
     long long start = mstime();
     uint32_t toread;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1349,7 +1424,7 @@ static ssize_t connRdmaSyncReadLine(connection *conn, char *ptr, ssize_t size, l
     char *c;
     char nl = 0;
 
-    if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
+    if (connRdmaAllowRW(conn)) {
         return C_ERR;
     }
 
@@ -1472,6 +1547,26 @@ end:
     return ret;
 }
 
+static int connRdmaIsLocal(connection *conn) {
+    rdma_connection *rdma_conn = (rdma_connection *)conn;
+    struct sockaddr *laddr = rdma_get_local_addr(rdma_conn->cm_id);
+    struct sockaddr *raddr = rdma_get_peer_addr(rdma_conn->cm_id);
+    struct sockaddr_in *lsa4, *rsa4;
+    struct sockaddr_in6 *lsa6, *rsa6;
+
+    if (laddr->sa_family == AF_INET) {
+        lsa4 = (struct sockaddr_in *)laddr;
+        rsa4 = (struct sockaddr_in *)raddr;
+        return !memcmp(&lsa4->sin_addr, &rsa4->sin_addr, sizeof(lsa4->sin_addr));
+    } else if (laddr->sa_family == AF_INET6) {
+        lsa6 = (struct sockaddr_in6 *)laddr;
+        rsa6 = (struct sockaddr_in6 *)raddr;
+        return !memcmp(&lsa6->sin6_addr, &rsa6->sin6_addr, sizeof(lsa6->sin6_addr));
+    }
+
+    return -1;
+}
+
 int connRdmaListen(connListener *listener) {
     int j, ret;
     char **bindaddr = listener->bindaddr;
@@ -1488,7 +1583,7 @@ int connRdmaListen(connListener *listener) {
         bindaddr = default_bindaddr;
     }
 
-    listener->priv = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
+    rdma_listeners = rdma_listener = zcalloc_num(bindaddr_count, sizeof(*rdma_listener));
     for (j = 0; j < bindaddr_count; j++) {
         char *addr = bindaddr[j];
         int optional = *addr == '-';
@@ -1602,7 +1697,6 @@ static int rdmaProcessPendingData(void) {
     listNode *ln;
     rdma_connection *rdma_conn;
     connection *conn;
-    listNode *node;
     int processed;
 
     processed = listLength(pending_list);
@@ -1610,17 +1704,17 @@ static int rdmaProcessPendingData(void) {
     while ((ln = listNext(&li))) {
         rdma_conn = listNodeValue(ln);
         conn = &rdma_conn->c;
-        node = rdma_conn->pending_list_node;
 
         /* a connection can be disconnected by remote peer, CM event mark state as CONN_STATE_CLOSED, kick connection
          * read/write handler to close connection */
         if (conn->state == CONN_STATE_ERROR || conn->state == CONN_STATE_CLOSED) {
-            listDelNode(pending_list, node);
-            /* do NOT call callHandler(conn, conn->read_handler) here, conn is freed in handler! */
-            if (conn->read_handler) {
-                conn->read_handler(conn);
-            } else if (conn->write_handler) {
-                conn->write_handler(conn);
+            listDelNode(pending_list, rdma_conn->pending_list_node);
+            rdma_conn->pending_list_node = NULL;
+            /* Invoke both read_handler and write_handler, unless read_handler
+               returns 0, indicating the connection has closed, in which case
+               write_handler will be skipped. */
+            if (callHandler(conn, conn->read_handler)) {
+                callHandler(conn, conn->write_handler);
             }
 
             continue;
@@ -1644,6 +1738,7 @@ static ConnectionType CT_RDMA = {
     .ae_handler = connRdmaEventHandler,
     .accept_handler = connRdmaAcceptHandler,
     //.cluster_accept_handler = NULL,
+    .is_local = connRdmaIsLocal,
     .listen = connRdmaListen,
     .addr = connRdmaAddr,
 
@@ -1707,13 +1802,14 @@ static int rdmaChangeListener(void) {
 
         aeDeleteFileEvent(server.el, listener->fd[i], AE_READABLE);
         listener->fd[i] = -1;
-        struct rdma_listener *rdma_listener = (struct rdma_listener *)listener->priv + i;
+        struct rdma_listener *rdma_listener = &rdma_listeners[i];
         rdma_destroy_id(rdma_listener->cm_id);
         rdma_destroy_event_channel(rdma_listener->cm_channel);
     }
 
     listener->count = 0;
-    zfree(listener->priv);
+    zfree(rdma_listeners);
+    rdma_listeners = NULL;
 
     closeListener(listener);
 

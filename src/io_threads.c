@@ -1,3 +1,9 @@
+/*
+ * Copyright Valkey Contributors.
+ * All rights reserved.
+ * SPDX-License-Identifier: BSD 3-Clause
+ */
+
 #include "io_threads.h"
 
 static __thread int thread_id = 0; /* Thread local var */
@@ -303,6 +309,8 @@ void initIOThreads(void) {
 
     serverAssert(server.io_threads_num <= IO_THREADS_MAX_NUM);
 
+    prefetchCommandsBatchInit();
+
     /* Spawn and initialize the I/O threads. */
     for (int i = 1; i < server.io_threads_num; i++) {
         createIOThread(i);
@@ -311,8 +319,7 @@ void initIOThreads(void) {
 
 int trySendReadToIOThreads(client *c) {
     if (server.active_io_threads_num <= 1) return C_ERR;
-    if (!server.io_threads_do_reads) return C_ERR;
-    /* If IO thread is areadty reading, return C_OK to make sure the main thread will not handle it. */
+    /* If IO thread is already reading, return C_OK to make sure the main thread will not handle it. */
     if (c->io_read_state != CLIENT_IDLE) return C_OK;
     /* Currently, replica/master writes are not offloaded and are processed synchronously. */
     if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;

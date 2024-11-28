@@ -5,12 +5,19 @@ uint64_t hashTestCallback(const void *key) {
     return dictGenHashFunction((unsigned char *)key, strlen((char *)key));
 }
 
-void freeTestCallback(dict *d, void *val) {
-    UNUSED(d);
+void freeTestCallback(void *val) {
     zfree(val);
 }
 
-dictType KvstoreDictTestType = {hashTestCallback, NULL, NULL, freeTestCallback, NULL, NULL};
+dictType KvstoreDictTestType = {hashTestCallback,
+                                NULL,
+                                NULL,
+                                freeTestCallback,
+                                NULL,
+                                NULL,
+                                kvstoreDictRehashingStarted,
+                                kvstoreDictRehashingCompleted,
+                                kvstoreDictMetadataSize};
 
 char *stringFromInt(int value) {
     char buf[32];

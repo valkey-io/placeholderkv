@@ -145,6 +145,7 @@ proc wait_for_cluster_size {cluster_size} {
 # Check that cluster nodes agree about "state", or raise an error.
 proc wait_for_cluster_state {state} {
     for {set j 0} {$j < [llength $::servers]} {incr j} {
+        if {[process_is_paused [srv -$j pid]]} continue
         wait_for_condition 1000 50 {
             [CI $j cluster_state] eq $state
         } else {
@@ -227,6 +228,15 @@ proc cluster_setup {masters replicas node_count slot_allocator replica_allocator
     # Setup master/replica relationships
     $replica_allocator $masters $replicas
 
+    # A helper debug log that can print the server id in the server logs.
+    # This can help us locate the corresponding server in the log file.
+    for {set i 0} {$i < $masters} {incr i} {
+        R $i DEBUG LOG "========== I am primary $i =========="
+    }
+    for {set i $i} {$i < [expr $masters+$replicas]} {incr i} {
+        R $i DEBUG LOG "========== I am replica $i =========="
+    }
+
     wait_for_cluster_propagation
     wait_for_cluster_state "ok"
 
@@ -266,6 +276,14 @@ proc cluster_get_myself id {
         if {[cluster_has_flag $n myself]} {return $n}
     }
     return {}
+}
+
+# Returns the parsed "myself's primary" CLUSTER NODES entry as a dictionary.
+proc cluster_get_myself_primary id {
+    set myself [cluster_get_myself $id]
+    set replicaof [dict get $myself slaveof]
+    set node [cluster_get_node_by_id $id $replicaof]
+    return $node
 }
 
 # Get a specific node by ID by parsing the CLUSTER NODES output

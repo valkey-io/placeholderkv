@@ -16,7 +16,7 @@
  * ----------------------------------------------------------------------------
  *
  * Copyright (c) 2009-2012, Pieter Noordhuis <pcnoordhuis at gmail dot com>
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -182,12 +182,16 @@ static int rioFileFlush(rio *r) {
 }
 
 static const rio rioFileIO = {
-    rioFileRead, rioFileWrite, rioFileTell, rioFileFlush, NULL, /* update_checksum */
-    0,                                                          /* current checksum */
-    0,                                                          /* flags */
-    0,                                                          /* bytes read or written */
-    0,                                                          /* read/write chunk size */
-    {{NULL, 0}}                                                 /* union for io-specific vars */
+    rioFileRead,
+    rioFileWrite,
+    rioFileTell,
+    rioFileFlush,
+    NULL,       /* update_checksum */
+    0,          /* current checksum */
+    0,          /* flags */
+    0,          /* bytes read or written */
+    0,          /* read/write chunk size */
+    {{NULL, 0}} /* union for io-specific vars */
 };
 
 void rioInitWithFile(rio *r, FILE *fp) {
@@ -276,12 +280,16 @@ static int rioConnFlush(rio *r) {
 }
 
 static const rio rioConnIO = {
-    rioConnRead, rioConnWrite, rioConnTell, rioConnFlush, NULL, /* update_checksum */
-    0,                                                          /* current checksum */
-    0,                                                          /* flags */
-    0,                                                          /* bytes read or written */
-    0,                                                          /* read/write chunk size */
-    {{NULL, 0}}                                                 /* union for io-specific vars */
+    rioConnRead,
+    rioConnWrite,
+    rioConnTell,
+    rioConnFlush,
+    NULL,       /* update_checksum */
+    0,          /* current checksum */
+    0,          /* flags */
+    0,          /* bytes read or written */
+    0,          /* read/write chunk size */
+    {{NULL, 0}} /* union for io-specific vars */
 };
 
 /* Create an RIO that implements a buffered read from an fd
@@ -388,12 +396,16 @@ static int rioFdFlush(rio *r) {
 }
 
 static const rio rioFdIO = {
-    rioFdRead,  rioFdWrite, rioFdTell, rioFdFlush, NULL, /* update_checksum */
-    0,                                                   /* current checksum */
-    0,                                                   /* flags */
-    0,                                                   /* bytes read or written */
-    0,                                                   /* read/write chunk size */
-    {{NULL, 0}}                                          /* union for io-specific vars */
+    rioFdRead,
+    rioFdWrite,
+    rioFdTell,
+    rioFdFlush,
+    NULL,       /* update_checksum */
+    0,          /* current checksum */
+    0,          /* flags */
+    0,          /* bytes read or written */
+    0,          /* read/write chunk size */
+    {{NULL, 0}} /* union for io-specific vars */
 };
 
 void rioInitWithFd(rio *r, int fd) {

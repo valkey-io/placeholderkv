@@ -1,6 +1,6 @@
 /* SORT command and helper functions.
  *
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,6 +34,8 @@
 #include <math.h>   /* isnan() */
 #include "cluster.h"
 
+#include "valkey_strtod.h"
+
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
 serverSortOperation *createSortOperation(int type, robj *pattern) {
@@ -41,6 +43,11 @@ serverSortOperation *createSortOperation(int type, robj *pattern) {
     so->type = type;
     so->pattern = pattern;
     return so;
+}
+
+/* Return 1 if pattern is the special pattern '#'. */
+static int isReturnSubstPattern(sds pattern) {
+    return pattern[0] == '#' && pattern[1] == '\0';
 }
 
 /* Return the value associated to the key with a name obtained using
@@ -68,7 +75,7 @@ robj *lookupKeyByPattern(serverDb *db, robj *pattern, robj *subst) {
     /* If the pattern is "#" return the substitution object itself in order
      * to implement the "SORT ... GET #" feature. */
     spat = pattern->ptr;
-    if (spat[0] == '#' && spat[1] == '\0') {
+    if (isReturnSubstPattern(spat)) {
         incrRefCount(subst);
         return subst;
     }
@@ -258,6 +265,7 @@ void sortCommandGeneric(client *c, int readonly) {
              * unless we can make sure the keys formed by the pattern are in the same slot
              * as the key to sort. */
             if (server.cluster_enabled &&
+                !isReturnSubstPattern(c->argv[j + 1]->ptr) &&
                 patternHashSlot(c->argv[j + 1]->ptr, sdslen(c->argv[j + 1]->ptr)) != getKeySlot(c->argv[1]->ptr)) {
                 addReplyError(c, "GET option of SORT denied in Cluster mode when "
                                  "keys formed by the pattern may be in different slots.");
@@ -473,9 +481,9 @@ void sortCommandGeneric(client *c, int readonly) {
             } else {
                 if (sdsEncodedObject(byval)) {
                     char *eptr;
-
-                    vector[j].u.score = strtod(byval->ptr, &eptr);
-                    if (eptr[0] != '\0' || errno == ERANGE || isnan(vector[j].u.score)) {
+                    errno = 0;
+                    vector[j].u.score = valkey_strtod(byval->ptr, &eptr);
+                    if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }
                 } else if (byval->encoding == OBJ_ENCODING_INT) {

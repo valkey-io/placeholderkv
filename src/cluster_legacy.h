@@ -25,6 +25,7 @@
 #define CLUSTER_TODO_SAVE_CONFIG (1 << 2)
 #define CLUSTER_TODO_FSYNC_CONFIG (1 << 3)
 #define CLUSTER_TODO_HANDLE_MANUALFAILOVER (1 << 4)
+#define CLUSTER_TODO_BROADCAST_ALL (1 << 5)
 
 /* clusterLink encapsulates everything needed to talk with a remote node. */
 typedef struct clusterLink {
@@ -292,9 +293,8 @@ static_assert(offsetof(clusterMsg, data) == 2256, "unexpected field offset");
 
 /* Message flags better specify the packet content or are used to
  * provide some information about the node state. */
-#define CLUSTERMSG_FLAG0_PAUSED (1 << 0) /* Primary paused for manual failover. */
-#define CLUSTERMSG_FLAG0_FORCEACK                                                                                      \
-    (1 << 1)                               /* Give ACK to AUTH_REQUEST even if                                         \
+#define CLUSTERMSG_FLAG0_PAUSED (1 << 0)   /* Primary paused for manual failover. */
+#define CLUSTERMSG_FLAG0_FORCEACK (1 << 1) /* Give ACK to AUTH_REQUEST even if \
                                               primary is up. */
 #define CLUSTERMSG_FLAG0_EXT_DATA (1 << 2) /* Message contains extension data */
 
@@ -339,7 +339,8 @@ struct _clusterNode {
     mstime_t pong_received;                 /* Unix time we received the pong */
     mstime_t data_received;                 /* Unix time we received any data */
     mstime_t fail_time;                     /* Unix time when FAIL flag was set */
-    mstime_t voted_time;                    /* Last time we voted for a replica of this primary */
+    mstime_t voted_time;                    /* Last time we voted for a replica of this primary in non manual
+                                             * failover scenarios. */
     mstime_t repl_offset_time;              /* Unix time we received offset for this node */
     mstime_t orphaned_time;                 /* Starting time of orphaned primary condition */
     long long repl_offset;                  /* Last known repl offset for this node. */

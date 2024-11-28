@@ -34,14 +34,18 @@
 
 #define LOAD_TIMEOUT_MS 500
 
-typedef enum { restorePolicy_Flush, restorePolicy_Append, restorePolicy_Replace } restorePolicy;
+typedef enum {
+    restorePolicy_Flush,
+    restorePolicy_Append,
+    restorePolicy_Replace
+} restorePolicy;
 
 static size_t engine_cache_memory = 0;
 
 /* Forward declaration */
-static void engineFunctionDispose(dict *d, void *obj);
-static void engineStatsDispose(dict *d, void *obj);
-static void engineLibraryDispose(dict *d, void *obj);
+static void engineFunctionDispose(void *obj);
+static void engineStatsDispose(void *obj);
+static void engineLibraryDispose(void *obj);
 static int functionsVerifyName(sds name);
 
 typedef struct functionsLibEngineStats {
@@ -114,23 +118,21 @@ static dict *engines = NULL;
 static functionsLibCtx *curr_functions_lib_ctx = NULL;
 
 static size_t functionMallocSize(functionInfo *fi) {
-    return zmalloc_size(fi) + sdsZmallocSize(fi->name) + (fi->desc ? sdsZmallocSize(fi->desc) : 0) +
+    return zmalloc_size(fi) + sdsAllocSize(fi->name) + (fi->desc ? sdsAllocSize(fi->desc) : 0) +
            fi->li->ei->engine->get_function_memory_overhead(fi->function);
 }
 
 static size_t libraryMallocSize(functionLibInfo *li) {
-    return zmalloc_size(li) + sdsZmallocSize(li->name) + sdsZmallocSize(li->code);
+    return zmalloc_size(li) + sdsAllocSize(li->name) + sdsAllocSize(li->code);
 }
 
-static void engineStatsDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineStatsDispose(void *obj) {
     functionsLibEngineStats *stats = obj;
     zfree(stats);
 }
 
 /* Dispose function memory */
-static void engineFunctionDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineFunctionDispose(void *obj) {
     if (!obj) {
         return;
     }
@@ -154,15 +156,14 @@ static void engineLibraryFree(functionLibInfo *li) {
     zfree(li);
 }
 
-static void engineLibraryDispose(dict *d, void *obj) {
-    UNUSED(d);
+static void engineLibraryDispose(void *obj) {
     engineLibraryFree(obj);
 }
 
 /* Clear all the functions from the given library ctx */
-void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
-    dictEmpty(lib_ctx->functions, NULL);
-    dictEmpty(lib_ctx->libraries, NULL);
+void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *)) {
+    dictEmpty(lib_ctx->functions, callback);
+    dictEmpty(lib_ctx->libraries, callback);
     dictIterator *iter = dictGetIterator(lib_ctx->engines_stats);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -171,22 +172,31 @@ void functionsLibCtxClear(functionsLibCtx *lib_ctx) {
         stats->n_lib = 0;
     }
     dictReleaseIterator(iter);
-    curr_functions_lib_ctx->cache_memory = 0;
+    lib_ctx->cache_memory = 0;
 }
 
-void functionsLibCtxClearCurrent(int async) {
+void functionsLibCtxClearCurrent(int async, void(callback)(dict *)) {
     if (async) {
         functionsLibCtx *old_l_ctx = curr_functions_lib_ctx;
         curr_functions_lib_ctx = functionsLibCtxCreate();
         freeFunctionsAsync(old_l_ctx);
     } else {
-        functionsLibCtxClear(curr_functions_lib_ctx);
+        functionsLibCtxClear(curr_functions_lib_ctx, callback);
+    }
+}
+
+/* Free the given functions ctx */
+static void functionsLibCtxFreeGeneric(functionsLibCtx *functions_lib_ctx, int async) {
+    if (async) {
+        freeFunctionsAsync(functions_lib_ctx);
+    } else {
+        functionsLibCtxFree(functions_lib_ctx);
     }
 }
 
 /* Free the given functions ctx */
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
-    functionsLibCtxClear(functions_lib_ctx);
+    functionsLibCtxClear(functions_lib_ctx, NULL);
     dictRelease(functions_lib_ctx->functions);
     dictRelease(functions_lib_ctx->libraries);
     dictRelease(functions_lib_ctx->engines_stats);
@@ -195,8 +205,8 @@ void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx) {
 
 /* Swap the current functions ctx with the given one.
  * Free the old functions ctx. */
-void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx) {
-    functionsLibCtxFree(curr_functions_lib_ctx);
+void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async) {
+    functionsLibCtxFreeGeneric(curr_functions_lib_ctx, async);
     curr_functions_lib_ctx = new_lib_ctx;
 }
 
@@ -370,7 +380,7 @@ libraryJoin(functionsLibCtx *functions_lib_ctx_dst, functionsLibCtx *functions_l
     dictReleaseIterator(iter);
     iter = NULL;
 
-    functionsLibCtxClear(functions_lib_ctx_src);
+    functionsLibCtxClear(functions_lib_ctx_src, NULL);
     if (old_libraries_list) {
         listRelease(old_libraries_list);
         old_libraries_list = NULL;
@@ -408,6 +418,7 @@ int functionsRegisterEngine(const char *engine_name, engine *engine) {
     client *c = createClient(NULL);
     c->flag.deny_blocking = 1;
     c->flag.script = 1;
+    c->flag.fake = 1;
     engineInfo *ei = zmalloc(sizeof(*ei));
     *ei = (engineInfo){
         .name = engine_name_sds,
@@ -417,7 +428,7 @@ int functionsRegisterEngine(const char *engine_name, engine *engine) {
 
     dictAdd(engines, engine_name_sds, ei);
 
-    engine_cache_memory += zmalloc_size(ei) + sdsZmallocSize(ei->name) + zmalloc_size(engine) +
+    engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) + zmalloc_size(engine) +
                            engine->get_engine_memory_overhead(engine->engine_ctx);
 
     return C_OK;
@@ -767,7 +778,7 @@ void functionRestoreCommand(client *c) {
     }
 
     if (restore_replicy == restorePolicy_Flush) {
-        functionsLibCtxSwapWithCurrent(functions_lib_ctx);
+        functionsLibCtxSwapWithCurrent(functions_lib_ctx, server.lazyfree_lazy_user_flush);
         functions_lib_ctx = NULL; /* avoid releasing the f_ctx in the end */
     } else {
         if (libraryJoin(curr_functions_lib_ctx, functions_lib_ctx, restore_replicy == restorePolicy_Replace, &err) !=
@@ -787,7 +798,7 @@ load_error:
         addReply(c, shared.ok);
     }
     if (functions_lib_ctx) {
-        functionsLibCtxFree(functions_lib_ctx);
+        functionsLibCtxFreeGeneric(functions_lib_ctx, server.lazyfree_lazy_user_flush);
     }
 }
 
@@ -809,7 +820,7 @@ void functionFlushCommand(client *c) {
         return;
     }
 
-    functionsLibCtxClearCurrent(async);
+    functionsLibCtxClearCurrent(async, NULL);
 
     /* Indicate that the command changed the data so it will be replicated and
      * counted as a data change (for persistence configuration) */
@@ -819,46 +830,45 @@ void functionFlushCommand(client *c) {
 
 /* FUNCTION HELP */
 void functionHelpCommand(client *c) {
-    /* clang-format off */
     const char *help[] = {
-"LOAD [REPLACE] <FUNCTION CODE>",
-"    Create a new library with the given library name and code.",
-"DELETE <LIBRARY NAME>",
-"    Delete the given library.",
-"LIST [LIBRARYNAME PATTERN] [WITHCODE]",
-"    Return general information on all the libraries:",
-"    * Library name",
-"    * The engine used to run the Library",
-"    * Functions list",
-"    * Library code (if WITHCODE is given)",
-"    It also possible to get only function that matches a pattern using LIBRARYNAME argument.",
-"STATS",
-"    Return information about the current function running:",
-"    * Function name",
-"    * Command used to run the function",
-"    * Duration in MS that the function is running",
-"    If no function is running, return nil",
-"    In addition, returns a list of available engines.",
-"KILL",
-"    Kill the current running function.",
-"FLUSH [ASYNC|SYNC]",
-"    Delete all the libraries.",
-"    When called without the optional mode argument, the behavior is determined by the",
-"    lazyfree-lazy-user-flush configuration directive. Valid modes are:",
-"    * ASYNC: Asynchronously flush the libraries.",
-"    * SYNC: Synchronously flush the libraries.",
-"DUMP",
-"    Return a serialized payload representing the current libraries, can be restored using FUNCTION RESTORE command",
-"RESTORE <PAYLOAD> [FLUSH|APPEND|REPLACE]",
-"    Restore the libraries represented by the given payload, it is possible to give a restore policy to",
-"    control how to handle existing libraries (default APPEND):",
-"    * FLUSH: delete all existing libraries.",
-"    * APPEND: appends the restored libraries to the existing libraries. On collision, abort.",
-"    * REPLACE: appends the restored libraries to the existing libraries, On collision, replace the old",
-"      libraries with the new libraries (notice that even on this option there is a chance of failure",
-"      in case of functions name collision with another library).",
-NULL };
-    /* clang-format on */
+        "LOAD [REPLACE] <FUNCTION CODE>",
+        "    Create a new library with the given library name and code.",
+        "DELETE <LIBRARY NAME>",
+        "    Delete the given library.",
+        "LIST [LIBRARYNAME PATTERN] [WITHCODE]",
+        "    Return general information on all the libraries:",
+        "    * Library name",
+        "    * The engine used to run the Library",
+        "    * Functions list",
+        "    * Library code (if WITHCODE is given)",
+        "    It also possible to get only function that matches a pattern using LIBRARYNAME argument.",
+        "STATS",
+        "    Return information about the current function running:",
+        "    * Function name",
+        "    * Command used to run the function",
+        "    * Duration in MS that the function is running",
+        "    If no function is running, return nil",
+        "    In addition, returns a list of available engines.",
+        "KILL",
+        "    Kill the current running function.",
+        "FLUSH [ASYNC|SYNC]",
+        "    Delete all the libraries.",
+        "    When called without the optional mode argument, the behavior is determined by the",
+        "    lazyfree-lazy-user-flush configuration directive. Valid modes are:",
+        "    * ASYNC: Asynchronously flush the libraries.",
+        "    * SYNC: Synchronously flush the libraries.",
+        "DUMP",
+        "    Return a serialized payload representing the current libraries, can be restored using FUNCTION RESTORE command",
+        "RESTORE <PAYLOAD> [FLUSH|APPEND|REPLACE]",
+        "    Restore the libraries represented by the given payload, it is possible to give a restore policy to",
+        "    control how to handle existing libraries (default APPEND):",
+        "    * FLUSH: delete all existing libraries.",
+        "    * APPEND: appends the restored libraries to the existing libraries. On collision, abort.",
+        "    * REPLACE: appends the restored libraries to the existing libraries, On collision, replace the old",
+        "      libraries with the new libraries (notice that even on this option there is a chance of failure",
+        "      in case of functions name collision with another library).",
+        NULL,
+    };
     addReplyHelp(c, help);
 }
 

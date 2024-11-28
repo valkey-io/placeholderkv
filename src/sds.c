@@ -1,8 +1,7 @@
 /* SDSLib 2.0 -- A C dynamic strings library
  *
- * Copyright (c) 2006-2015, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2006-2015, Redis Ltd.
  * Copyright (c) 2015, Oran Agra
- * Copyright (c) 2015, Redis Labs, Inc
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -344,11 +343,7 @@ sds sdsRemoveFreeSpace(sds s, int would_regrow) {
  * if the size is smaller than currently used len, the data will be truncated.
  *
  * The when the would_regrow argument is set to 1, it prevents the use of
- * SDS_TYPE_5, which is desired when the sds is likely to be changed again.
- *
- * The sdsAlloc size will be set to the requested size regardless of the actual
- * allocation size, this is done in order to avoid repeated calls to this
- * function when the caller detects that it has excess space. */
+ * SDS_TYPE_5, which is desired when the sds is likely to be changed again. */
 sds sdsResize(sds s, size_t size, int would_regrow) {
     void *sh, *newsh = NULL;
     char type, oldtype = s[-1] & SDS_TYPE_MASK;
@@ -959,23 +954,30 @@ void sdsfreesplitres(sds *tokens, int count) {
 sds sdscatrepr(sds s, const char *p, size_t len) {
     s = sdsMakeRoomFor(s, len + 2);
     s = sdscatlen(s, "\"", 1);
-    while (len--) {
-        switch (*p) {
-        case '\\':
-        case '"': s = sdscatprintf(s, "\\%c", *p); break;
-        case '\n': s = sdscatlen(s, "\\n", 2); break;
-        case '\r': s = sdscatlen(s, "\\r", 2); break;
-        case '\t': s = sdscatlen(s, "\\t", 2); break;
-        case '\a': s = sdscatlen(s, "\\a", 2); break;
-        case '\b': s = sdscatlen(s, "\\b", 2); break;
-        default:
-            if (isprint(*p))
-                s = sdscatlen(s, p, 1);
-            else
+    while (len) {
+        if (isprint(*p)) {
+            const char *start = p;
+            while (len && isprint(*p)) {
+                len--;
+                p++;
+            }
+            s = sdscatlen(s, start, p - start);
+        } else {
+            switch (*p) {
+            case '\\':
+            case '"': s = sdscatprintf(s, "\\%c", *p); break;
+            case '\n': s = sdscatlen(s, "\\n", 2); break;
+            case '\r': s = sdscatlen(s, "\\r", 2); break;
+            case '\t': s = sdscatlen(s, "\\t", 2); break;
+            case '\a': s = sdscatlen(s, "\\a", 2); break;
+            case '\b': s = sdscatlen(s, "\\b", 2); break;
+            default:
                 s = sdscatprintf(s, "\\x%02x", (unsigned char)*p);
-            break;
+                break;
+            }
+            p++;
+            len--;
         }
-        p++;
     }
     return sdscatlen(s, "\"", 1);
 }
@@ -1037,6 +1039,86 @@ int hex_digit_to_int(char c) {
     }
 }
 
+/* Helper function for sdssplitargs that parses a single argument. It
+ * populates the number characters needed to store the parsed argument
+ * in len, if provided, or will copy the parsed string into dst, if provided.
+ * If the string is able to be parsed, this function returns the number of
+ * characters that were parsed. If the argument can't be parsed, it
+ * returns 0. */
+static int sdsparsearg(const char *arg, unsigned int *len, char *dst) {
+    const char *p = arg;
+    int inq = 0;  /* set to 1 if we are in "quotes" */
+    int insq = 0; /* set to 1 if we are in 'single quotes' */
+    int done = 0;
+
+    while (!done) {
+        int new_char = -1;
+        if (inq) {
+            if (*p == '\\' && *(p + 1) == 'x' && is_hex_digit(*(p + 2)) && is_hex_digit(*(p + 3))) {
+                new_char = (hex_digit_to_int(*(p + 2)) * 16) + hex_digit_to_int(*(p + 3));
+                p += 3;
+            } else if (*p == '\\' && *(p + 1)) {
+                p++;
+                switch (*p) {
+                case 'n': new_char = '\n'; break;
+                case 'r': new_char = '\r'; break;
+                case 't': new_char = '\t'; break;
+                case 'b': new_char = '\b'; break;
+                case 'a': new_char = '\a'; break;
+                default: new_char = *p; break;
+                }
+            } else if (*p == '"') {
+                /* closing quote must be followed by a space or
+                 * nothing at all. */
+                if (*(p + 1) && !isspace(*(p + 1))) return 0;
+                done = 1;
+            } else if (!*p) {
+                /* unterminated quotes */
+                return 0;
+            } else {
+                new_char = *p;
+            }
+        } else if (insq) {
+            if (*p == '\\' && *(p + 1) == '\'') {
+                p++;
+                new_char = *p;
+            } else if (*p == '\'') {
+                /* closing quote must be followed by a space or
+                 * nothing at all. */
+                if (*(p + 1) && !isspace(*(p + 1))) return 0;
+                done = 1;
+            } else if (!*p) {
+                /* unterminated quotes */
+                return 0;
+            } else {
+                new_char = *p;
+            }
+        } else {
+            switch (*p) {
+            case ' ':
+            case '\n':
+            case '\r':
+            case '\t':
+            case '\0': done = 1; break;
+            case '"': inq = 1; break;
+            case '\'': insq = 1; break;
+            default: new_char = *p; break;
+            }
+        }
+        if (new_char != -1) {
+            if (len) (*len)++;
+            if (dst) {
+                *dst = (char)new_char;
+                dst++;
+            }
+        }
+        if (*p) {
+            p++;
+        }
+    }
+    return p - arg;
+}
+
 /* Split a line into arguments, where every argument can be in the
  * following programming-language REPL-alike form:
  *
@@ -1054,103 +1136,42 @@ int hex_digit_to_int(char c) {
  * The function returns the allocated tokens on success, even when the
  * input string is empty, or NULL if the input contains unbalanced
  * quotes or closed quotes followed by non space characters
- * as in: "foo"bar or "foo'
+ * as in: "foo"bar or "foo'.
+ *
+ * The sds strings returned by this function are not initialized with
+ * extra space.
  */
 sds *sdssplitargs(const char *line, int *argc) {
     const char *p = line;
-    char *current = NULL;
     char **vector = NULL;
 
     *argc = 0;
-    while (1) {
+    while (*p) {
         /* skip blanks */
         while (*p && isspace(*p)) p++;
-        if (*p) {
-            /* get a token */
-            int inq = 0;  /* set to 1 if we are in "quotes" */
-            int insq = 0; /* set to 1 if we are in 'single quotes' */
-            int done = 0;
+        if (!(*p)) break;
+        unsigned int len = 0;
+        if (sdsparsearg(p, &len, NULL)) {
+            sds current = sdsnewlen(SDS_NOINIT, len);
+            int parsedlen = sdsparsearg(p, NULL, current);
+            assert(parsedlen > 0);
+            p += parsedlen;
 
-            if (current == NULL) current = sdsempty();
-            while (!done) {
-                if (inq) {
-                    if (*p == '\\' && *(p + 1) == 'x' && is_hex_digit(*(p + 2)) && is_hex_digit(*(p + 3))) {
-                        unsigned char byte;
-
-                        byte = (hex_digit_to_int(*(p + 2)) * 16) + hex_digit_to_int(*(p + 3));
-                        current = sdscatlen(current, (char *)&byte, 1);
-                        p += 3;
-                    } else if (*p == '\\' && *(p + 1)) {
-                        char c;
-
-                        p++;
-                        switch (*p) {
-                        case 'n': c = '\n'; break;
-                        case 'r': c = '\r'; break;
-                        case 't': c = '\t'; break;
-                        case 'b': c = '\b'; break;
-                        case 'a': c = '\a'; break;
-                        default: c = *p; break;
-                        }
-                        current = sdscatlen(current, &c, 1);
-                    } else if (*p == '"') {
-                        /* closing quote must be followed by a space or
-                         * nothing at all. */
-                        if (*(p + 1) && !isspace(*(p + 1))) goto err;
-                        done = 1;
-                    } else if (!*p) {
-                        /* unterminated quotes */
-                        goto err;
-                    } else {
-                        current = sdscatlen(current, p, 1);
-                    }
-                } else if (insq) {
-                    if (*p == '\\' && *(p + 1) == '\'') {
-                        p++;
-                        current = sdscatlen(current, "'", 1);
-                    } else if (*p == '\'') {
-                        /* closing quote must be followed by a space or
-                         * nothing at all. */
-                        if (*(p + 1) && !isspace(*(p + 1))) goto err;
-                        done = 1;
-                    } else if (!*p) {
-                        /* unterminated quotes */
-                        goto err;
-                    } else {
-                        current = sdscatlen(current, p, 1);
-                    }
-                } else {
-                    switch (*p) {
-                    case ' ':
-                    case '\n':
-                    case '\r':
-                    case '\t':
-                    case '\0': done = 1; break;
-                    case '"': inq = 1; break;
-                    case '\'': insq = 1; break;
-                    default: current = sdscatlen(current, p, 1); break;
-                    }
-                }
-                if (*p) p++;
-            }
             /* add the token to the vector */
             vector = s_realloc(vector, ((*argc) + 1) * sizeof(char *));
             vector[*argc] = current;
             (*argc)++;
             current = NULL;
         } else {
-            /* Even on empty input string return something not NULL. */
-            if (vector == NULL) vector = s_malloc(sizeof(void *));
-            return vector;
+            while ((*argc)--) sdsfree(vector[*argc]);
+            s_free(vector);
+            *argc = 0;
+            return NULL;
         }
     }
-
-err:
-    while ((*argc)--) sdsfree(vector[*argc]);
-    s_free(vector);
-    if (current) sdsfree(current);
-    *argc = 0;
-    return NULL;
+    /* Even on empty input string return something not NULL. */
+    if (vector == NULL) vector = s_malloc(sizeof(void *));
+    return vector;
 }
 
 /* Modify the string substituting all the occurrences of the set of

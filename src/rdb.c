@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1360,6 +1360,7 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
                 sdsfree(slot_info);
                 goto werr;
             }
+            written += res;
             last_slot = curr_slot;
             sdsfree(slot_info);
         }
@@ -3455,10 +3456,9 @@ static void backgroundSaveDoneHandlerSocket(int exitcode, int bysignal) {
     if (!bysignal && exitcode == 0) {
         serverLog(LL_NOTICE, "Background RDB transfer terminated with success");
     } else if (!bysignal && exitcode != 0) {
-        serverLog(LL_WARNING, "Background transfer error");
-        server.lastbgsave_status = C_ERR;
+        serverLog(LL_WARNING, "Background RDB transfer error");
     } else {
-        serverLog(LL_WARNING, "Background transfer terminated by signal %d", bysignal);
+        serverLog(LL_WARNING, "Background RDB transfer terminated by signal %d", bysignal);
     }
     if (server.rdb_child_exit_pipe != -1) close(server.rdb_child_exit_pipe);
     if (server.rdb_pipe_read > 0) {
@@ -3563,14 +3563,14 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
 
             conns[connsnum++] = replica->conn;
             if (dual_channel) {
-                /* Put the socket in blocking mode to simplify RDB transfer. */
-                connBlock(replica->conn);
                 connSendTimeout(replica->conn, server.repl_timeout * 1000);
                 /* This replica uses diskless dual channel sync, hence we need
                  * to inform it with the save end offset.*/
                 sendCurrentOffsetToReplica(replica);
                 /* Make sure repl traffic is appended to the replication backlog */
                 addRdbReplicaToPsyncWait(replica);
+                /* Put the socket in blocking mode to simplify RDB transfer. */
+                connBlock(replica->conn);
             } else {
                 server.rdb_pipe_numconns++;
             }
@@ -3695,6 +3695,21 @@ void bgsaveCommand(client *c) {
     if (c->argc > 1) {
         if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "schedule")) {
             schedule = 1;
+        } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "cancel")) {
+            /* Terminates an in progress BGSAVE */
+            if (server.child_type == CHILD_TYPE_RDB) {
+                /* There is an ongoing bgsave */
+                serverLog(LL_NOTICE, "Background saving will be aborted due to user request");
+                killRDBChild();
+                addReplyStatus(c, "Background saving cancelled");
+            } else if (server.rdb_bgsave_scheduled == 1) {
+                serverLog(LL_NOTICE, "Scheduled background saving will be cancelled due to user request");
+                server.rdb_bgsave_scheduled = 0;
+                addReplyStatus(c, "Scheduled background saving cancelled");
+            } else {
+                addReplyError(c, "Background saving is currently not in progress or scheduled");
+            }
+            return;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);
             return;
@@ -3709,6 +3724,11 @@ void bgsaveCommand(client *c) {
     } else if (hasActiveChildProcess() || server.in_exec) {
         if (schedule || server.in_exec) {
             server.rdb_bgsave_scheduled = 1;
+            if (schedule) {
+                serverLog(LL_NOTICE, "Background saving scheduled due to user request");
+            } else {
+                serverLog(LL_NOTICE, "Background saving scheduled to run after transaction execution");
+            }
             addReplyStatus(c, "Background saving scheduled");
         } else {
             addReplyError(c, "Another child process is active (AOF?): can't BGSAVE right now. "

@@ -112,7 +112,6 @@ start_server {tags {"pubsub network"}} {
     test "UNSUBSCRIBE from non-subscribed channels" {
         set rd1 [valkey_deferring_client]
         assert_equal {0 0 0} [unsubscribe $rd1 {foo bar quux}]
-
         # clean up clients
         $rd1 close
     }
