@@ -297,19 +297,19 @@ Other options supported by Valkey's `CMake` build system:
 
 ## Special build flags
 
-- `-DBUILD_TLS=<on|off|module>` enable TLS build for Valkey
-- `-DBUILD_RDMA=<off|module>` enable RDMA module build (only module mode supported)
+- `-DBUILD_TLS=<yes|no>` enable TLS build for Valkey. Default: `no`
+- `-DBUILD_RDMA=<no|module>` enable RDMA module build (only module mode supported). Default: `no`
 - `-DBUILD_MALLOC=<libc|jemalloc|tcmalloc|tcmalloc_minimal>` choose the allocator to use. Default on Linux: `jemalloc`, for other OS: `libc`
-- `-DBUILD_SANITIZER=<address|thread|undefined>` build with address sanitizer enabled
-- `-DBUILD_UNIT_TESTS=[1|0]`  when set, the build will produce the executable `valkey-unit-tests`
-- `-DBUILD_TEST_MODULES=[1|0]`  when set, the build will include the modules located under the `tests/modules` folder
-- `-DBUILD_EXAMPLE_MODULES=[1|0]`  when set, the build will include the example modules located under the `src/modules` folder
+- `-DBUILD_SANITIZER=<address|thread|undefined>` build with address sanitizer enabled. Default: disabled (no sanitizer)
+- `-DBUILD_UNIT_TESTS=[yes|no]`  when set, the build will produce the executable `valkey-unit-tests`. Default: `no`
+- `-DBUILD_TEST_MODULES=[yes|no]`  when set, the build will include the modules located under the `tests/modules` folder. Default: `no`
+- `-DBUILD_EXAMPLE_MODULES=[yes|no]`  when set, the build will include the example modules located under the `src/modules` folder. Default: `no`
 
 ## Common flags
 
 - `-DCMAKE_BUILD_TYPE=<Debug|Release...>` define the build type, see CMake manual for more details
 - `-DCMAKE_INSTALL_PREFIX=/installation/path` override this value to define a custom install prefix. Default: `/usr/local`
-- `-G<Generator Name>` generate build files for "Generator Name". By default, CMake will generate `Makefile`s.
+- `-G"<Generator Name>"` generate build files for "Generator Name". By default, CMake will generate `Makefile`s.
 
 ## Verbose build
 

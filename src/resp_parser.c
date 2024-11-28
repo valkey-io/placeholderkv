@@ -58,6 +58,8 @@
 #include "resp_parser.h"
 #include "server.h"
 
+#include "valkey_strtod.h"
+
 static int parseBulk(ReplyParser *parser, void *p_ctx) {
     const char *proto = parser->curr_location;
     char *p = strchr(proto + 1, '\r');
@@ -150,13 +152,11 @@ static int parseDouble(ReplyParser *parser, void *p_ctx) {
     parser->curr_location = p + 2; /* for \r\n */
     char buf[MAX_LONG_DOUBLE_CHARS + 1];
     size_t len = p - proto - 1;
-    double d;
+    double d = 0;
     if (len <= MAX_LONG_DOUBLE_CHARS) {
         memcpy(buf, proto + 1, len);
         buf[len] = '\0';
-        d = strtod(buf, NULL); /* We expect a valid representation. */
-    } else {
-        d = 0;
+        d = valkey_strtod(buf, NULL); /* We expect a valid representation. */
     }
     parser->callbacks.double_callback(p_ctx, d, proto, parser->curr_location - proto);
     return C_OK;

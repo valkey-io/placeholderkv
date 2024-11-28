@@ -86,7 +86,7 @@ jobs:
         (github.event_name == 'schedule' && github.repository == 'valkey-io/valkey') ||
         (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'run-extra-tests') || github.event.pull_request.base.ref != 'unstable'))) &&
       !contains(github.event.inputs.skipjobs, 'fortify')
-    container: ubuntu:lunar
+    container: ubuntu:plucky
     timeout-minutes: 14400
     steps:
       - name: prep
@@ -319,7 +319,7 @@ jobs:
           ref: ${{ env.GITHUB_HEAD_REF }}
       - name: make
         run: |
-          make BUILD_TLS=yes SERVER_CFLAGS='-Werror'
+          make BUILD_TLS=yes SERVER_CFLAGS='-Werror' USE_FAST_FLOAT=yes
       - name: testprep
         run: |
           sudo apt-get install tcl8.6 tclx tcl-tls
@@ -990,7 +990,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
     runs-on: ${{ matrix.os }}
     if: |
       (github.event_name == 'workflow_dispatch' ||
@@ -1019,7 +1019,7 @@ jobs:
         run: make SERVER_CFLAGS='-Werror'
 
   test-freebsd:
-    runs-on: macos-12
+    runs-on: macos-13
     if: |
       (github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'schedule' && github.repository == 'valkey-io/valkey') ||

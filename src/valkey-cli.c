@@ -65,6 +65,8 @@
 #include "mt19937-64.h"
 #include "cli_commands.h"
 
+#include "valkey_strtod.h"
+
 #define UNUSED(V) ((void)V)
 
 #define OUTPUT_STANDARD 0
@@ -2537,9 +2539,10 @@ static int parseOptions(int argc, char **argv) {
                 exit(1);
             }
         } else if (!strcmp(argv[i], "-t") && !lastarg) {
+            errno = 0;
             char *eptr;
-            double seconds = strtod(argv[++i], &eptr);
-            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0) {
+            double seconds = valkey_strtod(argv[++i], &eptr);
+            if (eptr[0] != '\0' || isnan(seconds) || seconds < 0.0 || errno == EINVAL || errno == ERANGE) {
                 fprintf(stderr, "Invalid connection timeout for -t.\n");
                 exit(1);
             }
@@ -4391,7 +4394,7 @@ static sds clusterManagerNodeInfo(clusterManagerNode *node, int indent) {
     if (node->replicate != NULL)
         info = sdscatfmt(info, "\n%s   replicates %S", spaces, node->replicate);
     else if (node->replicas_count)
-        info = sdscatfmt(info, "\n%s   %U additional replica(s)", spaces, node->replicas_count);
+        info = sdscatfmt(info, "\n%s   %i additional replica(s)", spaces, node->replicas_count);
     sdsfree(spaces);
     return info;
 }

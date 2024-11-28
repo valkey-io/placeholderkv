@@ -35,12 +35,12 @@ foreach test_dir $test_dirs {
 
 set cluster_test_dir unit/cluster
 foreach file [glob -nocomplain $dir/tests/$cluster_test_dir/*.tcl] {
-   lappend ::cluster_all_tests $cluster_test_dir/[file root [file tail $file]]
+    lappend ::cluster_all_tests $cluster_test_dir/[file root [file tail $file]]
 }
 
 set moduleapi_test_dir unit/moduleapi
 foreach file [glob -nocomplain $dir/tests/$moduleapi_test_dir/*.tcl] {
-   lappend ::module_api_all_tests $moduleapi_test_dir/[file root [file tail $file]]
+    lappend ::module_api_all_tests $moduleapi_test_dir/[file root [file tail $file]]
 }
 
 # Index to the next test to run in the ::all_tests list.
@@ -654,7 +654,7 @@ for {set j 0} {$j < [llength $argv]} {incr j} {
         }
     } elseif {$opt eq {--quiet}} {
         set ::quiet 1
-   } elseif {$opt eq {--io-threads}} {
+    } elseif {$opt eq {--io-threads}} {
         set ::io_threads 1
     } elseif {$opt eq {--tls} || $opt eq {--tls-module}} {
         package require tls 1.6

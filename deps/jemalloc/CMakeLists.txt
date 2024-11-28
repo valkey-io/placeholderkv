@@ -12,9 +12,18 @@ if (NOT EXISTS ${JEMALLOC_INSTALL_DIR}/lib/libjemalloc.a)
         COMMAND sh -c "${JEMALLOC_SRC_DIR}/configure --disable-cxx \
             --with-version=5.3.0-0-g0 --with-lg-quantum=3 --disable-cache-oblivious --with-jemalloc-prefix=je_ \
             --enable-static --disable-shared --prefix=${JEMALLOC_INSTALL_DIR}"
-        WORKING_DIRECTORY ${JEMALLOC_SRC_DIR} COMMAND_ERROR_IS_FATAL ANY)
+        WORKING_DIRECTORY ${JEMALLOC_SRC_DIR} RESULTS_VARIABLE CONFIGURE_RESULT)
+
+    if (NOT ${CONFIGURE_RESULT} EQUAL 0)
+        message(FATAL_ERROR "Jemalloc configure failed")
+    endif ()
+
     execute_process(COMMAND make -j${VALKEY_PROCESSOR_COUNT} lib/libjemalloc.a install
-                    WORKING_DIRECTORY "${JEMALLOC_SRC_DIR}")
+                    WORKING_DIRECTORY "${JEMALLOC_SRC_DIR}" RESULTS_VARIABLE MAKE_RESULT)
+
+    if (NOT ${MAKE_RESULT} EQUAL 0)
+        message(FATAL_ERROR "Jemalloc build failed")
+    endif ()
 endif ()
 
 # Import the compiled library as a CMake target
