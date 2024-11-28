@@ -671,8 +671,7 @@ static void updateSSLState(connection *conn_) {
     tls_connection *conn = (tls_connection *)conn_;
 
     if (conn->c.state == CONN_STATE_ACCEPTING) {
-        TLSHandleAcceptResult(conn, 1);
-        return;
+        if (TLSHandleAcceptResult(conn, 1) == C_ERR || conn->c.state != CONN_STATE_CONNECTED) return;
     }
 
     updateSSLEvent(conn);
@@ -730,8 +729,8 @@ static void tlsHandleEvent(tls_connection *conn, int mask) {
         conn->c.conn_handler = NULL;
         break;
     case CONN_STATE_ACCEPTING:
-        connTLSAccept((connection *)conn, NULL);
-        return;
+        if (connTLSAccept((connection *)conn, NULL) == C_ERR || conn->c.state != CONN_STATE_CONNECTED) return;
+        break;
     case CONN_STATE_CONNECTED: {
         int call_read = ((mask & AE_READABLE) && conn->c.read_handler) ||
                         ((mask & AE_WRITABLE) && (conn->flags & TLS_CONN_FLAG_READ_WANT_WRITE));
