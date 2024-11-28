@@ -1,4 +1,4 @@
-start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 large-request-larger-than 1048576 large-reply-larger-than 1048576}} {
+start_server {tags {"commandlog"} overrides {commandlog-execution-slower-than 1000000 commandlog-request-larger-than 1048576 commandlog-reply-larger-than 1048576}} {
     test {COMMANDLOG - check that it starts with an empty log} {
         if {$::external} {
             r commandlog reset slow
@@ -12,14 +12,14 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
 
     test {COMMANDLOG - only logs commands exceeding the threshold} {
         # for slow
-        r config set slowlog-log-slower-than 100000
+        r config set commandlog-execution-slower-than 100000
         r ping
         assert_equal [r commandlog len slow] 0
         r debug sleep 0.2
         assert_equal [r commandlog len slow] 1
 
         # for large-request
-        r config set large-request-larger-than 1024
+        r config set commandlog-request-larger-than 1024
         r ping
         assert_equal [r commandlog len large-request] 0
         set value [string repeat A 1024]
@@ -27,7 +27,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
         assert_equal [r commandlog len large-request] 1
 
         # for large-reply
-        r config set large-reply-larger-than 1024
+        r config set commandlog-reply-larger-than 1024
         r ping
         assert_equal [r commandlog len large-reply] 0
         r get testkey
@@ -38,12 +38,12 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
         r commandlog reset slow
         r commandlog reset large-request
         r commandlog reset large-reply
-        r config set slowlog-max-len 0
-        r config set slowlog-log-slower-than 0
-        r config set large-request-max-len 0
-        r config set large-request-larger-than 0
-        r config set large-reply-max-len 0
-        r config set large-reply-larger-than 0
+        r config set commandlog-slow-execution-max-len 0
+        r config set commandlog-execution-slower-than 0
+        r config set commandlog-large-request-max-len 0
+        r config set commandlog-request-larger-than 0
+        r config set commandlog-large-reply-max-len 0
+        r config set commandlog-reply-larger-than 0
         for {set i 0} {$i < 100} {incr i} {
             r ping
         }
@@ -53,12 +53,12 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     }
 
     test {COMMANDLOG - max entries is correctly handled} {
-        r config set slowlog-log-slower-than 0
-        r config set slowlog-max-len 10
-        r config set large-request-max-len 10
-        r config set large-request-larger-than 0
-        r config set large-reply-max-len 10
-        r config set large-reply-larger-than 0
+        r config set commandlog-execution-slower-than 0
+        r config set commandlog-slow-execution-max-len 10
+        r config set commandlog-large-request-max-len 10
+        r config set commandlog-request-larger-than 0
+        r config set commandlog-large-reply-max-len 10
+        r config set commandlog-reply-larger-than 0
         for {set i 0} {$i < 100} {incr i} {
             r ping
         }
@@ -82,9 +82,9 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     }
 
     test {COMMANDLOG - RESET subcommand works} {
-        r config set slowlog-log-slower-than 100000
-        r config set large-request-larger-than 1024
-        r config set large-reply-larger-than 1024
+        r config set commandlog-execution-slower-than 100000
+        r config set commandlog-request-larger-than 1024
+        r config set commandlog-reply-larger-than 1024
         r commandlog reset slow
         r commandlog reset large-request
         r commandlog reset large-reply
@@ -132,8 +132,8 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     } {} {needs:debug}
 
     test {COMMANDLOG slow - Certain commands are omitted that contain sensitive information} {
-        r config set slowlog-max-len 100
-        r config set slowlog-log-slower-than 0
+        r config set commandlog-slow-execution-max-len 100
+        r config set commandlog-execution-slower-than 0
         r commandlog reset slow
         catch {r acl setuser "slowlog test user" +get +set} _
         r config set primaryuser ""
@@ -144,8 +144,8 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
         r acl setuser slowlog-test-user +get +set
         r acl getuser slowlog-test-user
         r acl deluser slowlog-test-user non-existing-user
-        r config set slowlog-log-slower-than 0
-        r config set slowlog-log-slower-than -1
+        r config set commandlog-execution-slower-than 0
+        r config set commandlog-execution-slower-than -1
         set slowlog_resp [r commandlog get -1 slow]
 
         # Make sure normal configs work, but the two sensitive
@@ -161,16 +161,16 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
         assert_equal {acl setuser (redacted) (redacted) (redacted)} [lindex [lindex $slowlog_resp 3] 3]
         assert_equal {acl getuser (redacted)} [lindex [lindex $slowlog_resp 2] 3]
         assert_equal {acl deluser (redacted) (redacted)} [lindex [lindex $slowlog_resp 1] 3]
-        assert_equal {config set slowlog-log-slower-than 0} [lindex [lindex $slowlog_resp 0] 3]
+        assert_equal {config set commandlog-execution-slower-than 0} [lindex [lindex $slowlog_resp 0] 3]
     } {} {needs:repl}
 
     test {COMMANDLOG slow - Some commands can redact sensitive fields} {
-        r config set slowlog-log-slower-than 0
+        r config set commandlog-execution-slower-than 0
         r commandlog reset slow
         r migrate [srv 0 host] [srv 0 port] key 9 5000
         r migrate [srv 0 host] [srv 0 port] key 9 5000 AUTH user
         r migrate [srv 0 host] [srv 0 port] key 9 5000 AUTH2 user password
-        r config set slowlog-log-slower-than -1
+        r config set commandlog-execution-slower-than -1
         set slowlog_resp [r commandlog get -1 slow]
 
         # Make sure all 3 commands were logged, but the sensitive fields are omitted
@@ -181,7 +181,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     } {} {needs:repl}
 
     test {COMMANDLOG slow - Rewritten commands are logged as their original command} {
-        r config set slowlog-log-slower-than 0
+        r config set commandlog-execution-slower-than 0
 
         # Test rewriting client arguments
         r sadd set a b c d e
@@ -228,7 +228,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     }
 
     test {COMMANDLOG slow - commands with too many arguments are trimmed} {
-        r config set slowlog-log-slower-than 0
+        r config set commandlog-execution-slower-than 0
         r commandlog reset slow
         r sadd set 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33
         set e [lindex [r commandlog get -1 slow] end-1]
@@ -236,7 +236,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     } {sadd set 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 {... (2 more arguments)}}
 
     test {COMMANDLOG slow - too long arguments are trimmed} {
-        r config set slowlog-log-slower-than 0
+        r config set commandlog-execution-slower-than 0
         r commandlog reset slow
         set arg [string repeat A 129]
         r sadd set foo $arg
@@ -245,7 +245,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     } {sadd set foo {AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA... (1 more bytes)}}
 
     test {COMMANDLOG slow - EXEC is not logged, just executed commands} {
-        r config set slowlog-log-slower-than 100000
+        r config set commandlog-execution-slower-than 100000
         r commandlog reset slow
         assert_equal [r commandlog len slow] 0
         r multi
@@ -258,7 +258,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
 
     test {COMMANDLOG slow - can clean older entries} {
         r client setname lastentry_client
-        r config set slowlog-max-len 1
+        r config set commandlog-slow-execution-max-len 1
         r debug sleep 0.2
         assert {[llength [r commandlog get -1 slow]] == 1}
         set e [lindex [r commandlog get -1 slow] 0]
@@ -266,12 +266,12 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     } {} {needs:debug}
 
     test {COMMANDLOG slow - can be disabled} {
-        r config set slowlog-max-len 1
-        r config set slowlog-log-slower-than 1
+        r config set commandlog-slow-execution-max-len 1
+        r config set commandlog-execution-slower-than 1
         r commandlog reset slow
         r debug sleep 0.2
         assert_equal [r commandlog len slow] 1
-        r config set slowlog-log-slower-than -1
+        r config set commandlog-execution-slower-than -1
         r commandlog reset slow
         r debug sleep 0.2
         assert_equal [r commandlog len slow] 0
@@ -283,8 +283,8 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
     }
 
     test {COMMANDLOG slow - get all slow logs} {
-        r config set slowlog-log-slower-than 0
-        r config set slowlog-max-len 3
+        r config set commandlog-execution-slower-than 0
+        r config set commandlog-slow-execution-max-len 3
         r commandlog reset slow
 
         r set key test
@@ -306,8 +306,8 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
         set rd [valkey_deferring_client]
         
         # config the slowlog and reset
-        r config set slowlog-log-slower-than 0
-        r config set slowlog-max-len 110
+        r config set commandlog-execution-slower-than 0
+        r config set commandlog-slow-execution-max-len 110
         r commandlog reset slow
         
         $rd BLPOP mylist 0
@@ -328,7 +328,7 @@ start_server {tags {"commandlog"} overrides {slowlog-log-slower-than 1000000 lar
             }
 
             r client setname test-client
-            r config set slowlog-log-slower-than 0
+            r config set commandlog-execution-slower-than 0
             r commandlog reset slow
 
             if {$is_eval} {
