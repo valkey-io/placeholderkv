@@ -245,7 +245,7 @@ start_server {tags {"modules"}} {
             assert_equal [r config get moduleconfigs.memory_numeric] "moduleconfigs.memory_numeric 1024"
         }
     }
-    test {Module Update Args } {
+    test {Module Update Args} {
        r module load $testmoduleparameter 10 20 30
 
        set t [r module list]
