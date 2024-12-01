@@ -215,6 +215,8 @@ static char *invalid_hll_err = "-INVALIDOBJ Corrupted HLL object detected";
 #ifdef HAVE_AVX2
 static int simd_enabled = 1;
 #define HLL_USE_AVX2 (simd_enabled && __builtin_cpu_supports("avx2"))
+#else
+#define HLL_USE_AVX2 0
 #endif
 
 /* =========================== Low level bit macros ========================= */
