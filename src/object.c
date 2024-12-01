@@ -410,7 +410,9 @@ void dismissSds(sds s) {
 
 /* See dismissObject() */
 void dismissStringObject(robj *o) {
-    freeStringObject(o);
+    if (o->encoding == OBJ_ENCODING_RAW) {
+        dismissSds(o->ptr);
+    }
 }
 
 /* See dismissObject() */
