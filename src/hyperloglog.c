@@ -212,8 +212,10 @@ struct hllhdr {
 
 static char *invalid_hll_err = "-INVALIDOBJ Corrupted HLL object detected";
 
+#ifdef HAVE_AVX2
 static int simd_enabled = 1;
 #define HLL_USE_AVX2 (simd_enabled && __builtin_cpu_supports("avx2"))
+#endif
 
 /* =========================== Low level bit macros ========================= */
 
@@ -1758,9 +1760,13 @@ void pfdebugCommand(client *c) {
         if (c->argc != 3) goto arityerr;
 
         if (!strcasecmp(c->argv[2]->ptr, "on")) {
+#ifdef HAVE_AVX2
             simd_enabled = 1;
+#endif
         } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+#ifdef HAVE_AVX2
             simd_enabled = 0;
+#endif
         } else {
             addReplyError(c, "Argument must be ON or OFF");
         }
