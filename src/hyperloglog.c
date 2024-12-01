@@ -212,6 +212,9 @@ struct hllhdr {
 
 static char *invalid_hll_err = "-INVALIDOBJ Corrupted HLL object detected";
 
+static int simd_enabled = 1;
+#define HLL_USE_AVX2 (simd_enabled && __builtin_cpu_supports("avx2"))
+
 /* =========================== Low level bit macros ========================= */
 
 /* Macros to access the dense representation.
@@ -1182,7 +1185,7 @@ void hllMergeDenseAVX2(uint8_t *reg_raw, const uint8_t *reg_dense) {
 void hllMergeDense(uint8_t *reg_raw, const uint8_t *reg_dense) {
 #ifdef HAVE_AVX2
     if (HLL_REGISTERS == 16384 && HLL_BITS == 6) {
-        if (__builtin_cpu_supports("avx2")) {
+        if (HLL_USE_AVX2) {
             hllMergeDenseAVX2(reg_raw, reg_dense);
             return;
         }
@@ -1346,7 +1349,7 @@ void hllDenseCompressAVX2(uint8_t *reg_dense, const uint8_t *reg_raw) {
 void hllDenseCompress(uint8_t *reg_dense, const uint8_t *reg_raw) {
 #ifdef HAVE_AVX2
     if (HLL_REGISTERS == 16384 && HLL_BITS == 6) {
-        if (__builtin_cpu_supports("avx2")) {
+        if (HLL_USE_AVX2) {
             hllDenseCompressAVX2(reg_dense, reg_raw);
             return;
         }
@@ -1742,12 +1745,33 @@ cleanup:
  * PFDEBUG DECODE <key>
  * PFDEBUG ENCODING <key>
  * PFDEBUG TODENSE <key>
+ * PFDEBUG SIMD (ON|OFF)
  */
 void pfdebugCommand(client *c) {
     char *cmd = c->argv[1]->ptr;
     struct hllhdr *hdr;
     robj *o;
     int j;
+
+    if (!strcasecmp(cmd, "simd")) {
+        if (c->argc != 3) goto arityerr;
+
+        if (!strcasecmp(c->argv[2]->ptr, "on")) {
+            simd_enabled = 1;
+        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+            simd_enabled = 0;
+        } else {
+            addReplyError(c, "Argument must be ON or OFF");
+        }
+
+        if (HLL_USE_AVX2) {
+            addReplyStatus(c, "enabled");
+        } else {
+            addReplyStatus(c, "disabled");
+        }
+
+        return;
+    }
 
     o = lookupKeyWrite(c->db, c->argv[2]);
     if (o == NULL) {
