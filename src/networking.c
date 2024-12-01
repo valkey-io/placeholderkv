@@ -1481,7 +1481,7 @@ void freeClientOriginalArgv(client *c) {
     /* We didn't rewrite this client */
     if (!c->original_argv) return;
 
-    if (tryOffloadFreeArgvToIOThreads(c, 1) == C_ERR) {
+    if (tryOffloadFreeArgvToIOThreads(c, c->original_argc, c->original_argv) == C_ERR) {
         for (int j = 0; j < c->original_argc; j++) decrRefCount(c->original_argv[j]);
         zfree(c->original_argv);
     }
@@ -1491,7 +1491,9 @@ void freeClientOriginalArgv(client *c) {
 }
 
 void freeClientArgv(client *c) {
-    if (tryOffloadFreeArgvToIOThreads(c, 0) == C_ERR) {
+    /* If original_argv exists, 'c->argv' was allocated by the main thread,
+     * so it's more efficient to free it directly here rather than offloading to IO threads */
+    if (c->original_argv || tryOffloadFreeArgvToIOThreads(c, c->argc, c->argv) == C_ERR) {
         for (int j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
         zfree(c->argv);
     }
@@ -4232,7 +4234,7 @@ static void backupAndUpdateClientArgv(client *c, int new_argc, robj **new_argv) 
     /* Clean up old argv if necessary */
     if (c->argv != old_argv && c->original_argv != old_argv) {
         for (int i = 0; i < old_argc; i++) {
-            decrRefCount(old_argv[i]);
+            if (old_argv[i]) decrRefCount(old_argv[i]);
         }
         zfree(old_argv);
     }

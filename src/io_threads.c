@@ -439,27 +439,11 @@ void IOThreadFreeArgv(void *data) {
 }
 
 /* This function attempts to offload the client's argv to an IO thread.
- *
- * If free_original_argv is set to 1, the function will offload the free of the client's original argv.
- * Otherwise, it will offload the free of the client's current argv.
- *
  * Returns C_OK if the client's argv were successfully offloaded to an IO thread,
  * C_ERR otherwise. */
-int tryOffloadFreeArgvToIOThreads(client *c, int free_original_argv) {
-    if (server.active_io_threads_num <= 1 || c->argc == 0) {
+int tryOffloadFreeArgvToIOThreads(client *c, int argc, robj **argv) {
+    if (server.active_io_threads_num <= 1 || argc == 0) {
         return C_ERR;
-    }
-
-    if (!free_original_argv && c->original_argv != NULL) {
-        /* If original_argv exist We offload only the original argv that may have been allocated by the IO thread. */
-        return C_ERR;
-    }
-
-    robj **argv = c->argv;
-    int argc = c->argc;
-    if (free_original_argv) {
-        argv = c->original_argv;
-        argc = c->original_argc;
     }
 
     size_t tid = (c->id % (server.active_io_threads_num - 1)) + 1;
