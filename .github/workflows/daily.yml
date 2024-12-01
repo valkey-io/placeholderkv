@@ -375,6 +375,44 @@ jobs:
         if: true && !contains(github.event.inputs.skiptests, 'cluster')
         run: ./runtest-cluster --io-threads ${{github.event.inputs.cluster_test_args}}
 
+  test-ubuntu-tls-io-threads:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'schedule' && github.repository == 'valkey-io/valkey') ||
+        (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'run-extra-tests') || github.event.pull_request.base.ref != 'unstable'))) &&
+      !contains(github.event.inputs.skipjobs, 'tls') && !contains(github.event.inputs.skipjobs, 'iothreads')
+    timeout-minutes: 14400
+    steps:
+      - name: prep
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "GITHUB_REPOSITORY=${{github.event.inputs.use_repo}}" >> $GITHUB_ENV
+          echo "GITHUB_HEAD_REF=${{github.event.inputs.use_git_ref}}" >> $GITHUB_ENV
+          echo "skipjobs: ${{github.event.inputs.skipjobs}}"
+          echo "skiptests: ${{github.event.inputs.skiptests}}"
+          echo "test_args: ${{github.event.inputs.test_args}}"
+          echo "cluster_test_args: ${{github.event.inputs.cluster_test_args}}"
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          repository: ${{ env.GITHUB_REPOSITORY }}
+          ref: ${{ env.GITHUB_HEAD_REF }}
+      - name: make
+        run: |
+          make BUILD_TLS=yes SERVER_CFLAGS='-Werror'
+      - name: testprep
+        run: |
+          sudo apt-get install tcl8.6 tclx tcl-tls
+          ./utils/gen-test-certs.sh
+      - name: test
+        if: true && !contains(github.event.inputs.skiptests, 'valkey')
+        run: |
+          ./runtest --io-threads --tls --accurate --verbose --tags network --dump-logs ${{github.event.inputs.test_args}}
+      - name: cluster tests
+        if: true && !contains(github.event.inputs.skiptests, 'cluster')
+        run: |
+          ./runtest-cluster --io-threads --tls ${{github.event.inputs.cluster_test_args}}
+
   test-ubuntu-reclaim-cache:
     runs-on: ubuntu-latest
     if: |
