@@ -398,12 +398,12 @@ void decrRefCount(robj *o) {
     }
 }
 
-/* See dismissObject(). sds is an exception. Instead of dismissing it
- * with madvise(MADV_DONTNEED) we free it via the allocator. This has
- * advantage that it allows the allocator to accumulate free buffers
- * to free whole pages. While madvise is nop if the buffer is less
- * than a page. The allocator overhead is minimal, because raw strings
- * (sds) use the fast path. */
+/* See dismissObject(). sds is an exception, because the allocation
+ * size is known. Instead of dismissing it with madvise(MADV_DONTNEED)
+ * we free it via the allocator, which has minimal overhead when the
+ * size is known. This has advantage that it allows the allocator to
+ * accumulate free buffers to free whole pages, while madvise is nop
+ * if the buffer is less than a page.  */
 void dismissSds(sds s) {
     sdsfree(s);
 }
