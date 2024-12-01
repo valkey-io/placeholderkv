@@ -5372,7 +5372,9 @@ void clusterLogFailReason(int reason) {
         msg = "At least one hash slot is not served by any available node. "
               "Please check the 'cluster-require-full-coverage' configuration.";
         break;
-    case CLUSTER_FAIL_MINORITY_PARTITION: msg = "I am part of a minority partition."; break;
+    case CLUSTER_FAIL_MINORITY_PARTITION:
+        msg = "I am part of a minority partition.";
+        break;
     default: serverPanic("Unknown fail reason code.");
     }
     serverLog(LL_WARNING, "Cluster is currently down: %s", msg);
