@@ -256,8 +256,8 @@ start_server {tags {"hll"}} {
         assert {$simd > 0}
         assert_equal $scalar $simd
 
-        set scalar [r pfdebug getreg hllscalar{t}]
-        set simd [r pfdebug getreg hllsimd{t}]
+        set scalar [r get hllscalar{t}]
+        set simd [r get hllsimd{t}]
         assert_equal $scalar $simd
 
     } {} {needs:pfdebug}
