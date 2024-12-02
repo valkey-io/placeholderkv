@@ -208,25 +208,30 @@ if (BUILD_RDMA)
     # RDMA support (Linux only)
     if (LINUX AND NOT APPLE)
         valkey_parse_build_option(${BUILD_RDMA} USE_RDMA)
+        find_package(PkgConfig REQUIRED)
+        # Locate librdmacm & libibverbs, fail if we can't find them
+        valkey_pkg_config(librdmacm RDMACM_LIBS)
+        valkey_pkg_config(libibverbs IBVERBS_LIBS)
+        message(STATUS "${RDMACM_LIBS};${IBVERBS_LIBS}")
+        list(APPEND RDMA_LIBS "${RDMACM_LIBS};${IBVERBS_LIBS}")
+
         if (USE_RDMA EQUAL 2) # Module
             message(STATUS "Building RDMA as module")
             add_valkey_server_compiler_options("-DUSE_RDMA=2")
-
-            # Locate librdmacm & libibverbs, fail if we can't find them
-            valkey_pkg_config(librdmacm RDMACM_LIBS)
-            valkey_pkg_config(libibverbs IBVERBS_LIBS)
-
-            list(APPEND RDMA_LIBS "${RDMACM_LIBS};${IBVERBS_LIBS}")
-            set(BUILD_RDMA_MODULE 1)
-        elseif (USE_RDMA EQUAL 1)
-            # RDMA can only be built as a module. So disable it
-            message(WARNING "BUILD_RDMA can be one of: [NO | 0 | MODULE], but '${BUILD_RDMA}' was provided")
-            message(STATUS "RDMA build is disabled")
-            set(USE_RDMA 0)
+            set(BUILD_RDMA_MODULE 2)
+        elseif (USE_RDMA EQUAL 1) # Builtin
+            message(STATUS "Building RDMA as builtin")
+            add_valkey_server_compiler_options("-DUSE_RDMA=1")
+            add_valkey_server_compiler_options("-DBUILD_RDMA_MODULE=0")
+            list(APPEND SERVER_LIBS "${RDMA_LIBS}")
         endif ()
     else ()
         message(WARNING "RDMA is only supported on Linux platforms")
     endif ()
+else ()
+    # By default, RDMA is disabled
+    message(STATUS "RDMA is disabled")
+    set(USE_RDMA 0)
 endif ()
 
 set(BUILDING_ARM64 0)
