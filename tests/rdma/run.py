@@ -60,10 +60,9 @@ def test_rdma(ipaddr):
 
     # step 2, start server
     svrpath = valkeydir + "/src/valkey-server"
-    rdmapath = valkeydir + "/src/valkey-rdma.so"
     svrcmd = [svrpath, "--port", "0", "--loglevel", "verbose", "--protected-mode", "yes",
              "--appendonly", "no", "--daemonize", "no", "--dir", valkeydir + "/tests/rdma/tmp",
-             "--loadmodule", rdmapath, "--rdma-port", "6379", "--rdma-bind", ipaddr]
+             "--rdma-port", "6379", "--rdma-bind", ipaddr]
 
     svr = subprocess.Popen(svrcmd, shell=False, stdout=subprocess.PIPE)
     try:
