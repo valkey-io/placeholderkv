@@ -4705,7 +4705,7 @@ struct COMMAND_ARG PUBSUB_SHARDCHANNELS_Args[] = {
 #ifndef SKIP_CMD_KEY_SPECS_TABLE
 /* PUBSUB SHARDNUMSUB key specs */
 keySpec PUBSUB_SHARDNUMSUB_Keyspecs[1] = {
-{NULL,CMD_KEY_NOT_KEY,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={-1,1,0}}
+{NULL,CMD_KEY_NOT_KEY,KSPEC_BS_INDEX,.bs.index={2},KSPEC_FK_RANGE,.fk.range={-1,1,0}}
 };
 #endif
 
