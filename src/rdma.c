@@ -678,6 +678,7 @@ static connection *connCreateAcceptedRdma(int fd, void *priv) {
 static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientData, int mask) {
     rdma_connection *rdma_conn = (rdma_connection *)clientData;
     connection *conn = &rdma_conn->c;
+    client *c = connGetPrivateData(conn);
     struct rdma_cm_id *cm_id = rdma_conn->cm_id;
     RdmaContext *ctx = cm_id->context;
     int ret = 0;
@@ -694,6 +695,9 @@ static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientDat
 
     /* uplayer should read all */
     while (ctx->rx.pos < ctx->rx.offset) {
+        if (c->io_read_state == CLIENT_COMPLETED_IO || c->io_write_state == CLIENT_COMPLETED_IO) {
+            break;
+        }
         if (conn->read_handler && (callHandler(conn, conn->read_handler) == C_ERR)) {
             return;
         }
