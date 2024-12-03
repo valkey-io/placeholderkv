@@ -3241,13 +3241,17 @@ int clusterProcessPacket(clusterLink *link) {
                  * of the message type. */
                 clusterProcessGossipSection(hdr, link);
             } else if (sender->link && now - sender->ctime > server.cluster_node_timeout) {
-                /* The MEET packet is from a known node, so the sender thinks that I do not know it.
+                /* The MEET packet is from a known node, after the handshake timeout, so the sender thinks that I do not
+                 * know it.
                  * Freeing my outbound link to that node, to force a reconnect and sending a PING.
                  * Once that node receives our PING, it should recognize the new connection as an inbound link from me.
                  * We should only free the outbound link if the node is known for more time than the handshake timeout,
                  * since during this time, the other side might still be trying to complete the handshake. */
-                serverAssert(link != sender->link); // we should always receive a MEET packet on an inbound link
-                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s after receiving a MEET packet from this known node", sender->name);
+
+                /* We should always receive a MEET packet on an inbound link. */
+                serverAssert(link != sender->link);
+                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s after receiving a MEET packet from this known node",
+                          sender->name);
                 freeClusterLink(sender->link);
             }
         }
