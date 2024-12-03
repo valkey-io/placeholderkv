@@ -388,14 +388,14 @@ start_server {tags {"introspection"}} {
     
         # Execute multi-exec block with SET EX commands
         r multi
-        r set key1 value1 ex 3600
-        r set key2 value2 ex 1800
+        r set "{slot}key1" value1 ex 3600
+        r set "{slot}key2" value2 ex 1800
         r exec
     
         # Verify monitor output shows the original commands:
         assert_match {*"multi"*} [$rd read]
-        assert_match {*"set"*"key1"*"value1"*"ex"*"3600"*} [$rd read]
-        assert_match {*"set"*"key2"*"value2"*"ex"*"1800"*} [$rd read]
+        assert_match {*"set"*"{slot}key1"*"value1"*"ex"*"3600"*} [$rd read]
+        assert_match {*"set"*"{slot}key2"*"value2"*"ex"*"1800"*} [$rd read]
         assert_match {*"exec"*} [$rd read]
     
         # Clean up monitoring client
