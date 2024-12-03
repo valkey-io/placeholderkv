@@ -13,7 +13,7 @@ int test_backupAndUpdateClientArgv(int argc, char **argv, int flags) {
 
     /* Test 1: Initial backup of arguments */
     c->argc = 2;
-    robj ** initial_argv = zmalloc(sizeof(robj *) * 2);
+    robj **initial_argv = zmalloc(sizeof(robj *) * 2);
     c->argv = initial_argv;
     c->argv[0] = createObject(OBJ_STRING, sdscatfmt(sdsempty(), "test"));
     c->argv[1] = createObject(OBJ_STRING, sdscatfmt(sdsempty(), "test2"));

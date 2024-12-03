@@ -241,7 +241,7 @@ void execCommand(client *c) {
 
         /* The original argv has already been processed for slowlog and monitor,
          * so we can safely free it before proceeding to the next command. */
-        freeClientOriginalArgv(c);    
+        freeClientOriginalArgv(c);
     }
 
     // restore old DENY_BLOCKING value
