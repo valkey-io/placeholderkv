@@ -27,6 +27,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if USE_LUA
+
 #include "script_lua.h"
 #include "fpconv_dtoa.h"
 
@@ -1780,3 +1782,10 @@ void luaCallFunction(scriptRunCtx *run_ctx,
 unsigned long luaMemory(lua_State *lua) {
     return lua_gc(lua, LUA_GCCOUNT, 0) * 1024LL;
 }
+
+#else
+
+/* We need some declaration to prevent compiler warnings */
+#include <math.h>
+
+#endif

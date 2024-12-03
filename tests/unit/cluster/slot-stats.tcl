@@ -286,7 +286,7 @@ start_cluster 1 0 {tags {external:skip cluster} overrides {cluster-slot-stats-en
             ]
         ]
         assert_empty_slot_stats_with_exception $slot_stats $expected_slot_stats $metrics_to_assert
-    }
+    } {} {scripting}
     R 0 CONFIG RESETSTAT
     R 0 FLUSHALL
 
@@ -298,7 +298,7 @@ start_cluster 1 0 {tags {external:skip cluster} overrides {cluster-slot-stats-en
         # For cross-slot, we do not accumulate at all.
         set slot_stats [R 0 CLUSTER SLOT-STATS SLOTSRANGE 0 16383]
         assert_empty_slot_stats $slot_stats $metrics_to_assert
-    }
+    } {} {scripting}
     R 0 CONFIG RESETSTAT
     R 0 FLUSHALL
 
@@ -320,7 +320,7 @@ start_cluster 1 0 {tags {external:skip cluster} overrides {cluster-slot-stats-en
             ]
         ]
         assert_empty_slot_stats_with_exception $slot_stats $expected_slot_stats $metrics_to_assert
-    }
+    } {} {scripting}
     R 0 CONFIG RESETSTAT
     R 0 FLUSHALL
 
@@ -337,7 +337,7 @@ start_cluster 1 0 {tags {external:skip cluster} overrides {cluster-slot-stats-en
         # For cross-slot, we do not accumulate at all.
         set slot_stats [R 0 CLUSTER SLOT-STATS SLOTSRANGE 0 16383]
         assert_empty_slot_stats $slot_stats $metrics_to_assert
-    }
+    } {} {scripting}
     R 0 CONFIG RESETSTAT
     R 0 FLUSHALL
 }

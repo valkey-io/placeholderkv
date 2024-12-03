@@ -261,7 +261,7 @@ run_solo {defrag} {
             }
             # Flush all script to make sure we don't crash after defragging them
             r script flush sync
-        } {OK}
+        } {OK} {scripting}
 
         test "Active defrag big keys: $type" {
             r flushdb sync

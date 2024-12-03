@@ -1,5 +1,5 @@
 # Check the manual failover
-start_cluster 5 5 {tags {external:skip cluster}} {
+start_cluster 5 5 {tags {external:skip cluster scripting}} {
 
 test "Cluster is up" {
     wait_for_cluster_state ok

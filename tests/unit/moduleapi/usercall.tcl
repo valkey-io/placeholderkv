@@ -92,7 +92,7 @@ start_server {tags {"modules usercall"}} {
 
         assert_equal [r usercall.call_without_user evalsha $sha_set 0] 1
         assert_equal [r usercall.call_without_user evalsha $sha_get 0] 1
-    }
+    } {} {scripting}
 
     # baseline script test, call without user on script
     test {test module check eval script with user being set, but not acl testing} {
@@ -107,7 +107,7 @@ start_server {tags {"modules usercall"}} {
         # passes as not checking ACL
         assert_equal [r usercall.call_with_user_flag {} evalsha $sha_set 0] 1
         assert_equal [r usercall.call_with_user_flag {} evalsha $sha_get 0] 1
-    }
+    } {} {scripting}
 
     # call with user on script (without rm_call acl check) to ensure user carries through to script execution
     # we already tested the check in rm_call above, here we are checking the script itself will enforce ACL
@@ -132,7 +132,7 @@ start_server {tags {"modules usercall"}} {
         assert_equal [dict get $entry object] {set}
         assert_equal [dict get $entry reason] {command}
         assert_match {*cmd=usercall.call_with_user_flag*} [dict get $entry client-info]
-    }
+    } {} {scripting}
 
     start_server {tags {"wait aof network external:skip"}} {
         set slave [srv 0 client]

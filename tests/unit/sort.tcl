@@ -182,7 +182,7 @@ foreach command {SORT SORT_RO} {
             return {redis.call('sort',KEYS[1],'by','nosort','asc'),
                     redis.call('sort',KEYS[1],'by','nosort','desc')}
         } 1 zset
-    } {{a c e b d} {d b e c a}}
+    } {{a c e b d} {d b e c a}} {scripting}
 
     test "SORT sorted set: +inf and -inf handling" {
         r del zset

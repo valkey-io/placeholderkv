@@ -166,6 +166,7 @@ robj *activeDefragStringOb(robj *ob) {
     return activeDefragStringObEx(ob, 1);
 }
 
+#ifdef USE_LUA
 /* Defrag helper for lua scripts
  *
  * returns NULL in case the allocation wasn't moved.
@@ -185,6 +186,7 @@ luaScript *activeDefragLuaScript(luaScript *script) {
 
     return ret;
 }
+#endif
 
 /* Defrag helper for dict main allocations (dict struct, and hash tables).
  * Receives a pointer to the dict* and return a new dict* when the dict
@@ -295,10 +297,12 @@ void activeDefragSdsDict(dict *d, int val_type) {
     dictDefragFunctions defragfns = {
         .defragAlloc = activeDefragAlloc,
         .defragKey = (dictDefragAllocFunction *)activeDefragSds,
-        .defragVal = (val_type == DEFRAG_SDS_DICT_VAL_IS_SDS       ? (dictDefragAllocFunction *)activeDefragSds
-                      : val_type == DEFRAG_SDS_DICT_VAL_IS_STROB   ? (dictDefragAllocFunction *)activeDefragStringOb
-                      : val_type == DEFRAG_SDS_DICT_VAL_VOID_PTR   ? (dictDefragAllocFunction *)activeDefragAlloc
+        .defragVal = (val_type == DEFRAG_SDS_DICT_VAL_IS_SDS     ? (dictDefragAllocFunction *)activeDefragSds
+                      : val_type == DEFRAG_SDS_DICT_VAL_IS_STROB ? (dictDefragAllocFunction *)activeDefragStringOb
+                      : val_type == DEFRAG_SDS_DICT_VAL_VOID_PTR ? (dictDefragAllocFunction *)activeDefragAlloc
+#ifdef USE_LUA
                       : val_type == DEFRAG_SDS_DICT_VAL_LUA_SCRIPT ? (dictDefragAllocFunction *)activeDefragLuaScript
+#endif
                                                                    : NULL)};
     do {
         cursor = dictScanDefrag(d, cursor, activeDefragSdsDictCallback, &defragfns, NULL);
@@ -808,7 +812,9 @@ void defragOtherGlobals(void) {
     /* there are many more pointers to defrag (e.g. client argv, output / aof buffers, etc.
      * but we assume most of these are short lived, we only need to defrag allocations
      * that remain static for a long time */
+#ifdef USE_LUA
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
+#endif
     moduleDefragGlobals();
     kvstoreDictLUTDefrag(server.pubsub_channels, dictDefragTables);
     kvstoreDictLUTDefrag(server.pubsubshard_channels, dictDefragTables);

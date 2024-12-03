@@ -555,7 +555,7 @@ start_server {tags {"multi"}} {
         set pong [$r2 ping asdf]
         assert_equal $pong "asdf"
         $rd1 close; $r2 close
-    }
+    } {0} {scripting}
 
     test {EXEC and script timeout} {
         # check that if EXEC arrives during timeout, we don't end up executing
@@ -580,7 +580,7 @@ start_server {tags {"multi"}} {
         set pong [$r2 ping asdf]
         assert_equal $pong "asdf"
         $rd1 close; $r2 close
-    }
+    } {0} {scripting}
 
     test {MULTI-EXEC body and script timeout} {
         # check that we don't run an incomplete transaction due to some commands
@@ -605,7 +605,7 @@ start_server {tags {"multi"}} {
         set pong [$r2 ping asdf]
         assert_equal $pong "asdf"
         $rd1 close; $r2 close
-    }
+    } {0} {scripting}
 
     test {just EXEC and script timeout} {
         # check that if EXEC arrives during timeout, we don't end up executing
@@ -629,7 +629,7 @@ start_server {tags {"multi"}} {
         set pong [$r2 ping asdf]
         assert_equal $pong "asdf"
         $rd1 close; $r2 close
-    }
+    } {0} {scripting}
 
     test {exec with write commands and state change} {
         # check that exec that contains write commands fails if server state changed since they were queued
@@ -764,7 +764,7 @@ start_server {tags {"multi"}} {
             {set foo bar}
         }
         close_replication_stream $repl
-    } {} {needs:repl}
+    } {} {needs:repl scripting}
 
     test {MULTI propagation of EVAL} {
         set repl [attach_to_replication_stream]
@@ -779,7 +779,7 @@ start_server {tags {"multi"}} {
             {set bar bar}
         }
         close_replication_stream $repl
-    } {} {needs:repl}
+    } {} {needs:repl scripting}
 
     test {MULTI propagation of SCRIPT FLUSH} {
         set repl [attach_to_replication_stream]
@@ -795,7 +795,7 @@ start_server {tags {"multi"}} {
             {set foo bar}
         }
         close_replication_stream $repl
-    } {} {needs:repl}
+    } {} {needs:repl scripting}
 
     tags {"stream"} {
         test {MULTI propagation of XREADGROUP} {

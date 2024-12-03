@@ -1120,9 +1120,11 @@ size_t functionsLibCtxFunctionsLen(functionsLibCtx *functions_ctx) {
 int functionsInit(void) {
     engines = dictCreate(&engineDictType);
 
+#ifdef USE_LUA
     if (luaEngineInitEngine() != C_OK) {
         return C_ERR;
     }
+#endif
 
     /* Must be initialized after engines initialization */
     curr_functions_lib_ctx = functionsLibCtxCreate();

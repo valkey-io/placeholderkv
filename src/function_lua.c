@@ -40,6 +40,9 @@
  */
 
 #include "functions.h"
+
+#ifdef USE_LUA
+
 #include "script_lua.h"
 #include <lua.h>
 #include <lauxlib.h>
@@ -507,3 +510,5 @@ int luaEngineInitEngine(void) {
     };
     return functionsRegisterEngine(LUA_ENGINE_NAME, lua_engine);
 }
+
+#endif

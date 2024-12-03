@@ -51,7 +51,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         r test.flushall
         assert_equal [r function list] {{library_name lib engine LUA functions {{name test description {} flags {}}}}}
         r function flush
-    }
+    } {OK} {scripting}
 
     test {test module keyexists} {
         r set x foo
@@ -145,7 +145,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         assert_equal {invalidate key1{t}} [$rd_trk read]
         assert_equal "PONG" [$rd_trk ping]
         $rd_trk close
-    }
+    } {0} {scripting}
 
     test {publish to self inside rm_call} {
         r hello 3
@@ -261,7 +261,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         ]
 
         r config set maxmemory 0
-    } {OK} {needs:config-maxmemory}
+    } {OK} {needs:config-maxmemory scripting}
 
     test {rm_call write flag} {
         # add the W flag
@@ -285,7 +285,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
                 return 1
             } 1 x
         }
-    }
+    } {} {scripting}
 
     # Note: each script is unique, to check that flags are extracted correctly
     test {rm_call EVAL - OOM - with M flag} {
@@ -326,7 +326,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         } 1 x
 
         r config set maxmemory 0
-    } {OK} {needs:config-maxmemory}
+    } {OK} {needs:config-maxmemory scripting}
 
     # All RM_Call for script succeeds in OOM state without using the M flag
     test {rm_call EVAL - OOM - without M flag} {
@@ -351,7 +351,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         } 1 x
 
         r config set maxmemory 0
-    } {OK} {needs:config-maxmemory}
+    } {OK} {needs:config-maxmemory scripting}
 
     test "not enough good replicas" {
         r set x "some value"
@@ -385,7 +385,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         }
 
         r config set min-replicas-to-write 0
-    }
+    } {OK} {scripting}
 
     test {rm_call EVAL - read-only replica} {
         r replicaof 127.0.0.1 1
@@ -418,7 +418,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
         } 1 x
 
         r replicaof no one
-    } {OK} {needs:config-maxmemory}
+    } {OK} {needs:config-maxmemory scripting}
 
     test {rm_call EVAL - stale replica} {
         r replicaof 127.0.0.1 1
@@ -445,7 +445,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
 
         r replicaof no one
         r config set replica-serve-stale-data yes
-    } {OK} {needs:config-maxmemory}
+    } {OK} {needs:config-maxmemory scripting}
 
     test "rm_call EVAL - failed bgsave prevents writes" {
         r config set rdb-key-save-delay 10000000
@@ -491,7 +491,7 @@ start_server {overrides {save {900 1}} tags {"modules"}} {
 
         # server is writable again
         r set x y
-    } {OK}
+    } {OK} {scripting}
 
     test "malloc API" {
         assert_equal {OK} [r test.malloc_api 0]

@@ -281,7 +281,7 @@ start_server {tags {"scripting"}} {
         assert_equal [r ping] "PONG"
         assert_error {ERR Script killed by user with SCRIPT KILL*} {$rd read}
         $rd close
-    }
+    } {0} {scripting}
 
     test {FUNCTION - test function flush} {
         r function load REPLACE [get_function_code lua test test {local a = 1 while true do a = a + 1 end}]
@@ -461,7 +461,7 @@ test {FUNCTION can processes create, delete and flush commands in AOF when doing
         r slaveof no one
         assert_equal [r function list] {}
     }
-} {} {needs:debug external:skip}
+} {} {needs:debug scripting external:skip}
 
 start_server {tags {"scripting"}} {
     test {LIBRARIES - test shared function can access default globals} {

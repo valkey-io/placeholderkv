@@ -284,6 +284,6 @@ start_server {tags {"slowlog"} overrides {slowlog-log-slower-than 1000000}} {
             assert_equal [lindex $script_cmd 4] [lindex $ping_cmd 4]
             assert_equal {test-client} [lindex $script_cmd 5]
             assert_equal {test-client} [lindex $ping_cmd 5]
-        }
+        } {} {scripting}
     }
 }

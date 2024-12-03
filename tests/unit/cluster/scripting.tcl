@@ -1,4 +1,4 @@
-start_cluster 1 0 {tags {external:skip cluster}} {
+start_cluster 1 0 {tags {external:skip cluster scripting}} {
 
     test {Eval scripts with shebangs and functions default to no cross slots} {
         # Test that scripts with shebang block cross slot operations

@@ -487,7 +487,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         assert_match "OK" [r config set repl-diskless-sync yes]
         assert_match "OK" [r config set repl-diskless-sync-delay 0]
         test_valkey_cli_rdb_dump $functions_only
-    } {} {needs:repl needs:debug}
+    } {} {needs:repl needs:debug scripting}
 
     } ;# foreach functions_only
 

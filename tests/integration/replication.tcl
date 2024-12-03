@@ -280,7 +280,7 @@ start_server {tags {"repl external:skip"}} {
                 {incr x}
             }
             close_replication_stream $repl
-        }
+        } {} {scripting}
 
         test {ROLE in master reports master with a slave} {
             set res [r -1 role]
@@ -437,7 +437,7 @@ start_server {tags {"repl external:skip"} overrides {save {}}} {
             } else {
                 fail "Different datasets between replica and master"
             }
-        }
+        } {} {scripting}
     }
 }
 
@@ -541,7 +541,7 @@ foreach testType {Successful Aborted} dualchannel {yes no} {
 
 # Diskless load swapdb when async_loading (matching master replid)
 foreach testType {Successful Aborted} {
-    start_server {tags {"repl external:skip"}} {
+    start_server {tags {"repl external:skip scripting"}} {
         set replica [srv 0 client]
         set replica_host [srv 0 host]
         set replica_port [srv 0 port]
@@ -656,7 +656,7 @@ foreach testType {Successful Aborted} {
                         after 200 ; # Give some time to Lua to call the hook again...
                         assert_equal [$replica ping] "PONG"
                         $rd_replica close
-                    }
+                    } {0} {scripting}
 
                     test {Blocked commands and configs during async-loading} {
                         assert_error {LOADING*} {$replica config set appendonly no}
@@ -823,7 +823,7 @@ test {diskless loading short read} {
             $master config set rdb-key-save-delay 0
         }
     }
-} {} {external:skip}
+} {} {scripting external:skip}
 
 # get current stime and utime metrics for a thread (since it's creation)
 proc get_cpu_metrics { statfile } {

@@ -452,7 +452,7 @@ tags {"aof external:skip"} {
             wait_for_log_messages 0 {"*Slow script detected*"} 0 100 100
             assert_equal [r get x] y
         }
-    }
+    } {} {scripting}
 
     test {EVAL can process writes from AOF in read-only replicas} {
         create_aof_manifest $aof_dirpath $aof_manifest_file {
@@ -467,7 +467,7 @@ tags {"aof external:skip"} {
         start_server [list overrides [list dir $server_path appendonly yes replica-read-only yes replicaof "127.0.0.1 0"]] {
             assert_equal [r get foo] 102
         }
-    }
+    } {} {scripting}
 
     test {Test valkey-check-aof for old style resp AOF} {
         create_aof $aof_dirpath $aof_file {
