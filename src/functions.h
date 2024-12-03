@@ -133,10 +133,10 @@ dict *functionsLibGet(void);
 size_t functionsLibCtxFunctionsLen(functionsLibCtx *functions_ctx);
 functionsLibCtx *functionsLibCtxGetCurrent(void);
 functionsLibCtx *functionsLibCtxCreate(void);
-void functionsLibCtxClearCurrent(int async);
-void functionsLibCtxFree(functionsLibCtx *lib_ctx);
-void functionsLibCtxClear(functionsLibCtx *lib_ctx);
-void functionsLibCtxSwapWithCurrent(functionsLibCtx *lib_ctx);
+void functionsLibCtxClearCurrent(int async, void(callback)(dict *));
+void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx);
+void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *));
+void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
 
 int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
 

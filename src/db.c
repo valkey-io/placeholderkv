@@ -59,6 +59,7 @@ int keyIsExpired(serverDb *db, robj *key);
 static void dbSetValue(serverDb *db, robj *key, robj *val, int overwrite, dictEntry *de);
 static int getKVStoreIndexForKey(sds key);
 dictEntry *dbFindExpiresWithDictIndex(serverDb *db, void *key, int dict_index);
+dictEntry *dbFindWithDictIndex(serverDb *db, void *key, int dict_index);
 
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
@@ -97,7 +98,8 @@ void updateLFU(robj *val) {
  * expired on replicas even if the primary is lagging expiring our key via DELs
  * in the replication link. */
 robj *lookupKey(serverDb *db, robj *key, int flags) {
-    dictEntry *de = dbFind(db, key->ptr);
+    int dict_index = getKVStoreIndexForKey(key->ptr);
+    dictEntry *de = dbFindWithDictIndex(db, key->ptr, dict_index);
     robj *val = NULL;
     if (de) {
         val = dictGetVal(de);
@@ -113,7 +115,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        if (expireIfNeeded(db, key, expire_flags) != KEY_VALID) {
+        if (expireIfNeededWithDictIndex(db, key, expire_flags, dict_index) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
         }
@@ -129,7 +131,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)) {
             if (!canUseSharedObject() && val->refcount == OBJ_SHARED_REFCOUNT) {
                 val = dupStringObject(val);
-                kvstoreDictSetVal(db->keys, getKVStoreIndexForKey(key->ptr), de, val);
+                kvstoreDictSetVal(db->keys, dict_index, de, val);
             }
             if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
                 updateLFU(val);
@@ -385,10 +387,10 @@ robj *dbRandomKey(serverDb *db) {
         key = dictGetKey(de);
         keyobj = createStringObject(key, sdslen(key));
         if (dbFindExpiresWithDictIndex(db, key, randomDictIndex)) {
-            if (allvolatile && server.primary_host && --maxtries == 0) {
+            if (allvolatile && (server.primary_host || server.import_mode) && --maxtries == 0) {
                 /* If the DB is composed only of keys with an expire set,
                  * it could happen that all the keys are already logically
-                 * expired in the repilca, so the function cannot stop because
+                 * expired in the replica, so the function cannot stop because
                  * expireIfNeeded() is false, nor it can stop because
                  * dictGetFairRandomKey() returns NULL (there are keys to return).
                  * To prevent the infinite loop we do some tries, but if there
@@ -572,7 +574,7 @@ long long emptyData(int dbnum, int flags, void(callback)(dict *)) {
 
     if (with_functions) {
         serverAssert(dbnum == -1);
-        functionsLibCtxClearCurrent(async);
+        functionsLibCtxClearCurrent(async, callback);
     }
 
     /* Also fire the end event. Note that this event will fire almost
@@ -600,12 +602,10 @@ serverDb *initTempDb(void) {
     return tempDb;
 }
 
-/* Discard tempDb, this can be slow (similar to FLUSHALL), but it's always async. */
-void discardTempDb(serverDb *tempDb, void(callback)(dict *)) {
-    int async = 1;
-
+/* Discard tempDb, it's always async. */
+void discardTempDb(serverDb *tempDb) {
     /* Release temp DBs. */
-    emptyDbStructure(tempDb, -1, async, callback);
+    emptyDbStructure(tempDb, -1, 1, NULL);
     for (int i = 0; i < server.dbnum; i++) {
         kvstoreRelease(tempDb[i].keys);
         kvstoreRelease(tempDb[i].expires);
@@ -834,13 +834,23 @@ void keysCommand(client *c) {
     } else {
         kvs_it = kvstoreIteratorInit(c->db->keys);
     }
-    robj keyobj;
-    while ((de = kvs_di ? kvstoreDictIteratorNext(kvs_di) : kvstoreIteratorNext(kvs_it)) != NULL) {
+    while (1) {
+        robj keyobj;
+        int dict_index;
+        if (kvs_di) {
+            de = kvstoreDictIteratorNext(kvs_di);
+            dict_index = pslot;
+        } else {
+            de = kvstoreIteratorNext(kvs_it);
+            dict_index = kvstoreIteratorGetCurrentDictIndex(kvs_it);
+        }
+        if (de == NULL) break;
+
         sds key = dictGetKey(de);
 
         if (allkeys || stringmatchlen(pattern, plen, key, sdslen(key), 0)) {
             initStaticStringObject(keyobj, key);
-            if (!keyIsExpired(c->db, &keyobj)) {
+            if (!keyIsExpiredWithDictIndex(c->db, &keyobj, dict_index)) {
                 addReplyBulkCBuffer(c, key, sdslen(key));
                 numkeys++;
             }
@@ -1779,7 +1789,7 @@ void propagateDeletion(serverDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+static int keyIsExpiredWithDictIndexImpl(serverDb *db, robj *key, int dict_index) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
 
@@ -1796,6 +1806,17 @@ int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
 }
 
 /* Check if the key is expired. */
+int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return 0;
+
+    /* See expireIfNeededWithDictIndex for more details. */
+    if (server.primary_host == NULL && server.import_mode) {
+        if (server.current_client && server.current_client->flag.import_source) return 0;
+    }
+    return 1;
+}
+
+/* Check if the key is expired. */
 int keyIsExpired(serverDb *db, robj *key) {
     int dict_index = getKVStoreIndexForKey(key->ptr);
     return keyIsExpiredWithDictIndex(db, key, dict_index);
@@ -1803,7 +1824,7 @@ int keyIsExpired(serverDb *db, robj *key) {
 
 keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index) {
     if (server.lazy_expire_disabled) return KEY_VALID;
-    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return KEY_VALID;
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return KEY_VALID;
 
     /* If we are running in the context of a replica, instead of
      * evicting the expired key from the database, we return ASAP:
@@ -1820,6 +1841,25 @@ keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int di
      * expired. */
     if (server.primary_host != NULL) {
         if (server.current_client && (server.current_client->flag.primary)) return KEY_VALID;
+        if (!(flags & EXPIRE_FORCE_DELETE_EXPIRED)) return KEY_EXPIRED;
+    } else if (server.import_mode) {
+        /* If we are running in the import mode on a primary, instead of
+         * evicting the expired key from the database, we return ASAP:
+         * the key expiration is controlled by the import source that will
+         * send us synthesized DEL operations for expired keys. The
+         * exception is when write operations are performed on this server
+         * because it's a primary.
+         *
+         * Notice: other clients, apart from the import source, should not access
+         * the data imported by import source.
+         *
+         * Still we try to return the right information to the caller,
+         * that is, KEY_VALID if we think the key should still be valid,
+         * KEY_EXPIRED if we think the key is expired but don't want to delete it at this time.
+         *
+         * When receiving commands from the import source, keys are never considered
+         * expired. */
+        if (server.current_client && (server.current_client->flag.import_source)) return KEY_VALID;
         if (!(flags & EXPIRE_FORCE_DELETE_EXPIRED)) return KEY_EXPIRED;
     }
 
@@ -1884,7 +1924,7 @@ keyStatus expireIfNeeded(serverDb *db, robj *key, int flags) {
  * The purpose is to skip expansion of unused dicts in cluster mode (all
  * dicts not mapped to *my* slots) */
 static int dbExpandSkipSlot(int slot) {
-    return !clusterNodeCoversSlot(getMyClusterNode(), slot);
+    return !clusterNodeCoversSlot(clusterNodeGetPrimary(getMyClusterNode()), slot);
 }
 
 /*

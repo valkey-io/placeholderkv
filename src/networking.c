@@ -314,7 +314,11 @@ int prepareClientToWrite(client *c) {
      * is set. */
     if (c->flag.primary && !c->flag.primary_force_reply) return C_ERR;
 
-    if (!c->conn) return C_ERR; /* Fake client for AOF loading. */
+    /* Skip the fake client, such as the fake client for AOF loading.
+     * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
+     * but has a connection to cache the response. */
+    if (c->flag.fake && c->id != CLIENT_ID_CACHED_RESPONSE) return C_ERR;
+    serverAssert(c->conn);
 
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
@@ -348,6 +352,9 @@ sds aggregateClientOutputBuffer(client *c) {
  * It needs be paired with `deleteCachedResponseClient` function to stop caching. */
 client *createCachedResponseClient(int resp) {
     struct client *recording_client = createClient(NULL);
+    /* It is a fake client but with a connection, setting a special client id,
+     * so we can identify it's a fake cached response client. */
+    recording_client->id = CLIENT_ID_CACHED_RESPONSE;
     recording_client->resp = resp;
     /* Allocating the `conn` allows to prepare the caching client before adding
      * data to the clients output buffer by `prepareClientToWrite`. */
@@ -1560,12 +1567,17 @@ void unlinkClient(client *c) {
          * in which case it needs to be cleaned from that list */
         if (c->flag.replica && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END && server.rdb_pipe_conns) {
             int i;
+            int still_alive = 0;
             for (i = 0; i < server.rdb_pipe_numconns; i++) {
                 if (server.rdb_pipe_conns[i] == c->conn) {
                     rdbPipeWriteHandlerConnRemoved(c->conn);
                     server.rdb_pipe_conns[i] = NULL;
-                    break;
                 }
+                if (server.rdb_pipe_conns[i]) still_alive++;
+            }
+            if (still_alive == 0) {
+                serverLog(LL_NOTICE, "Diskless rdb transfer, last replica dropped, killing fork child.");
+                killRDBChild();
             }
         }
         /* Only use shutdown when the fork is active and we are the parent. */
@@ -1713,10 +1725,10 @@ void freeClient(client *c) {
 
     /* Log link disconnection with replica */
     if (getClientType(c) == CLIENT_TYPE_REPLICA) {
-        serverLog(LL_NOTICE,
-                  c->flag.repl_rdb_channel ? "Replica %s rdb channel disconnected."
-                                           : "Connection with replica %s lost.",
-                  replicationGetReplicaName(c));
+        if (c->flag.repl_rdb_channel)
+            dualChannelServerLog(LL_NOTICE, "Replica %s rdb channel disconnected.", replicationGetReplicaName(c));
+        else
+            serverLog(LL_NOTICE, "Connection with replica %s lost.", replicationGetReplicaName(c));
     }
 
     /* Free the query buffer */
@@ -1736,6 +1748,7 @@ void freeClient(client *c) {
     /* UNWATCH all the keys */
     unwatchAllKeys(c);
     listRelease(c->watched_keys);
+    c->watched_keys = NULL;
 
     /* Unsubscribe from all the pubsub channels */
     pubsubUnsubscribeAllChannels(c, 0);
@@ -1743,16 +1756,22 @@ void freeClient(client *c) {
     pubsubUnsubscribeAllPatterns(c, 0);
     unmarkClientAsPubSub(c);
     dictRelease(c->pubsub_channels);
+    c->pubsub_channels = NULL;
     dictRelease(c->pubsub_patterns);
+    c->pubsub_patterns = NULL;
     dictRelease(c->pubsubshard_channels);
+    c->pubsubshard_channels = NULL;
 
     /* Free data structures. */
     listRelease(c->reply);
-    zfree(c->buf);
+    c->reply = NULL;
+    zfree_with_size(c->buf, c->buf_usable_size);
+    c->buf = NULL;
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
     freeClientOriginalArgv(c);
     if (c->deferred_reply_errors) listRelease(c->deferred_reply_errors);
+    c->deferred_reply_errors = NULL;
 #ifdef LOG_REQ_RES
     reqresReset(c, 1);
 #endif
@@ -1779,6 +1798,7 @@ void freeClient(client *c) {
         if (server.saveparamslen == 0 && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END &&
             server.child_type == CHILD_TYPE_RDB && server.rdb_child_type == RDB_CHILD_TYPE_DISK &&
             anyOtherReplicaWaitRdb(c) == 0) {
+            serverLog(LL_NOTICE, "Background saving, persistence disabled, last replica dropped, killing fork child.");
             killRDBChild();
         }
         if (c->repl_state == REPLICA_STATE_SEND_BULK) {
@@ -1955,14 +1975,15 @@ int freeClientsInAsyncFreeQueue(void) {
             if (!c->rdb_client_disconnect_time) {
                 if (c->conn) connSetReadHandler(c->conn, NULL);
                 c->rdb_client_disconnect_time = server.unixtime;
-                serverLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds", (unsigned long long)c->id,
-                          replicationGetReplicaName(c), server.wait_before_rdb_client_free);
+                dualChannelServerLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds",
+                                     (unsigned long long)c->id, replicationGetReplicaName(c), server.wait_before_rdb_client_free);
             }
             if (server.unixtime - c->rdb_client_disconnect_time <= server.wait_before_rdb_client_free) continue;
-            serverLog(LL_NOTICE,
-                      "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
-                      "Freeing RDB client %llu.",
-                      (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
+            dualChannelServerLog(
+                LL_NOTICE,
+                "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
+                "Freeing RDB client %llu.",
+                (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
             c->flag.protected_rdb_channel = 0;
         }
 
@@ -3378,6 +3399,29 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
     return ret;
 }
 
+/* Concatenate a string representing the state of a client in a human
+ * readable format, into the sds string 's'.
+ *
+ * This is a simplified and shortened version of catClientInfoString,
+ * it only added some basic fields for tracking clients. */
+sds catClientInfoShortString(sds s, client *client, int hide_user_data) {
+    if (!server.crashed) waitForClientIO(client);
+    char conninfo[CONN_INFO_LEN];
+
+    sds ret = sdscatfmt(
+        s,
+        FMTARGS(
+            "id=%U", (unsigned long long)client->id,
+            " addr=%s", getClientPeerId(client),
+            " laddr=%s", getClientSockname(client),
+            " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
+            " name=%s", hide_user_data ? "*redacted*" : (client->name ? (char *)client->name->ptr : ""),
+            " user=%s", hide_user_data ? "*redacted*" : (client->user ? client->user->name : "(superuser)"),
+            " lib-name=%s", client->lib_name ? (char *)client->lib_name->ptr : "",
+            " lib-ver=%s", client->lib_ver ? (char *)client->lib_ver->ptr : ""));
+    return ret;
+}
+
 sds getAllClientsInfoString(int type, int hide_user_data) {
     listNode *ln;
     listIter li;
@@ -3578,6 +3622,10 @@ void clientCommand(client *c) {
             "    Protect current client connection from eviction.",
             "NO-TOUCH (ON|OFF)",
             "    Will not touch LRU/LFU stats when this mode is on.",
+            "IMPORT-SOURCE (ON|OFF)",
+            "    Mark this connection as an import source if import-mode is enabled.",
+            "    Sync tools can set their connections into 'import-source' state to visit",
+            "    expired keys.",
             NULL};
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
@@ -4051,6 +4099,22 @@ void clientCommand(client *c) {
             }
         }
         addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
+        /* CLIENT IMPORT-SOURCE ON|OFF */
+        if (!server.import_mode) {
+            addReplyError(c, "Server is not in import mode");
+            return;
+        }
+        if (!strcasecmp(c->argv[2]->ptr, "on")) {
+            c->flag.import_source = 1;
+            addReply(c, shared.ok);
+        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+            c->flag.import_source = 0;
+            addReply(c, shared.ok);
+        } else {
+            addReplyErrorObject(c, shared.syntaxerr);
+            return;
+        }
     } else {
         addReplySubcommandSyntaxError(c);
     }
@@ -4472,7 +4536,8 @@ int checkClientOutputBufferLimits(client *c) {
  *
  * Returns 1 if client was (flagged) closed. */
 int closeClientOnOutputBufferLimitReached(client *c, int async) {
-    if (!c->conn) return 0; /* It is unsafe to free fake clients. */
+    if (c->flag.fake) return 0; /* It is unsafe to free fake clients. */
+    serverAssert(c->conn);
     serverAssert(c->reply_bytes < SIZE_MAX - (1024 * 64));
     /* Note that c->reply_bytes is irrelevant for replica clients
      * (they use the global repl buffers). */
@@ -4588,7 +4653,7 @@ static void pauseClientsByClient(mstime_t endTime, int isPauseClientAll) {
 }
 
 /* Pause actions up to the specified unixtime (in ms) for a given type of
- * commands.
+ * purpose.
  *
  * A main use case of this function is to allow pausing replication traffic
  * so that a failover without data loss to occur. Replicas will continue to receive

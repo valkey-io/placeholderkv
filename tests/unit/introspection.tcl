@@ -584,6 +584,10 @@ start_server {tags {"introspection"}} {
             req-res-logfile
             client-default-resp
             dual-channel-replication-enabled
+            rdma-completion-vector
+            rdma-rx-size
+            rdma-bind
+            rdma-port
         }
 
         if {!$::tls} {
