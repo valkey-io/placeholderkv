@@ -905,8 +905,7 @@ static int defragLaterItem(dictEntry *de, unsigned long *cursor, monotime endtim
         } else if (ob->type == OBJ_STREAM) {
             return scanLaterStreamListpacks(ob, cursor, endtime);
         } else if (ob->type == OBJ_MODULE) {
-            long long endtimeWallClock = ustime() + (endtime - getMonotonicUs());
-            return moduleLateDefrag(dictGetKey(de), ob, cursor, endtimeWallClock, dbid);
+            return moduleLateDefrag(dictGetKey(de), ob, cursor, endtime, dbid);
         } else {
             *cursor = 0; /* object type may have changed since we schedule it for later */
         }
