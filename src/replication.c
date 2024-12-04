@@ -1036,7 +1036,9 @@ void syncCommand(client *c) {
     /* ignore SYNC if already replica or in monitor mode */
     if (c->flag.replica) return;
 
-    // TODO murphyjacob4 find a better place for this
+    /* Enable zero copy at the socket level for replication links. This simply
+     * enables zero copy to be used later, and does not change any default
+     * behavior of the socket. */
     connSetZeroCopy(c->conn, 1);
 
     /* Check if this is a failover request to a replica with the same replid and

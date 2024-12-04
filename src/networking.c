@@ -1998,67 +1998,11 @@ client *lookupClientByID(uint64_t id) {
     return c;
 }
 
-void handleZeroCopyMessage(connection *conn) {
-    struct msghdr msg;
-    struct iovec iov;
-    char control[1024*10];
-    struct cmsghdr *cmsg;
-    struct sock_extended_err *serr;
-
-    iov.iov_base = NULL;
-    iov.iov_len = 0;
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = control;
-    msg.msg_controllen = sizeof(control);
-
-    if (connRecvMsg(conn, &msg, MSG_ERRQUEUE) == -1) {
-        if (errno == EAGAIN) {
-            /* This callback fires for all readable events, so sometimes it is a no-op. */
-            return;
-        }
-        serverLog(LL_WARNING, "Got callback for error message but got recvmsg error: %s", strerror(errno));
-        return;
-    }
-    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        if (cmsg->cmsg_level != SOL_IP || cmsg->cmsg_type != IP_RECVERR) {
-            continue;
-        }
-        serr = (struct sock_extended_err *) CMSG_DATA(cmsg);
-        if (serr->ee_origin != SO_EE_ORIGIN_ZEROCOPY) {
-            continue;
-        }
-        client * c = (client *) connGetPrivateData(conn);
-
-        /* Mark the received messages as finished. */
-        const uint32_t begin = serr->ee_info;
-        const uint32_t end = serr->ee_data;
-        for (size_t i = begin; i <= end; i++) {
-            zeroCopyRecord *zcp = zeroCopyRecordBufferGet(c->zero_copy_buffer, i);
-            serverAssert(zcp != NULL);
-            zcp->active = 0;
-        }
-
-        /* Trim the front of the buffer up until the next outstanding write. */
-        zeroCopyRecord *head = zeroCopyRecordBufferFront(c->zero_copy_buffer);
-        while (head != NULL && head->active == 0) {
-            if (head->last_write_for_block) {
-                head->block->refcount--;
-                incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
-            }
-            zeroCopyRecordBufferPop(c->zero_copy_buffer);
-            head = zeroCopyRecordBufferFront(c->zero_copy_buffer);
-        }
-        if (c->zero_copy_buffer->len == 0)
-            connSetErrorQueueHandler(c->conn, NULL);
-    }
-}
-
 void writeToReplica(client *c) {
     /* Can be called from main-thread only as replica write offload is not supported yet */
     serverAssert(inMainThread());
     ssize_t nwritten = 0;
-    zeroCopyRecord *zcp = NULL;
+    zeroCopyRecord *ongoing_zero_copy_write = NULL;
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
     while (clientHasPendingReplies(c)) {
         replBufBlock *o = listNodeValue(c->ref_repl_buf_node);
@@ -2066,7 +2010,13 @@ void writeToReplica(client *c) {
 
         /* Send current block if it is not fully sent. */
         if (o->used > c->ref_block_pos) {
-            nwritten = connSend(c->conn, o->buf + c->ref_block_pos, o->used - c->ref_block_pos, MSG_ZEROCOPY);
+            size_t data_len = o->used - c->ref_block_pos;
+            int use_zerocopy = data_len > ZERO_COPY_MIN_WRITE_SIZE;
+            if (use_zerocopy)
+                nwritten = connSend(c->conn, o->buf + c->ref_block_pos, data_len, MSG_ZEROCOPY);
+            else
+                nwritten = connWrite(c->conn, o->buf + c->ref_block_pos, data_len);
+
             if (nwritten <= 0) {
                 c->write_flags |= WRITE_FLAGS_WRITE_ERROR;
                 return;
@@ -2074,27 +2024,37 @@ void writeToReplica(client *c) {
             c->nwritten += nwritten;
             c->ref_block_pos += nwritten;
 
-            zcp = zeroCopyRecordBufferExtend(c->zero_copy_buffer);
-            zcp->block = o;
-            zcp->active = 1;
-            zcp->last_write_for_block = 0;
-            connSetErrorQueueHandler(c->conn, handleZeroCopyMessage);
+            if (use_zerocopy) {
+                ongoing_zero_copy_write = zeroCopyRecordBufferExtend(c->zero_copy_buffer);
+                ongoing_zero_copy_write->block = o;
+                ongoing_zero_copy_write->active = 1;
+                ongoing_zero_copy_write->last_write_for_block = 0;
+                connSetErrorQueueHandler(c->conn, handleZeroCopyMessage);
+            }
         }
 
-        if (!zcp) {
-            zcp = zeroCopyRecordBufferEnd(c->zero_copy_buffer);
+        /* If the block is fully sent, we may still have active zero copy writes. Check the most
+         * recent zero copy write for our connection and see if it matches this block. */
+        if (!ongoing_zero_copy_write) {
+            ongoing_zero_copy_write = zeroCopyRecordBufferEnd(c->zero_copy_buffer);
+            if (ongoing_zero_copy_write->block != o) {
+                /* This zero copy record was for a different block, therefore there are no pending
+                 * zero copy writes for this block.*/
+                ongoing_zero_copy_write = NULL;
+            }
         }
 
         /* If we fully sent the object on head, go to the next one. */
         listNode *next = listNextNode(c->ref_repl_buf_node);
         if (next && c->ref_block_pos == o->used) {
-            if (!zcp) {
-                /* The write has already finished for all outgoing writes, we can free this block inline. */
+            if (!ongoing_zero_copy_write) {
+                /* All writes are done, we can free this block inline. */
                 o->refcount--;
                 incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
             } else {
-                /* There is an ongoing write, simply mark that write as needing to free this block. */
-                zcp->last_write_for_block = 1;
+                /* There is an ongoing write. The zero copy handler will be responsible for
+                 * decrementing the refcount and trimming the backlog once that completes. */
+                ongoing_zero_copy_write->last_write_for_block = 1;
             }
             ((replBufBlock *)(listNodeValue(next)))->refcount++;
             c->ref_repl_buf_node = next;
