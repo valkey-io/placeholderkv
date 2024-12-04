@@ -25,7 +25,7 @@
                 "Allowed the `NX` and `GET` options to be used together."
             ],
             [
-                "8.2.0",
+                "8.1.0",
                 "Added the `IFEQ` option."
             ]
         ],
@@ -90,35 +90,36 @@
                 "type": "string"
             },
             {
-                "name": "comparison-value",
-                "type": "string",
-                "token": "IFEQ",
-                "since": "8.2.0",
-                "optional": true,
-                "summary": "Sets the key's value only if the current value matches the specified comparison value.",
-                "arguments": [
-                    {
-                        "name": "comparison-value",
-                        "type": "string",
-                        "summary": "The value to compare with the current key's value before setting."
-                    }
-                ]
-            },
-            {
                 "name": "condition",
                 "type": "oneof",
                 "optional": true,
-                "since": "2.6.12",
                 "arguments": [
                     {
                         "name": "nx",
                         "type": "pure-token",
-                        "token": "NX"
+                        "token": "NX",
+                        "since": "2.6.12"
                     },
                     {
                         "name": "xx",
                         "type": "pure-token",
-                        "token": "XX"
+                        "token": "XX",
+                        "since": "2.6.12"
+                    },
+                    {
+                        "name": "comparison-value",
+                        "type": "string",
+                        "token": "IFEQ",
+                        "since": "8.1.0",
+                        "optional": true,
+                        "summary": "Sets the key's value only if the current value matches the specified comparison value.",
+                        "arguments": [
+                            {
+                                "name": "comparison-value",
+                                "type": "string",
+                                "summary": "The value to compare with the current key's value before setting."
+                            }
+                        ]
                     }
                 ]
             },
