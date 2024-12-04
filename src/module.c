@@ -13079,24 +13079,22 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
  */
 int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
                                const char *engine_name,
-                               void *engine_ctx,
-                               ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
-                               ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
-                               ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
-                               ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
-                               ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
-                               ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func) {
+                               ValkeyModuleScriptingEngineCtx *engine_ctx,
+                               ValkeyModuleScriptingEngineMethods *engine_methods) {
     serverLog(LL_DEBUG, "Registering a new scripting engine: %s", engine_name);
+
+    if (engine_methods->version > VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION) {
+        serverLog(LL_WARNING, "The engine implementation version is greater than what this server supports."
+                              "Server ABI Version: %lu, Engine ABI version: %lu",
+                  VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
+                  engine_methods->version);
+        return VALKEYMODULE_ERR;
+    }
 
     if (functionsRegisterEngine(engine_name,
                                 ctx->module,
                                 engine_ctx,
-                                create_functions_library_func,
-                                call_function_func,
-                                get_used_memory_func,
-                                get_function_memory_overhead_func,
-                                get_engine_memory_overhead_func,
-                                free_function_func) != C_OK) {
+                                engine_methods) != C_OK) {
         return VALKEYMODULE_ERR;
     }
 

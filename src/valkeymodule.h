@@ -795,10 +795,20 @@ typedef void (*ValkeyModuleInfoFunc)(ValkeyModuleInfoCtx *ctx, int for_crash_rep
 typedef void (*ValkeyModuleDefragFunc)(ValkeyModuleDefragCtx *ctx);
 typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 
+/* Current ABI version for scripting engine modules. */
+#define VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION 1UL
+
 /* Type definitions for implementing scripting engines modules. */
 typedef void ValkeyModuleScriptingEngineCtx;
 typedef void ValkeyModuleScriptingEngineFunctionCtx;
 
+/* This struct represents a scripting engine function that results from the
+ * compilation of a script by the engine implementation.
+ *
+ * IMPORTANT: If we ever need to add/remove fields from this struct, we need
+ * to bump the version number defined in the
+ * `VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION` constant.
+ */
 typedef struct ValkeyModuleScriptingEngineCompiledFunction {
     char *name;       /* Function name */
     void *function;   /* Opaque object representing a function, usually it'
@@ -836,6 +846,33 @@ typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(
 typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
     ValkeyModuleScriptingEngineCtx *engine_ctx,
     void *compiled_function);
+
+typedef struct ValkeyModuleScriptingEngineMethodsV1 {
+    uint64_t version; /* Version of this structure for ABI compat. */
+
+    /* Library create function callback. When a new script is loaded, this
+     * callback will be called with the script code, and returns a list of
+     * ValkeyModuleScriptingEngineCompiledFunc objects. */
+    ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library;
+
+    /* The callback function called when `FCALL` command is called on a function
+     * registered in this engine. */
+    ValkeyModuleScriptingEngineCallFunctionFunc call_function;
+
+    /* Function callback to get current used memory by the engine. */
+    ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory;
+
+    /* Function callback to return memory overhead for a given function. */
+    ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead;
+
+    /* Function callback to return memory overhead of the engine. */
+    ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead;
+
+    /* Function callback to free the memory of a registered engine function. */
+    ValkeyModuleScriptingEngineFreeFunctionFunc free_function;
+} ValkeyModuleScriptingEngineMethodsV1;
+
+#define ValkeyModuleScriptingEngineMethods ValkeyModuleScriptingEngineMethodsV1
 
 /* ------------------------- End of common defines ------------------------ */
 
@@ -1693,13 +1730,8 @@ VALKEYMODULE_API int (*ValkeyModule_RdbSave)(ValkeyModuleCtx *ctx,
 
 VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *ctx,
                                                              const char *engine_name,
-                                                             void *engine_ctx,
-                                                             ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
-                                                             ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
-                                                             ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
-                                                             ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
-                                                             ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
-                                                             ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func) VALKEYMODULE_ATTR;
+                                                             ValkeyModuleScriptingEngineCtx *engine_ctx,
+                                                             ValkeyModuleScriptingEngineMethods *engine_methods) VALKEYMODULE_ATTR;
 
 VALKEYMODULE_API int (*ValkeyModule_UnregisterScriptingEngine)(ValkeyModuleCtx *ctx,
                                                                const char *engine_name) VALKEYMODULE_ATTR;

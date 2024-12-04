@@ -54,9 +54,15 @@
 
 typedef struct functionLibInfo functionLibInfo;
 
+/* ValkeyModule type aliases for scripting engine structs and types. */
+typedef ValkeyModuleScriptingEngineCtx EngineCtx;
+typedef ValkeyModuleScriptingEngineFunctionCtx FunctionCtx;
+typedef ValkeyModuleScriptingEngineCompiledFunction CompiledFunction;
+typedef ValkeyModuleScriptingEngineMethods EngineMethods;
+
 typedef struct engine {
     /* engine specific context */
-    ValkeyModuleScriptingEngineCtx *engine_ctx;
+    EngineCtx *engine_ctx;
 
     /* Create function callback, get the engine_ctx, and function code
      * engine_ctx - opaque struct that was created on engine initialization
@@ -65,8 +71,8 @@ typedef struct engine {
      * timeout - timeout for the library creation (0 for no timeout)
      * err - description of error (if occurred)
      * returns C_ERR on error and set err to be the error message */
-    ValkeyModuleScriptingEngineCompiledFunction **(*create)(
-        ValkeyModuleScriptingEngineCtx *engine_ctx,
+    CompiledFunction **(*create)(
+        EngineCtx *engine_ctx,
         const char *code,
         size_t timeout,
         size_t *out_num_compiled_functions,
@@ -87,7 +93,7 @@ typedef struct engine {
                  size_t nargs);
 
     /* get current used memory by the engine */
-    size_t (*get_used_memory)(ValkeyModuleScriptingEngineCtx *engine_ctx);
+    size_t (*get_used_memory)(EngineCtx *engine_ctx);
 
     /* Return memory overhead for a given function,
      * such memory is not counted as engine memory but as general
@@ -95,10 +101,10 @@ typedef struct engine {
     size_t (*get_function_memory_overhead)(void *compiled_function);
 
     /* Return memory overhead for engine (struct size holding the engine)*/
-    size_t (*get_engine_memory_overhead)(ValkeyModuleScriptingEngineCtx *engine_ctx);
+    size_t (*get_engine_memory_overhead)(EngineCtx *engine_ctx);
 
     /* free the given function */
-    void (*free_function)(ValkeyModuleScriptingEngineCtx *engine_ctx, void *compiled_function);
+    void (*free_function)(EngineCtx *engine_ctx, void *compiled_function);
 } engine;
 
 /* Hold information about an engine.
@@ -134,12 +140,7 @@ struct functionLibInfo {
 int functionsRegisterEngine(const char *engine_name,
                             ValkeyModule *engine_module,
                             void *engine_ctx,
-                            ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
-                            ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
-                            ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
-                            ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
-                            ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
-                            ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func);
+                            EngineMethods *engine_methods);
 int functionsUnregisterEngine(const char *engine_name);
 
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout);

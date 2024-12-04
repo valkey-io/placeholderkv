@@ -423,26 +423,24 @@ done:
     return ret;
 }
 
-/* Register an engine, should be called once by the engine on startup and give the following:
+/* Register an engine, should be called once by the engine on startup and give
+ * the following:
  *
  * - engine_name - name of the engine to register
+ *
  * - engine_module - the valkey module that implements this engine
- * - engine_ctx - the engine ctx that should be used by the server to interact with the engine
- * - create_functions_library_func - the callback function that is called when a new script is
- *                                   loaded, which adds new functions to the engine function
- *                                   library.
- * - call_function_func - the callback function that is called when a function is called e.g.,
- *                        using the 'FCALL' command.
+ *
+ * - engine_ctx - the engine ctx that should be used by the server to interact
+ * with the engine.
+ *
+ * - engine_methods - the struct with the scripting engine callback functions
+ * pointers.
+ *
  */
 int functionsRegisterEngine(const char *engine_name,
                             ValkeyModule *engine_module,
-                            void *engine_ctx,
-                            ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library_func,
-                            ValkeyModuleScriptingEngineCallFunctionFunc call_function_func,
-                            ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory_func,
-                            ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead_func,
-                            ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead_func,
-                            ValkeyModuleScriptingEngineFreeFunctionFunc free_function_func) {
+                            EngineCtx *engine_ctx,
+                            EngineMethods *engine_methods) {
     sds engine_name_sds = sdsnew(engine_name);
     if (dictFetchValue(engines, engine_name_sds)) {
         serverLog(LL_WARNING, "Same engine was registered twice");
@@ -453,12 +451,12 @@ int functionsRegisterEngine(const char *engine_name,
     engine *engine = zmalloc(sizeof(struct engine));
     *engine = (struct engine){
         .engine_ctx = engine_ctx,
-        .create = create_functions_library_func,
-        .call = call_function_func,
-        .get_used_memory = get_used_memory_func,
-        .get_function_memory_overhead = get_function_memory_overhead_func,
-        .get_engine_memory_overhead = get_engine_memory_overhead_func,
-        .free_function = free_function_func,
+        .create = engine_methods->create_functions_library,
+        .call = engine_methods->call_function,
+        .get_used_memory = engine_methods->get_used_memory,
+        .get_function_memory_overhead = engine_methods->get_function_memory_overhead,
+        .get_engine_memory_overhead = engine_methods->get_engine_memory_overhead,
+        .free_function = engine_methods->free_function,
     };
 
     client *c = createClient(NULL);
@@ -1057,11 +1055,11 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
 }
 
 static void freeCompiledFunctions(engine *engine,
-                                  ValkeyModuleScriptingEngineCompiledFunction **compiled_functions,
+                                  CompiledFunction **compiled_functions,
                                   size_t num_compiled_functions,
                                   size_t free_function_from_idx) {
     for (size_t i = 0; i < num_compiled_functions; i++) {
-        ValkeyModuleScriptingEngineCompiledFunction *func = compiled_functions[i];
+        CompiledFunction *func = compiled_functions[i];
         zfree(func->name);
         zfree(func->desc);
         if (i >= free_function_from_idx) {
@@ -1113,7 +1111,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
 
     new_li = engineLibraryCreate(md.name, ei, code);
     size_t num_compiled_functions = 0;
-    ValkeyModuleScriptingEngineCompiledFunction **compiled_functions =
+    CompiledFunction **compiled_functions =
         engine->create(engine->engine_ctx,
                        md.code,
                        timeout,
@@ -1125,7 +1123,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     }
 
     for (size_t i = 0; i < num_compiled_functions; i++) {
-        ValkeyModuleScriptingEngineCompiledFunction *func = compiled_functions[i];
+        CompiledFunction *func = compiled_functions[i];
         int ret = functionLibCreateFunction(func->name,
                                             func->function,
                                             new_li,

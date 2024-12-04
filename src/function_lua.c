@@ -69,7 +69,7 @@ typedef struct loadCtx {
     size_t timeout;
 } loadCtx;
 
-static void luaEngineFreeFunction(ValkeyModuleScriptingEngineCtx *engine_ctx,
+static void luaEngineFreeFunction(EngineCtx *engine_ctx,
                                   void *compiled_function);
 
 /* Hook for FUNCTION LOAD execution.
@@ -90,7 +90,7 @@ static void luaEngineLoadHook(lua_State *lua, lua_Debug *ar) {
 }
 
 static void freeCompiledFunc(luaEngineCtx *lua_engine_ctx, void *compiled_func) {
-    ValkeyModuleScriptingEngineCompiledFunction *func = compiled_func;
+    CompiledFunction *func = compiled_func;
     zfree(func->name);
     if (func->desc) {
         zfree(func->desc);
@@ -106,13 +106,13 @@ static void freeCompiledFunc(luaEngineCtx *lua_engine_ctx, void *compiled_func) 
  *
  * Return NULL on compilation error and set the error to the err variable
  */
-static ValkeyModuleScriptingEngineCompiledFunction **luaEngineCreate(
-    ValkeyModuleScriptingEngineCtx *engine_ctx,
+static CompiledFunction **luaEngineCreate(
+    EngineCtx *engine_ctx,
     const char *blob,
     size_t timeout,
     size_t *out_num_compiled_functions,
     char **err) {
-    ValkeyModuleScriptingEngineCompiledFunction **compiled_functions = NULL;
+    CompiledFunction **compiled_functions = NULL;
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     lua_State *lua = lua_engine_ctx->lua;
 
@@ -158,12 +158,12 @@ static ValkeyModuleScriptingEngineCompiledFunction **luaEngineCreate(
     }
 
     compiled_functions =
-        zcalloc(sizeof(ValkeyModuleScriptingEngineCompiledFunction *) * listLength(load_ctx.functions));
+        zcalloc(sizeof(CompiledFunction *) * listLength(load_ctx.functions));
     listIter *iter = listGetIterator(load_ctx.functions, AL_START_HEAD);
     listNode *node = NULL;
     *out_num_compiled_functions = 0;
     while ((node = listNext(iter)) != NULL) {
-        ValkeyModuleScriptingEngineCompiledFunction *func = listNodeValue(node);
+        CompiledFunction *func = listNodeValue(node);
         compiled_functions[*out_num_compiled_functions] = func;
         (*out_num_compiled_functions)++;
     }
@@ -188,8 +188,8 @@ done:
  * Invole the give function with the given keys and args
  */
 static void luaEngineCall(ValkeyModuleCtx *module_ctx,
-                          ValkeyModuleScriptingEngineCtx *engine_ctx,
-                          ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
+                          EngineCtx *engine_ctx,
+                          FunctionCtx *func_ctx,
                           void *compiled_function,
                           robj **keys,
                           size_t nkeys,
@@ -214,7 +214,7 @@ static void luaEngineCall(ValkeyModuleCtx *module_ctx,
     lua_pop(lua, 1); /* Pop error handler */
 }
 
-static size_t luaEngineGetUsedMemoy(ValkeyModuleScriptingEngineCtx *engine_ctx) {
+static size_t luaEngineGetUsedMemoy(EngineCtx *engine_ctx) {
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     return luaMemory(lua_engine_ctx->lua);
 }
@@ -223,12 +223,12 @@ static size_t luaEngineFunctionMemoryOverhead(void *compiled_function) {
     return zmalloc_size(compiled_function);
 }
 
-static size_t luaEngineMemoryOverhead(ValkeyModuleScriptingEngineCtx *engine_ctx) {
+static size_t luaEngineMemoryOverhead(EngineCtx *engine_ctx) {
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     return zmalloc_size(lua_engine_ctx);
 }
 
-static void luaEngineFreeFunction(ValkeyModuleScriptingEngineCtx *engine_ctx,
+static void luaEngineFreeFunction(EngineCtx *engine_ctx,
                                   void *compiled_function) {
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     lua_State *lua = lua_engine_ctx->lua;
@@ -237,12 +237,12 @@ static void luaEngineFreeFunction(ValkeyModuleScriptingEngineCtx *engine_ctx,
     zfree(f_ctx);
 }
 
-static void luaRegisterFunctionArgsInitialize(ValkeyModuleScriptingEngineCompiledFunction *func,
+static void luaRegisterFunctionArgsInitialize(CompiledFunction *func,
                                               char *name,
                                               char *desc,
                                               luaFunctionCtx *lua_f_ctx,
                                               uint64_t flags) {
-    *func = (ValkeyModuleScriptingEngineCompiledFunction){
+    *func = (CompiledFunction){
         .name = name,
         .desc = desc,
         .function = lua_f_ctx,
@@ -294,7 +294,8 @@ done:
     return ret;
 }
 
-static int luaRegisterFunctionReadNamedArgs(lua_State *lua, ValkeyModuleScriptingEngineCompiledFunction *func) {
+static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
+                                            CompiledFunction *func) {
     char *err = NULL;
     char *name = NULL;
     char *desc = NULL;
@@ -377,7 +378,8 @@ error:
     return C_ERR;
 }
 
-static int luaRegisterFunctionReadPositionalArgs(lua_State *lua, ValkeyModuleScriptingEngineCompiledFunction *func) {
+static int luaRegisterFunctionReadPositionalArgs(lua_State *lua,
+                                                 CompiledFunction *func) {
     char *err = NULL;
     char *name = NULL;
     luaFunctionCtx *lua_f_ctx = NULL;
@@ -406,7 +408,7 @@ error:
     return C_ERR;
 }
 
-static int luaRegisterFunctionReadArgs(lua_State *lua, ValkeyModuleScriptingEngineCompiledFunction *func) {
+static int luaRegisterFunctionReadArgs(lua_State *lua, CompiledFunction *func) {
     int argc = lua_gettop(lua);
     if (argc < 1 || argc > 2) {
         luaPushError(lua, "wrong number of arguments to server.register_function");
@@ -421,7 +423,7 @@ static int luaRegisterFunctionReadArgs(lua_State *lua, ValkeyModuleScriptingEngi
 }
 
 static int luaRegisterFunction(lua_State *lua) {
-    ValkeyModuleScriptingEngineCompiledFunction *func = zcalloc(sizeof(*func));
+    CompiledFunction *func = zcalloc(sizeof(*func));
 
     loadCtx *load_ctx = luaGetFromRegistry(lua, REGISTRY_LOAD_CTX_NAME);
     if (!load_ctx) {
@@ -516,13 +518,18 @@ int luaEngineInitEngine(void) {
     lua_enablereadonlytable(lua_engine_ctx->lua, -1, 1); /* protect the new global table */
     lua_replace(lua_engine_ctx->lua, LUA_GLOBALSINDEX);  /* set new global table as the new globals */
 
+    EngineMethods lua_engine_methods = {
+        .version = VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
+        .create_functions_library = luaEngineCreate,
+        .call_function = luaEngineCall,
+        .get_used_memory = luaEngineGetUsedMemoy,
+        .get_function_memory_overhead = luaEngineFunctionMemoryOverhead,
+        .get_engine_memory_overhead = luaEngineMemoryOverhead,
+        .free_function = luaEngineFreeFunction,
+    };
+
     return functionsRegisterEngine(LUA_ENGINE_NAME,
                                    NULL,
                                    lua_engine_ctx,
-                                   luaEngineCreate,
-                                   luaEngineCall,
-                                   luaEngineGetUsedMemoy,
-                                   luaEngineFunctionMemoryOverhead,
-                                   luaEngineMemoryOverhead,
-                                   luaEngineFreeFunction);
+                                   &lua_engine_methods);
 }

@@ -342,15 +342,20 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv,
     hello_ctx = ValkeyModule_Alloc(sizeof(HelloLangCtx));
     hello_ctx->program = NULL;
 
+    ValkeyModuleScriptingEngineMethods methods = {
+        .version = VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
+        .create_functions_library = createHelloLangEngine,
+        .call_function = callHelloLangFunction,
+        .get_used_memory = engineGetUsedMemoy,
+        .get_function_memory_overhead = engineFunctionMemoryOverhead,
+        .get_engine_memory_overhead = engineMemoryOverhead,
+        .free_function = engineFreeFunction,
+    };
+
     ValkeyModule_RegisterScriptingEngine(ctx,
                                          "HELLO",
                                          hello_ctx,
-                                         createHelloLangEngine,
-                                         callHelloLangFunction,
-                                         engineGetUsedMemoy,
-                                         engineFunctionMemoryOverhead,
-                                         engineMemoryOverhead,
-                                         engineFreeFunction);
+                                         &methods);
 
     return VALKEYMODULE_OK;
 }
