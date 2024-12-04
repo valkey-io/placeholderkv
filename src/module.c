@@ -13344,7 +13344,7 @@ const char *VM_GetCurrentCommandName(ValkeyModuleCtx *ctx) {
  * defrag callback.
  */
 struct ValkeyModuleDefragCtx {
-    long long int endtime;
+    monotime endtime;
     unsigned long *cursor;
     struct serverObject *key; /* Optional name of key processed, NULL when unknown. */
     int dbid;                 /* The dbid of the key being processed, -1 when unknown. */
@@ -13373,7 +13373,7 @@ int VM_RegisterDefragFunc(ValkeyModuleCtx *ctx, ValkeyModuleDefragFunc cb) {
  * so it generally makes sense to do small batches of work in between calls.
  */
 int VM_DefragShouldStop(ValkeyModuleDefragCtx *ctx) {
-    return (ctx->endtime != 0 && ctx->endtime < ustime());
+    return (ctx->endtime != 0 && ctx->endtime <= getMonotonicUs());
 }
 
 /* Store an arbitrary cursor value for future re-use.
@@ -13455,7 +13455,7 @@ ValkeyModuleString *VM_DefragValkeyModuleString(ValkeyModuleDefragCtx *ctx, Valk
  * Returns a zero value (and initializes the cursor) if no more needs to be done,
  * or a non-zero value otherwise.
  */
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid) {
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid) {
     moduleValue *mv = value->ptr;
     moduleType *mt = mv->type;
 

@@ -376,6 +376,32 @@ start_server {tags {"introspection"}} {
         $rd close
     }
 
+    # This test verifies that MONITOR correctly records overwritten commands
+    # when executed within a MULTI-EXEC block. Specifically, it checks that even if
+    # the original SET-EX command arguments are overwritten for replica propagation, the MONITOR output
+    # still shows the original command.
+    test {MONITOR correctly records SET EX in MULTI-EXEC} {
+        # Start monitoring client
+        set rd [valkey_deferring_client]
+        $rd monitor
+        $rd read ; # Discard the OK
+    
+        # Execute multi-exec block with SET EX commands
+        r multi
+        r set "{slot}key1" value1 ex 3600
+        r set "{slot}key2" value2 ex 1800
+        r exec
+    
+        # Verify monitor output shows the original commands:
+        assert_match {*"multi"*} [$rd read]
+        assert_match {*"set"*"{slot}key1"*"value1"*"ex"*"3600"*} [$rd read]
+        assert_match {*"set"*"{slot}key2"*"value2"*"ex"*"1800"*} [$rd read]
+        assert_match {*"exec"*} [$rd read]
+    
+        # Clean up monitoring client
+        $rd close
+    }
+
     test {MONITOR log blocked command only once} {
         # need to reconnect in order to reset the clients state
         reconnect

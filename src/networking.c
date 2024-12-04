@@ -1488,14 +1488,19 @@ void freeClientOriginalArgv(client *c) {
     /* We didn't rewrite this client */
     if (!c->original_argv) return;
 
-    for (int j = 0; j < c->original_argc; j++) decrRefCount(c->original_argv[j]);
-    zfree(c->original_argv);
+    if (tryOffloadFreeArgvToIOThreads(c, c->original_argc, c->original_argv) == C_ERR) {
+        for (int j = 0; j < c->original_argc; j++) decrRefCount(c->original_argv[j]);
+        zfree(c->original_argv);
+    }
+
     c->original_argv = NULL;
     c->original_argc = 0;
 }
 
 void freeClientArgv(client *c) {
-    if (tryOffloadFreeArgvToIOThreads(c) == C_ERR) {
+    /* If original_argv exists, 'c->argv' was allocated by the main thread,
+     * so it's more efficient to free it directly here rather than offloading to IO threads */
+    if (c->original_argv || tryOffloadFreeArgvToIOThreads(c, c->argc, c->argv) == C_ERR) {
         for (int j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
         zfree(c->argv);
     }
@@ -2545,6 +2550,7 @@ void resetClient(client *c) {
     serverCommandProc *prevcmd = c->cmd ? c->cmd->proc : NULL;
 
     freeClientArgv(c);
+    freeClientOriginalArgv(c);
     c->cur_script = NULL;
     c->reqtype = 0;
     c->multibulklen = 0;
@@ -4248,16 +4254,53 @@ void securityWarningCommand(client *c) {
     freeClientAsync(c);
 }
 
-/* Keep track of the original command arguments so that we can generate
- * an accurate slowlog entry after the command has been executed. */
-static void retainOriginalCommandVector(client *c) {
-    /* We already rewrote this command, so don't rewrite it again */
-    if (c->original_argv) return;
-    c->original_argc = c->argc;
-    c->original_argv = zmalloc(sizeof(robj *) * (c->argc));
-    for (int j = 0; j < c->argc; j++) {
-        c->original_argv[j] = c->argv[j];
-        incrRefCount(c->argv[j]);
+/* This function preserves the original command arguments for accurate slowlog recording.
+ *
+ * It performs the following operations:
+ * - Stores the initial command vector if not already saved
+ * - Manages memory allocation for command argument modifications
+ *
+ * new_argc - The new number of arguments to allocate space for if necessary.
+ * new_argv - Optional pointer to a new argument vector. If NULL, space will be
+ *                allocated for new_argc arguments, preserving the existing arguments.
+ */
+static void backupAndUpdateClientArgv(client *c, int new_argc, robj **new_argv) {
+    robj **old_argv = c->argv;
+    int old_argc = c->argc;
+
+    /* Store original arguments if not already saved */
+    if (!c->original_argv) {
+        c->original_argc = old_argc;
+        c->original_argv = old_argv;
+    }
+
+    /* Handle direct argv replacement */
+    if (new_argv) {
+        c->argv = new_argv;
+    } else if (c->original_argv == old_argv || new_argc > old_argc) {
+        /* Allocate new array if necessary */
+        c->argv = zmalloc(sizeof(robj *) * new_argc);
+
+        for (int i = 0; i < old_argc && i < new_argc; i++) {
+            c->argv[i] = old_argv[i];
+            incrRefCount(c->argv[i]);
+        }
+
+        /* Initialize new argument slots to NULL */
+        for (int i = old_argc; i < new_argc; i++) {
+            c->argv[i] = NULL;
+        }
+    }
+
+    c->argc = new_argc;
+    c->argv_len = new_argc;
+
+    /* Clean up old argv if necessary */
+    if (c->argv != old_argv && c->original_argv != old_argv) {
+        for (int i = 0; i < old_argc; i++) {
+            if (old_argv[i]) decrRefCount(old_argv[i]);
+        }
+        zfree(old_argv);
     }
 }
 
@@ -4265,7 +4308,7 @@ static void retainOriginalCommandVector(client *c) {
  * in the slowlog. This information is stored in the
  * original_argv array. */
 void redactClientCommandArgument(client *c, int argc) {
-    retainOriginalCommandVector(c);
+    backupAndUpdateClientArgv(c, c->argc, NULL);
     if (c->original_argv[argc] == shared.redacted) {
         /* This argument has already been redacted */
         return;
@@ -4298,10 +4341,7 @@ void rewriteClientCommandVector(client *c, int argc, ...) {
 /* Completely replace the client command vector with the provided one. */
 void replaceClientCommandVector(client *c, int argc, robj **argv) {
     int j;
-    retainOriginalCommandVector(c);
-    freeClientArgv(c);
-    c->argv = argv;
-    c->argc = argc;
+    backupAndUpdateClientArgv(c, argc, argv);
     c->argv_len_sum = 0;
     for (j = 0; j < c->argc; j++)
         if (c->argv[j]) c->argv_len_sum += getStringObjectLen(c->argv[j]);
@@ -4322,19 +4362,9 @@ void replaceClientCommandVector(client *c, int argc, robj **argv) {
  *    free the no longer used objects on c->argv. */
 void rewriteClientCommandArgument(client *c, int i, robj *newval) {
     robj *oldval;
-    retainOriginalCommandVector(c);
+    int new_argc = (i >= c->argc) ? i + 1 : c->argc;
+    backupAndUpdateClientArgv(c, new_argc, NULL);
 
-    /* We need to handle both extending beyond argc (just update it and
-     * initialize the new element) or beyond argv_len (realloc is needed).
-     */
-    if (i >= c->argc) {
-        if (i >= c->argv_len) {
-            c->argv = zrealloc(c->argv, sizeof(robj *) * (i + 1));
-            c->argv_len = i + 1;
-        }
-        c->argc = i + 1;
-        c->argv[i] = NULL;
-    }
     oldval = c->argv[i];
     if (oldval) c->argv_len_sum -= getStringObjectLen(oldval);
     if (newval) c->argv_len_sum += getStringObjectLen(newval);

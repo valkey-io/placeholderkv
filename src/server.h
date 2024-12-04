@@ -961,7 +961,6 @@ typedef struct serverDb {
     int id;                               /* Database ID */
     long long avg_ttl;                    /* Average TTL, just for stats */
     unsigned long expires_cursor;         /* Cursor of the active expire cycle. */
-    list *defrag_later;                   /* List of key names to attempt to defrag one by one, gradually. */
 } serverDb;
 
 /* forward declaration for functions ctx */
@@ -1702,7 +1701,7 @@ struct valkeyServer {
     int last_sig_received;               /* Indicates the last SIGNAL received, if any (e.g., SIGINT or SIGTERM). */
     int shutdown_flags;                  /* Flags passed to prepareForShutdown(). */
     int activerehashing;                 /* Incremental rehash in serverCron() */
-    int active_defrag_running;           /* Active defragmentation running (holds current scan aggressiveness) */
+    int active_defrag_cpu_percent;       /* Current desired CPU percentage for active defrag */
     char *pidfile;                       /* PID file path */
     int arch_bits;                       /* 32 or 64 depending on sizeof(long) */
     int cronloops;                       /* Number of times the cron function run */
@@ -1899,8 +1898,9 @@ struct valkeyServer {
     size_t active_defrag_ignore_bytes;           /* minimum amount of fragmentation waste to start active defrag */
     int active_defrag_threshold_lower;           /* minimum percentage of fragmentation to start active defrag */
     int active_defrag_threshold_upper;           /* maximum percentage of fragmentation at which we use maximum effort */
-    int active_defrag_cycle_min;                 /* minimal effort for defrag in CPU percentage */
-    int active_defrag_cycle_max;                 /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cpu_min;                   /* minimal effort for defrag in CPU percentage */
+    int active_defrag_cpu_max;                   /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cycle_us;                  /* standard duration of defrag cycle */
     unsigned long active_defrag_max_scan_fields; /* maximum number of fields of set/hash/zset/list to process from
                                                     within the main dict scan */
     size_t client_max_querybuf_len;              /* Limit for client query buffer length */
@@ -2732,7 +2732,7 @@ size_t moduleGetFreeEffort(robj *key, robj *val, int dbid);
 size_t moduleGetMemUsage(robj *key, robj *val, size_t sample_size, int dbid);
 robj *moduleTypeDupOrReply(client *c, robj *fromkey, robj *tokey, int todb, robj *value);
 int moduleDefragValue(robj *key, robj *obj, int dbid);
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid);
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid);
 void moduleDefragGlobals(void);
 void *moduleGetHandleByName(char *modulename);
 int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
@@ -3353,7 +3353,8 @@ void bytesToHuman(char *s, size_t size, unsigned long long n);
 void enterExecutionUnit(int update_cached_time, long long us);
 void exitExecutionUnit(void);
 void resetServerStats(void);
-void activeDefragCycle(void);
+void monitorActiveDefrag(void);
+void defragWhileBlocked(void);
 unsigned int getLRUClock(void);
 unsigned int LRU_CLOCK(void);
 const char *evictPolicyToString(void);

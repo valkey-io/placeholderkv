@@ -1140,8 +1140,8 @@ void databasesCron(void) {
         }
     }
 
-    /* Defrag keys gradually. */
-    activeDefragCycle();
+    /* Start active defrag cycle or adjust defrag CPU if needed. */
+    monitorActiveDefrag();
 
     /* Perform hash tables rehashing if needed, but only if there are no
      * other processes saving the DB on disk. Otherwise rehashing is bad
@@ -1611,24 +1611,7 @@ void whileBlockedCron(void) {
     mstime_t latency;
     latencyStartMonitor(latency);
 
-    /* In some cases we may be called with big intervals, so we may need to do
-     * extra work here. This is because some of the functions in serverCron rely
-     * on the fact that it is performed every 10 ms or so. For instance, if
-     * activeDefragCycle needs to utilize 25% cpu, it will utilize 2.5ms, so we
-     * need to call it multiple times. */
-    long hz_ms = 1000 / server.hz;
-    while (server.blocked_last_cron < server.mstime) {
-        /* Defrag keys gradually. */
-        activeDefragCycle();
-
-        server.blocked_last_cron += hz_ms;
-
-        /* Increment cronloop so that run_with_period works. */
-        server.cronloops++;
-    }
-
-    /* Other cron jobs do not need to be done in a loop. No need to check
-     * server.blocked_last_cron since we have an early exit at the top. */
+    defragWhileBlocked();
 
     /* Update memory stats during loading (excluding blocked scripts) */
     if (server.loading) cronUpdateMemoryStats();
@@ -2120,7 +2103,7 @@ void initServerConfig(void) {
     server.aof_flush_postponed_start = 0;
     server.aof_last_incr_size = 0;
     server.aof_last_incr_fsync_offset = 0;
-    server.active_defrag_running = 0;
+    server.active_defrag_cpu_percent = 0;
     server.active_defrag_configuration_changed = 0;
     server.notify_keyspace_events = 0;
     server.blocked_clients = 0;
@@ -2722,8 +2705,6 @@ void initServer(void) {
         server.db[j].watched_keys = dictCreate(&keylistDictType);
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
-        server.db[j].defrag_later = listCreate();
-        listSetFreeMethod(server.db[j].defrag_later, (void (*)(void *))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
     /* Note that server.pubsub_channels was chosen to be a kvstore (with only one dict, which
@@ -3677,10 +3658,6 @@ void call(client *c, int flags) {
         int argc = c->original_argv ? c->original_argc : c->argc;
         replicationFeedMonitors(c, server.monitors, c->db->id, argv, argc);
     }
-
-    /* Clear the original argv.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
-    if (!c->flag.blocked) freeClientOriginalArgv(c);
 
     /* Populate the per-command and per-slot statistics that we show in INFO commandstats and CLUSTER SLOT-STATS,
      * respectively. If the client is blocked we will handle latency stats and duration when it is unblocked. */
@@ -5704,7 +5681,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "mem_aof_buffer:%zu\r\n", mh->aof_buffer,
                 "mem_allocator:%s\r\n", ZMALLOC_LIB,
                 "mem_overhead_db_hashtable_rehashing:%zu\r\n", mh->overhead_db_hashtable_rehashing,
-                "active_defrag_running:%d\r\n", server.active_defrag_running,
+                "active_defrag_running:%d\r\n", server.active_defrag_cpu_percent,
                 "lazyfree_pending_objects:%zu\r\n", lazyfreeGetPendingObjectsCount(),
                 "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount()));
         freeMemoryOverheadData(mh);
