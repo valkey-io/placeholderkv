@@ -50,6 +50,7 @@
 #include "util.h"
 #include "sha256.h"
 #include "config.h"
+#include "zmalloc.h"
 
 #include "valkey_strtod.h"
 
@@ -1379,4 +1380,26 @@ int snprintf_async_signal_safe(char *to, size_t n, const char *fmt, ...) {
     result = vsnprintf_async_signal_safe(to, n, fmt, args);
     va_end(args);
     return result;
+}
+
+/*
+ * This function is similar to asprintf function, but it uses zmalloc for
+ * allocating the string buffer.
+ *
+ * IMPORTANT: don't forget to free the buffer when no longer needed.
+ */
+char *valkey_asprintf(char const *fmt, ...) {
+    va_list args;
+
+    va_start(args, fmt);
+    size_t str_len = vsnprintf(NULL, 0, fmt, args) + 1;
+    va_end(args);
+
+    char* str = zmalloc(str_len);
+
+    va_start(args, fmt);
+    vsnprintf(str, str_len, fmt, args);
+    va_end(args);
+
+    return str;
 }
