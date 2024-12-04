@@ -15,6 +15,8 @@ Maintainers listed in alphabetical order by their github ID.
 | Ping Xie            | [pingxie](https://github.com/pingxie)           | Google      |
 | Zhao Zhao           | [soloestoy](https://github.com/soloestoy)       | Alibaba     |
 | Viktor Söderqvist   | [zuiderkwast](https://github.com/zuiderkwast)   | Ericsson    |
+| Ran Shidlansik      | [ranshid](https://github.com/ranshid)           | Amazon      |
+| Harkrishn Patro     | [hpatro](https://github.com/hpatro)             | Amazon      |
 
 
 ### Former Maintainers
