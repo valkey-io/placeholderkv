@@ -18,7 +18,7 @@ Maintainers listed in alphabetical order by their github ID.
 
 ## Current Committers
 
-Commters listed in alphabetical order by their github ID.
+Committers listed in alphabetical order by their github ID.
 
 | Committer           | GitHub ID                                       | Affiliation |
 | ------------------- | ----------------------------------------------- | ----------- |
