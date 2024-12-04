@@ -1056,156 +1056,66 @@ static clusterNode **addClusterNode(clusterNode *node) {
     return config.cluster_nodes;
 }
 
-/* TODO: This should be refactored to use CLUSTER SLOTS, the migrating/importing
- * information is anyway not used.
- */
 static int fetchClusterConfiguration(void) {
     int success = 1;
     redisContext *ctx = NULL;
     redisReply *reply = NULL;
+    const char *errmsg = "Failed to fetch cluster configuration";
+    size_t i, j;
     ctx = getRedisContext(config.conn_info.hostip, config.conn_info.hostport, config.hostsocket);
     if (ctx == NULL) {
         exit(1);
     }
-    clusterNode *firstNode = createClusterNode((char *)config.conn_info.hostip, config.conn_info.hostport);
-    if (!firstNode) {
-        success = 0;
-        goto cleanup;
-    }
-    reply = redisCommand(ctx, "CLUSTER NODES");
-    success = (reply != NULL);
-    if (!success) goto cleanup;
-    success = (reply->type != REDIS_REPLY_ERROR);
-    if (!success) {
-        if (config.hostsocket == NULL) {
-            fprintf(stderr, "Cluster node %s:%d replied with error:\n%s\n", config.conn_info.hostip,
-                    config.conn_info.hostport, reply->str);
-        } else {
-            fprintf(stderr, "Cluster node %s replied with error:\n%s\n", config.hostsocket, reply->str);
-        }
-        goto cleanup;
-    }
-    char *lines = reply->str, *p, *line;
-    while ((p = strstr(lines, "\n")) != NULL) {
-        *p = '\0';
-        line = lines;
-        lines = p + 1;
-        char *name = NULL, *addr = NULL, *flags = NULL, *primary_id = NULL;
-        int i = 0;
-        while ((p = strchr(line, ' ')) != NULL) {
-            *p = '\0';
-            char *token = line;
-            line = p + 1;
-            switch (i++) {
-            case 0: name = token; break;
-            case 1: addr = token; break;
-            case 2: flags = token; break;
-            case 3: primary_id = token; break;
-            }
-            if (i == 8) break; // Slots
-        }
-        if (!flags) {
-            fprintf(stderr, "Invalid CLUSTER NODES reply: missing flags.\n");
-            success = 0;
-            goto cleanup;
-        }
-        int myself = (strstr(flags, "myself") != NULL);
-        int is_replica = (strstr(flags, "slave") != NULL || (primary_id != NULL && primary_id[0] != '-'));
-        if (is_replica) continue;
-        if (addr == NULL) {
-            fprintf(stderr, "Invalid CLUSTER NODES reply: missing addr.\n");
-            success = 0;
-            goto cleanup;
-        }
-        clusterNode *node = NULL;
-        char *ip = NULL;
-        int port = 0;
-        char *paddr = strrchr(addr, ':');
-        if (paddr != NULL) {
-            *paddr = '\0';
-            ip = addr;
-            addr = paddr + 1;
-            /* If internal bus is specified, then just drop it. */
-            if ((paddr = strchr(addr, '@')) != NULL) *paddr = '\0';
-            port = atoi(addr);
-        }
-        if (myself) {
-            node = firstNode;
-            if (ip != NULL && strcmp(node->ip, ip) != 0) {
-                node->ip = sdsnew(ip);
-                node->port = port;
-            }
-        } else {
-            node = createClusterNode(sdsnew(ip), port);
-        }
-        if (node == NULL) {
-            success = 0;
-            goto cleanup;
-        }
-        if (name != NULL) node->name = sdsnew(name);
-        if (i == 8) {
-            int remaining = strlen(line);
-            while (remaining > 0) {
-                p = strchr(line, ' ');
-                if (p == NULL) p = line + remaining;
-                remaining -= (p - line);
 
-                char *slotsdef = line;
-                *p = '\0';
-                if (remaining) {
-                    line = p + 1;
-                    remaining--;
-                } else
-                    line = p;
-                char *dash = NULL;
-                if (slotsdef[0] == '[') {
-                    slotsdef++;
-                    if ((p = strstr(slotsdef, "->-"))) { // Migrating
-                        *p = '\0';
-                        p += 3;
-                        char *closing_bracket = strchr(p, ']');
-                        if (closing_bracket) *closing_bracket = '\0';
-                        sds slot = sdsnew(slotsdef);
-                        sds dst = sdsnew(p);
-                        node->migrating_count += 2;
-                        node->migrating = zrealloc(node->migrating, (node->migrating_count * sizeof(sds)));
-                        node->migrating[node->migrating_count - 2] = slot;
-                        node->migrating[node->migrating_count - 1] = dst;
-                    } else if ((p = strstr(slotsdef, "-<-"))) { // Importing
-                        *p = '\0';
-                        p += 3;
-                        char *closing_bracket = strchr(p, ']');
-                        if (closing_bracket) *closing_bracket = '\0';
-                        sds slot = sdsnew(slotsdef);
-                        sds src = sdsnew(p);
-                        node->importing_count += 2;
-                        node->importing = zrealloc(node->importing, (node->importing_count * sizeof(sds)));
-                        node->importing[node->importing_count - 2] = slot;
-                        node->importing[node->importing_count - 1] = src;
-                    }
-                } else if ((dash = strchr(slotsdef, '-')) != NULL) {
-                    p = dash;
-                    int start, stop;
-                    *p = '\0';
-                    start = atoi(slotsdef);
-                    stop = atoi(p + 1);
-                    while (start <= stop) {
-                        int slot = start++;
-                        node->slots[node->slots_count++] = slot;
-                    }
-                } else if (p > slotsdef) {
-                    int slot = atoi(slotsdef);
+    reply = redisCommand(ctx, "CLUSTER SLOTS");
+    if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
+        success = 0;
+        if (reply) fprintf(stderr, "%s\nCLUSTER SLOTS ERROR: %s\n", errmsg, reply->str);
+        goto cleanup;
+    }
+    assert(reply->type == REDIS_REPLY_ARRAY);
+    for (i = 0; i < reply->elements; i++) {
+        redisReply *r = reply->element[i];
+        assert(r->type == REDIS_REPLY_ARRAY);
+        assert(r->elements >= 3);
+        int from = r->element[0]->integer;
+        int to = r->element[1]->integer;
+        for (j = 2; j < r->elements; j++) {
+            int is_primary = (j == 2);
+            if (!is_primary) continue;
+            redisReply *nr = r->element[j];
+            assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
+            assert(nr->element[0]->str != NULL);
+            assert(nr->element[2]->str != NULL);
+            sds ip = sdsnew(nr->element[0]->str);
+            sds name = sdsnew(nr->element[2]->str);
+            int port = nr->element[1]->integer;
+
+            printf("\nNode %s [%d-%d] %s:%d\n", name, from, to, ip, port);
+
+            clusterNode *node = NULL;
+            node = createClusterNode(sdsnew(ip), port);
+            if (node == NULL) {
+                success = 0;
+                goto cleanup;
+            }
+            if (name != NULL) node->name = name;
+            if (from == to) {
+                node->slots[node->slots_count++] = from;
+            } else {
+                while (from <= to) {
+                    int slot = from++;
                     node->slots[node->slots_count++] = slot;
                 }
             }
-        }
-        if (node->slots_count == 0) {
-            fprintf(stderr, "WARNING: Primary node %s:%d has no slots, skipping...\n", node->ip, node->port);
-            continue;
-        }
-        if (!addClusterNode(node)) {
-            success = 0;
-            goto cleanup;
+            if (node->slots_count == 0) {
+                fprintf(stderr, "WARNING: Node %s:%d has no slots, skipping...\n", node->ip, node->port);
+                continue;
+            }
+            if (!addClusterNode(node)) {
+                success = 0;
+                goto cleanup;
+            }
         }
     }
 cleanup:
