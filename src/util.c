@@ -1395,7 +1395,7 @@ char *valkey_asprintf(char const *fmt, ...) {
     size_t str_len = vsnprintf(NULL, 0, fmt, args) + 1;
     va_end(args);
 
-    char* str = zmalloc(str_len);
+    char *str = zmalloc(str_len);
 
     va_start(args, fmt);
     vsnprintf(str, str_len, fmt, args);
