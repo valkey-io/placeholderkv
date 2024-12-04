@@ -112,6 +112,7 @@ static struct config {
     int num_threads;
     struct benchmarkThread **threads;
     int cluster_mode;
+    int read_from_replicas;
     int cluster_node_count;
     struct clusterNode **cluster_nodes;
     struct serverConfig *redis_config;
@@ -710,6 +711,16 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
         c->prefix_pending++;
     }
 
+    if (config.cluster_mode && config.read_from_replicas) {
+        char *buf = NULL;
+        int len;
+        
+        len = redisFormatCommand(&buf, "READONLY");
+        c->obuf = sdscatlen(c->obuf, buf, len);
+        free(buf);
+        c->prefix_pending++;
+    }
+
     c->prefixlen = sdslen(c->obuf);
     /* Append the request itself. */
     if (from) {
@@ -835,7 +846,8 @@ static void showLatencyReport(void) {
         printf("  %d bytes payload\n", config.datasize);
         printf("  keep alive: %d\n", config.keepalive);
         if (config.cluster_mode) {
-            printf("  cluster mode: yes (%d primaries)\n", config.cluster_node_count);
+            char * node_prefix = config.read_from_replicas ? "replicas" : "primaries";
+            printf("  cluster mode: yes (%d %s)\n", config.cluster_node_count, node_prefix);
             int m;
             for (m = 0; m < config.cluster_node_count; m++) {
                 clusterNode *node = config.cluster_nodes[m];
@@ -1082,7 +1094,8 @@ static int fetchClusterConfiguration(void) {
         int to = r->element[1]->integer;
         for (j = 2; j < r->elements; j++) {
             int is_primary = (j == 2);
-            if (!is_primary) continue;
+            if (config.read_from_replicas == is_primary) continue;
+
             redisReply *nr = r->element[j];
             assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
             assert(nr->element[0]->str != NULL);
@@ -1370,6 +1383,8 @@ int parseOptions(int argc, char **argv) {
                 config.num_threads = 0;
         } else if (!strcmp(argv[i], "--cluster")) {
             config.cluster_mode = 1;
+        } else if (!strcmp(argv[i], "--replicas")) {
+            config.read_from_replicas = 1;
         } else if (!strcmp(argv[i], "--enable-tracking")) {
             config.enable_tracking = 1;
         } else if (!strcmp(argv[i], "--help")) {
@@ -1467,6 +1482,8 @@ usage:
         "                    If the command is supplied on the command line in cluster\n"
         "                    mode, the key must contain \"{tag}\". Otherwise, the\n"
         "                    command will not be sent to the right cluster node.\n"
+        " --replicas         Enable read from replicas in cluster mode.\n"
+        "                    This command must be used with the --cluster option.\n"        
         " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
         " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
         " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
@@ -1608,6 +1625,7 @@ int main(int argc, char **argv) {
     config.num_threads = 0;
     config.threads = NULL;
     config.cluster_mode = 0;
+    config.read_from_replicas = 0;
     config.cluster_node_count = 0;
     config.cluster_nodes = NULL;
     config.redis_config = NULL;
@@ -1652,7 +1670,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid cluster: %d node(s).\n", config.cluster_node_count);
             exit(1);
         }
-        printf("Cluster has %d primary nodes:\n\n", config.cluster_node_count);
+        char * node_prefix = config.read_from_replicas ? "replica" : "primary";
+        printf("Cluster has %d %s nodes:\n\n", config.cluster_node_count, node_prefix);
         int i = 0;
         for (; i < config.cluster_node_count; i++) {
             clusterNode *node = config.cluster_nodes[i];
@@ -1660,7 +1679,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid cluster node #%d\n", i);
                 exit(1);
             }
-            printf("Primary %d: ", i);
+            printf("%s %d: ", node_prefix, i);
             if (node->name) printf("%s ", node->name);
             printf("%s:%d\n", node->ip, node->port);
             node->redis_config = getServerConfig(node->ip, node->port, NULL);
