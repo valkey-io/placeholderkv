@@ -258,6 +258,15 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
                    !(*flags & OBJ_SET_NX || *flags & OBJ_SET_IFEQ) && (command_type == COMMAND_SET))
         {
             *flags |= OBJ_SET_XX;
+        } else if ((opt[0] == 'i' || opt[0] == 'I') &&
+            (opt[1] == 'f' || opt[1] == 'F') &&
+            (opt[2] == 'e' || opt[2] == 'E') &&
+            (opt[3] == 'q' || opt[3] == 'Q') && opt[4] == '\0' &&
+            next && !(*flags & OBJ_SET_NX || *flags & OBJ_SET_XX) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_SET_IFEQ;
+            *compare_val = next;
+            j++;
         } else if ((opt[0] == 'g' || opt[0] == 'G') &&
                    (opt[1] == 'e' || opt[1] == 'E') &&
                    (opt[2] == 't' || opt[2] == 'T') && opt[3] == '\0' &&
@@ -317,17 +326,7 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
             *unit = UNIT_MILLISECONDS;
             *expire = next;
             j++;
-        } else if ((opt[0] == 'i' || opt[0] == 'I') &&
-            (opt[1] == 'f' || opt[1] == 'F') &&
-            (opt[2] == 'e' || opt[2] == 'E') &&
-            (opt[3] == 'q' || opt[3] == 'Q') && opt[4] == '\0' &&
-            next && !(*flags & OBJ_SET_NX || *flags & OBJ_SET_XX) && (command_type == COMMAND_SET))
-        {
-            *flags |= OBJ_SET_IFEQ;
-            *compare_val = next;
-            j++;
-        }
-        else {
+        } else {
             addReplyErrorObject(c,shared.syntaxerr);
             return C_ERR;
         }
@@ -336,8 +335,9 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
     return C_OK;
 }
 
-/* SET key value [NX | XX | IFEQ comparison-value] [KEEPTTL] [GET] [EX <seconds>]
- *     [PX <milliseconds>] [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] */
+/* SET key value [NX | XX | IFEQ comparison-value] [GET]
+ *     [EX seconds | PX milliseconds |
+ *      EXAT seconds-timestamp | PXAT milliseconds-timestamp | KEEPTTL] */
 void setCommand(client *c) {
     robj *expire = NULL;
     robj *comparison = NULL;
