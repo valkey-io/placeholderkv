@@ -62,12 +62,12 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
+#include "functions.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <string.h>
-#include "functions.h"
 
 /* --------------------------------------------------------------------------
  * Private data structures used by the modules system. Those are data
