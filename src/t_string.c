@@ -336,8 +336,8 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
     return C_OK;
 }
 
-/* SET key value [NX] [XX] [KEEPTTL] [GET] [EX <seconds>] [PX <milliseconds>]
- *     [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] [IFEQ comparison-value] */
+/* SET key value [NX | XX | IFEQ comparison-value] [KEEPTTL] [GET] [EX <seconds>]
+ *     [PX <milliseconds>] [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] */
 void setCommand(client *c) {
     robj *expire = NULL;
     robj *comparison = NULL;

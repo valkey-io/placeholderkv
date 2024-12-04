@@ -606,6 +606,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         r del foo
 
         assert_equal {} [r set foo "new_value" ifeq "initial_value" get]
+        assert_equal {} [r get foo]
 
         r set foo "initial_value"
 
