@@ -1,31 +1,24 @@
 # Project Governance
 
-The Valkey project is managed by a Technical Steering Committee (TSC).
+The Valkey project is managed by a Technical Steering Committee (TSC) composed of the maintainers of the Valkey repository.
 The Valkey project includes all of the current and future repositories under the Valkey-io organization.
+Committers are defined as individuals with write access to the code within a repository.
+Maintainers are defined as individuals with full access to a repository and own its governance.
+Both maintainers and committers should be clearly listed in the MAINTAINERS.md file in a given projects repository.
+Maintainers of other repositories within the Valkey project are not members of the TSC unless explicitly added.
 
 ## Technical Steering Committee
 
 The TSC is responsible for oversight of all technical, project, approval, and policy matters for Valkey.
 
-The TSC members are listed here:
-
-| Individual          | GitHub ID                                       | Affiliation |
-| ------------------- | ----------------------------------------------- | ----------- |
-| Zhu Binbin          | [enjoy-binbin](https://github.com/enjoy-binbin) | Tencent     |
-| Wen Hui             | [hwware](https://github.com/hwware)             | Huawei      |
-| Madelyn Olson       | [madolson](https://github.com/madolson)         | Amazon      |
-| Ping Xie            | [pingxie](https://github.com/pingxie)           | Google      |
-| Zhao Zhao           | [soloestoy](https://github.com/soloestoy)       | Alibaba     |
-| Viktor Söderqvist   | [zuiderkwast](https://github.com/zuiderkwast)   | Ericsson    |
-
-TSC members may be added or removed by no less than 2/3 affirmative vote of the current TSC.
+The TSC members are listed in the [MAINTAINERS.md](MAINTAINERS.md) file in the Valkey repository.
+Maintainers (and accordingly, TSC members) may be added or removed by no less than 2/3 affirmative vote of the current TSC.
 The TSC shall appoint a Chair responsible for organizing TSC meetings.
 If the TSC Chair is removed from the TSC (or the Chair steps down from that role), it is the responsibility of the TSC to appoint a new Chair.
 The TSC can amend this governance document by no less than a 2/3 affirmative vote.
 
 The TSC may, at its discretion, add or remove members who are not maintainers of the main Valkey repository.
 The TSC may, at its discretion, add or remove maintainers from other repositories within the Valkey project.
-Maintainers are defined as individuals with full commit access to a repository, which shall be in sync with the MAINTAINERS.md file in a given projects repository.
 
 ## Voting
 
@@ -57,7 +50,7 @@ It is the responsibility of the TSC chair to help facilitate the voting process 
 
 ## Termination of Membership
 
-A member of the TSC will be removed if any of the following occur:
+A maintainer's access (and accordingly, their position on the TSC) will be removed if any of the following occur:
 
 * Resignation: Written notice of resignation to the TSC.
 * TSC Vote: 2/3 affirmative vote of the TSC to remove a member
