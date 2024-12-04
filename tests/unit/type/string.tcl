@@ -623,24 +623,12 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
 
     test "SET with IFEQ conditional - with xx" {
         r del foo
-
-        assert_equal {} [r set foo "new_value" ifeq "initial_value" xx]
-
-        r set foo "initial_value"
-
-        assert_equal {OK} [r set foo "new_value" ifeq "initial_value" xx]
-        assert_equal "new_value" [r get foo]
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" xx}
     }
 
     test "SET with IFEQ conditional - with nx" {
         r del foo
-
-        assert_equal {} [r set foo "new_value" ifeq "initial_value" nx]
-
-        r set foo "initial_value"
-
-        assert_equal {} [r set foo "new_value" ifeq "initial_value" nx]
-        assert_equal "initial_value" [r get foo]
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" nx}
     }
 
     test {Extended SET EX option} {
