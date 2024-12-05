@@ -1158,6 +1158,8 @@ static int fetchClusterSlotsConfiguration(client c) {
     if (is_fetching_slots) return -1; // TODO: use other codes || errno ?
     atomic_store_explicit(&config.is_fetching_slots, 1, memory_order_relaxed);
     fprintf(stderr, "WARNING: Cluster slots configuration changed, fetching new one...\n");
+    fprintf(stderr, "If you are using the --replicas option and sending write requests (set type commands),\nthe requests could not be processed properly.\n");
+
     const char *errmsg = "Failed to update cluster slots configuration";
     static dictType dtype = {
         dictSdsHash,       /* hash function */
@@ -1495,7 +1497,9 @@ usage:
         "                    mode, the key must contain \"{tag}\". Otherwise, the\n"
         "                    command will not be sent to the right cluster node.\n"
         " --replicas         Enable read from replicas in cluster mode.\n"
-        "                    This command must be used with the --cluster option.\n"        
+        "                    This command must be used with the --cluster option.\n"
+        "                    When using this option, it is recommended to use only \n"
+        "                    the commands for read requests."        
         " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
         " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
         " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
