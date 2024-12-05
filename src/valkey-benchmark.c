@@ -1145,7 +1145,7 @@ cleanup:
 static int fetchClusterSlotsConfiguration(client c) {
     UNUSED(c);
     int success = 1, is_fetching_slots = 0, last_update = 0;
-    size_t i;
+    size_t i, j;
 
     last_update = atomic_load_explicit(&config.slots_last_update, memory_order_relaxed);
     if (c->slots_last_update < last_update) {
@@ -1168,7 +1168,7 @@ static int fetchClusterSlotsConfiguration(client c) {
         NULL               /* allow to expand */
     };
     /* printf("[%d] fetchClusterSlotsConfiguration\n", c->thread_id); */
-    dict *primaries = dictCreate(&dtype);
+    dict *nodes = dictCreate(&dtype);
     redisContext *ctx = NULL;
     for (i = 0; i < (size_t)config.cluster_node_count; i++) {
         clusterNode *node = config.cluster_nodes[i];
@@ -1186,7 +1186,7 @@ static int fetchClusterSlotsConfiguration(client c) {
         if (node->updated_slots != NULL) zfree(node->updated_slots);
         node->updated_slots = NULL;
         node->updated_slots_count = 0;
-        dictReplace(primaries, node->name, node);
+        dictReplace(nodes, node->name, node);
     }
     reply = redisCommand(ctx, "CLUSTER SLOTS");
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
@@ -1202,30 +1202,42 @@ static int fetchClusterSlotsConfiguration(client c) {
         int from, to, slot;
         from = r->element[0]->integer;
         to = r->element[1]->integer;
-        redisReply *nr = r->element[2];
-        assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
-        assert(nr->element[2]->str != NULL);
-        sds name = sdsnew(nr->element[2]->str);
-        dictEntry *entry = dictFind(primaries, name);
-        if (entry == NULL) {
-            success = 0;
-            fprintf(stderr,
-                    "%s: could not find node with ID %s in current "
-                    "configuration.\n",
-                    errmsg, name);
-            if (name) sdsfree(name);
-            goto cleanup;
+        
+        size_t start, end;
+        if (config.read_from_replicas) {
+            start = 3;
+            end = r->elements;
+        } else {
+            start = 2;
+            end = 3;
         }
-        sdsfree(name);
-        clusterNode *node = dictGetVal(entry);
-        if (node->updated_slots == NULL) node->updated_slots = zcalloc(CLUSTER_SLOTS * sizeof(int));
-        for (slot = from; slot <= to; slot++) node->updated_slots[node->updated_slots_count++] = slot;
+
+        for (j = start; j < end; j++) {
+            redisReply *nr = r->element[j];
+            assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
+            assert(nr->element[2]->str != NULL);
+            sds name = sdsnew(nr->element[2]->str);
+            dictEntry *entry = dictFind(nodes, name);
+            if (entry == NULL) {
+                success = 0;
+                fprintf(stderr,
+                        "%s: could not find node with ID %s in current "
+                        "configuration.\n",
+                        errmsg, name);
+                if (name) sdsfree(name);
+                goto cleanup;
+            }
+            sdsfree(name);
+            clusterNode *node = dictGetVal(entry);
+            if (node->updated_slots == NULL) node->updated_slots = zcalloc(CLUSTER_SLOTS * sizeof(int));
+            for (slot = from; slot <= to; slot++) node->updated_slots[node->updated_slots_count++] = slot;
+        }
     }
     updateClusterSlotsConfiguration();
 cleanup:
     freeReplyObject(reply);
     redisFree(ctx);
-    dictRelease(primaries);
+    dictRelease(nodes);
     atomic_store_explicit(&config.is_fetching_slots, 0, memory_order_relaxed);
     return success;
 }
