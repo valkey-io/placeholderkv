@@ -72,10 +72,6 @@ void zsetConvertAndExpand(robj *zobj, int encoding, unsigned long cap);
 zskiplistNode *zslGetElementByRankFromNode(zskiplistNode *start_node, int start_level, unsigned long rank);
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
-static inline zskiplistNode *zslGetNodeByScoreRef(double *ref) {
-    return (zskiplistNode *)(ref - 1);
-}
-
 static inline unsigned long zslGetNodeSpanAtHeight(zskiplistNode *x, int height) {
     return height > 0 ? x->level[height].span : x->level[height].forward ? 1
                                                                          : 0;
@@ -1222,6 +1218,13 @@ unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsig
  * Common sorted set API
  *----------------------------------------------------------------------------*/
 
+/* Utility function used for mapping the hashtable entry to the matching skiplist node.
+ * For example, this is used in case of ZRANK query. */
+static inline zskiplistNode *zsetGetSLNodeByEntry(dictEntry *de) {
+    double *score_ref = ((double *)dictGetVal(de));
+    return (zskiplistNode *)(score_ref - 1);
+}
+
 unsigned long zsetLength(const robj *zobj) {
     unsigned long length = 0;
     if (zobj->encoding == OBJ_ENCODING_LISTPACK) {
@@ -1652,7 +1655,7 @@ long zsetRank(robj *zobj, sds ele, int reverse, double *output_score) {
 
         de = dictFind(zs->dict, ele);
         if (de != NULL) {
-            zskiplistNode *n = zslGetNodeByScoreRef((double *)dictGetVal(de));
+            zskiplistNode *n = zsetGetSLNodeByEntry(de);
             score = n->score;
             rank = zslGetRankByNode(zsl, n);
             /* Existing elements always have a rank. */
