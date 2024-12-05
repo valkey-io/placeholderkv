@@ -81,8 +81,8 @@ typedef enum ValkeyRdmaOpcode {
 
 typedef struct rdma_connection {
     connection c;
-    int flags;
     struct rdma_cm_id *cm_id;
+    int flags;
     int last_errno;
     listNode *pending_list_node;
 } rdma_connection;
