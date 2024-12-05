@@ -439,8 +439,8 @@ done:
  */
 int functionsRegisterEngine(const char *engine_name,
                             ValkeyModule *engine_module,
-                            EngineCtx *engine_ctx,
-                            EngineMethods *engine_methods) {
+                            engineCtx *engine_ctx,
+                            engineMethods *engine_methods) {
     sds engine_name_sds = sdsnew(engine_name);
     if (dictFetchValue(engines, engine_name_sds)) {
         serverLog(LL_WARNING, "Same engine was registered twice");
@@ -1055,11 +1055,11 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
 }
 
 static void freeCompiledFunctions(engine *engine,
-                                  CompiledFunction **compiled_functions,
+                                  compiledFunction **compiled_functions,
                                   size_t num_compiled_functions,
                                   size_t free_function_from_idx) {
     for (size_t i = 0; i < num_compiled_functions; i++) {
-        CompiledFunction *func = compiled_functions[i];
+        compiledFunction *func = compiled_functions[i];
         zfree(func->name);
         zfree(func->desc);
         if (i >= free_function_from_idx) {
@@ -1111,7 +1111,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
 
     new_li = engineLibraryCreate(md.name, ei, code);
     size_t num_compiled_functions = 0;
-    CompiledFunction **compiled_functions =
+    compiledFunction **compiled_functions =
         engine->create(engine->engine_ctx,
                        md.code,
                        timeout,
@@ -1123,7 +1123,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     }
 
     for (size_t i = 0; i < num_compiled_functions; i++) {
-        CompiledFunction *func = compiled_functions[i];
+        compiledFunction *func = compiled_functions[i];
         int ret = functionLibCreateFunction(func->name,
                                             func->function,
                                             new_li,

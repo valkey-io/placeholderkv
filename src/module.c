@@ -13087,7 +13087,7 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
         serverLog(LL_WARNING, "The engine implementation version is greater than what this server supports."
                               "Server ABI Version: %lu, Engine ABI version: %lu",
                   VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
-                  engine_methods->version);
+                  (unsigned long)engine_methods->version);
         return VALKEYMODULE_ERR;
     }
 
