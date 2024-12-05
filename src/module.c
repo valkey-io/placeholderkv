@@ -13059,24 +13059,8 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
  *
  * - `engine_ctx`: engine specific context pointer.
  *
- * - `create_functions_library_func`: Library create function callback. When a
- *   new script is loaded, this callback will be called with the script code,
- *   and returns a list of ValkeyModuleScriptingEngineCompiledFunc objects.
- *
- * - `call_function_func`: the callback function called when `FCALL` command is
- *   called on a function registered in this engine.
- *
- * - `get_used_memory_func`: function callback to get current used memory by the
- *   engine.
- *
- * - `get_function_memory_overhead_func`: function callback to return memory
- *   overhead for a given function.
- *
- * - `get_engine_memory_overhead_func`: function callback to return memory
- *   overhead of the engine.
- *
- * - `free_function_func`: function callback to free the memory of a registered
- *   engine function.
+ * - `engine_methods`: the struct with the scripting engine callback functions
+ * pointers.
  */
 int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
                                const char *engine_name,
