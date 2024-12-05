@@ -1136,7 +1136,7 @@ long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *cl
         float required_hz = (float)numclients / MAX_CLIENTS_PER_CLOCK_TICK;
         delay_ms = 1000.0 / required_hz;
     } else {
-        delay_ms= 1000 / server.hz;
+        delay_ms = 1000 / server.hz;
     }
 
     clientsCron(clients_this_cycle);
