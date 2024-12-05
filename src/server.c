@@ -1124,7 +1124,7 @@ long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *cl
     UNUSED(clientData);
 
     int numclients = listLength(server.clients);
-    int clients_this_cycle = numclients / server.hz; // Initial computation based on standard hz
+    int clients_this_cycle = numclients / server.hz; /* Initial computation based on standard hz */
     int delayMs;
 
     if (clients_this_cycle < CLIENTS_CRON_MIN_ITERATIONS) {
