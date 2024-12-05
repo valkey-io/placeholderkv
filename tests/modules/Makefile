@@ -52,7 +52,6 @@ TEST_MODULES = \
     mallocsize.so \
     aclcheck.so \
     list.so \
-    adminport.so \
     subcommands.so \
     reply.so \
     cmdintrospection.so \

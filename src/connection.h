@@ -134,7 +134,6 @@ struct connection {
     ConnectionCallbackFunc conn_handler;
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
-    int connected_port;
 };
 
 #define CONFIG_BINDADDR_MAX 16
@@ -319,9 +318,6 @@ static inline int connFormatAddr(connection *conn, char *buf, size_t buf_len, in
         return -1;
     }
 
-    if (!remote) {
-        conn->connected_port = port;
-    }
     return formatAddr(buf, buf_len, ip, port);
 }
 

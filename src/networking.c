@@ -3314,16 +3314,6 @@ char *getClientSockname(client *c) {
     return c->sockname;
 }
 
-int getClientConnectedPort(client *c) {
-    char sockname[NET_ADDR_STR_LEN] = {0};
-
-    if (c->sockname == NULL) {
-        genClientAddrString(c, sockname, sizeof(sockname), 0);
-        c->sockname = sdsnew(sockname);
-    }
-    return c->conn->connected_port;
-}
-
 int isClientConnIpV6(client *c) {
     /* The cached client peer id is on the form "[IPv6]:port" for IPv6
      * addresses, so we just check for '[' here. */
@@ -3385,7 +3375,6 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
         replBufBlock *cur = listNodeValue(client->ref_repl_buf_node);
         used_blocks_of_repl_buf = last->id - cur->id + 1;
     }
-
     sds ret = sdscatfmt(
         s,
         FMTARGS(

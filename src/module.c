@@ -1055,11 +1055,6 @@ void VM_KeyAtPos(ValkeyModuleCtx *ctx, int pos) {
     VM_KeyAtPosWithFlags(ctx, pos, flags);
 }
 
-/* Return the connected server port of current client */
-int VM_GetClientConnectedPort(ValkeyModuleCtx *ctx) {
-    return getClientConnectedPort(ctx->client);
-}
-
 /* Return non-zero if a module command, that was declared with the
  * flag "getchannels-api", is called in a special way to get the channel positions
  * and not to get executed. Otherwise zero is returned. */
@@ -13581,7 +13576,6 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(Strdup);
     REGISTER_API(CreateCommand);
     REGISTER_API(GetCommand);
-    REGISTER_API(GetClientConnectedPort);
     REGISTER_API(CreateSubcommand);
     REGISTER_API(SetCommandInfo);
     REGISTER_API(SetCommandACLCategories);
