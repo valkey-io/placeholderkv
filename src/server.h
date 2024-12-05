@@ -961,7 +961,6 @@ typedef struct serverDb {
     int id;                               /* Database ID */
     long long avg_ttl;                    /* Average TTL, just for stats */
     unsigned long expires_cursor;         /* Cursor of the active expire cycle. */
-    list *defrag_later;                   /* List of key names to attempt to defrag one by one, gradually. */
 } serverDb;
 
 /* forward declaration for functions ctx */
@@ -1094,9 +1093,10 @@ typedef struct {
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
 
-#define CLIENT_ID_AOF (UINT64_MAX) /* Reserved ID for the AOF client. If you   \
-                                      need more reserved IDs use UINT64_MAX-1, \
-                                      -2, ... and so forth. */
+#define CLIENT_ID_AOF (UINT64_MAX)                 /* Reserved ID for the AOF client. If you   \
+                                                      need more reserved IDs use UINT64_MAX-1, \
+                                                      -2, ... and so forth. */
+#define CLIENT_ID_CACHED_RESPONSE (UINT64_MAX - 1) /* Client for cached response, see createCachedResponseClient. */
 
 /* Replication backlog is not a separate memory, it just is one consumer of
  * the global replication buffer. This structure records the reference of
@@ -1614,6 +1614,17 @@ typedef struct serverUnixContextConfig {
 } serverUnixContextConfig;
 
 /*-----------------------------------------------------------------------------
+ * RDMA Context Configuration
+ *----------------------------------------------------------------------------*/
+typedef struct serverRdmaContextConfig {
+    char *bindaddr[CONFIG_BINDADDR_MAX];
+    int bindaddr_count;
+    int port;
+    int rx_size;
+    int completion_vector;
+} serverRdmaContextConfig;
+
+/*-----------------------------------------------------------------------------
  * AOF manifest definition
  *----------------------------------------------------------------------------*/
 typedef enum {
@@ -1690,7 +1701,7 @@ struct valkeyServer {
     int last_sig_received;               /* Indicates the last SIGNAL received, if any (e.g., SIGINT or SIGTERM). */
     int shutdown_flags;                  /* Flags passed to prepareForShutdown(). */
     int activerehashing;                 /* Incremental rehash in serverCron() */
-    int active_defrag_running;           /* Active defragmentation running (holds current scan aggressiveness) */
+    int active_defrag_cpu_percent;       /* Current desired CPU percentage for active defrag */
     char *pidfile;                       /* PID file path */
     int arch_bits;                       /* 32 or 64 depending on sizeof(long) */
     int cronloops;                       /* Number of times the cron function run */
@@ -1887,8 +1898,9 @@ struct valkeyServer {
     size_t active_defrag_ignore_bytes;           /* minimum amount of fragmentation waste to start active defrag */
     int active_defrag_threshold_lower;           /* minimum percentage of fragmentation to start active defrag */
     int active_defrag_threshold_upper;           /* maximum percentage of fragmentation at which we use maximum effort */
-    int active_defrag_cycle_min;                 /* minimal effort for defrag in CPU percentage */
-    int active_defrag_cycle_max;                 /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cpu_min;                   /* minimal effort for defrag in CPU percentage */
+    int active_defrag_cpu_max;                   /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cycle_us;                  /* standard duration of defrag cycle */
     unsigned long active_defrag_max_scan_fields; /* maximum number of fields of set/hash/zset/list to process from
                                                     within the main dict scan */
     size_t client_max_querybuf_len;              /* Limit for client query buffer length */
@@ -2228,6 +2240,7 @@ struct valkeyServer {
     int tls_auth_clients;
     serverTLSContextConfig tls_ctx_config;
     serverUnixContextConfig unix_ctx_config;
+    serverRdmaContextConfig rdma_ctx_config;
     /* cpu affinity */
     char *server_cpulist;      /* cpu affinity list of server main/io thread. */
     char *bio_cpulist;         /* cpu affinity list of bio thread. */
@@ -2719,7 +2732,7 @@ size_t moduleGetFreeEffort(robj *key, robj *val, int dbid);
 size_t moduleGetMemUsage(robj *key, robj *val, size_t sample_size, int dbid);
 robj *moduleTypeDupOrReply(client *c, robj *fromkey, robj *tokey, int todb, robj *value);
 int moduleDefragValue(robj *key, robj *obj, int dbid);
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid);
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid);
 void moduleDefragGlobals(void);
 void *moduleGetHandleByName(char *modulename);
 int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
@@ -3292,7 +3305,6 @@ void setupSignalHandlers(void);
 int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler);
 connListener *listenerByType(const char *typename);
 int changeListener(connListener *listener);
-void closeListener(connListener *listener);
 struct serverCommand *lookupSubcommand(struct serverCommand *container, sds sub_name);
 struct serverCommand *lookupCommand(robj **argv, int argc);
 struct serverCommand *lookupCommandBySdsLogic(dict *commands, sds s);
@@ -3341,7 +3353,8 @@ void bytesToHuman(char *s, size_t size, unsigned long long n);
 void enterExecutionUnit(int update_cached_time, long long us);
 void exitExecutionUnit(void);
 void resetServerStats(void);
-void activeDefragCycle(void);
+void monitorActiveDefrag(void);
+void defragWhileBlocked(void);
 unsigned int getLRUClock(void);
 unsigned int LRU_CLOCK(void);
 const char *evictPolicyToString(void);
@@ -4043,6 +4056,11 @@ void debugPauseProcess(void);
         if (((level) & 0xff) < server.verbosity) break; \
         _serverLog(level, __VA_ARGS__);                 \
     } while (0)
+
+/* dualChannelServerLog - Log messages related to dual-channel operations
+ * This macro wraps the serverLog function, prepending "<Dual Channel>"
+ * to the log message. */
+#define dualChannelServerLog(level, ...) serverLog(level, "<Dual Channel> " __VA_ARGS__)
 
 #define serverDebug(fmt, ...) printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define serverDebugMark() printf("-- MARK %s:%d --\n", __FILE__, __LINE__)

@@ -55,7 +55,7 @@ if (BUILD_RDMA_MODULE)
     set(MODULE_NAME "valkey-rdma")
     message(STATUS "Building RDMA module")
     add_library(${MODULE_NAME} SHARED "${VALKEY_RDMA_MODULE_SRCS}")
-    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE -DUSE_RDMA=1)
+    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE=2 -DUSE_RDMA=1)
     target_link_libraries(${MODULE_NAME} "${RDMA_LIBS}")
     # remove the "lib" prefix from the module
     set_target_properties(${MODULE_NAME} PROPERTIES PREFIX "")

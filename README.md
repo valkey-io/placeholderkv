@@ -37,8 +37,13 @@ To build TLS as Valkey module:
 Note that sentinel mode does not support TLS module.
 
 To build with experimental RDMA support you'll need RDMA development libraries
-(e.g. librdmacm-dev and libibverbs-dev on Debian/Ubuntu). For now, Valkey only
-supports RDMA as connection module mode. Run:
+(e.g. librdmacm-dev and libibverbs-dev on Debian/Ubuntu).
+
+To build RDMA support as Valkey built-in:
+
+    % make BUILD_RDMA=yes
+
+To build RDMA as Valkey module:
 
     % make BUILD_RDMA=module
 
@@ -203,20 +208,27 @@ Note that Valkey Over RDMA is an experimental feature.
 It may be changed or removed in any minor or major version.
 Currently, it is only supported on Linux.
 
-To manually run a Valkey server with RDMA mode:
+* RDMA built-in mode:
+    ```
+    ./src/valkey-server --protected-mode no \
+         --rdma-bind 192.168.122.100 --rdma-port 6379
+    ```
 
-    % ./src/valkey-server --protected-mode no \
-         --loadmodule src/valkey-rdma.so bind=192.168.122.100 port=6379
+* RDMA module mode:
+    ```
+    ./src/valkey-server --protected-mode no \
+         --loadmodule src/valkey-rdma.so --rdma-bind 192.168.122.100 --rdma-port 6379
+    ```
 
 It's possible to change bind address/port of RDMA by runtime command:
 
-    192.168.122.100:6379> CONFIG SET rdma.port 6380
+    192.168.122.100:6379> CONFIG SET rdma-port 6380
 
 It's also possible to have both RDMA and TCP available, and there is no
 conflict of TCP(6379) and RDMA(6379), Ex:
 
     % ./src/valkey-server --protected-mode no \
-         --loadmodule src/valkey-rdma.so bind=192.168.122.100 port=6379 \
+         --loadmodule src/valkey-rdma.so --rdma-bind 192.168.122.100 --rdma-port 6379 \
          --port 6379
 
 Note that the network card (192.168.122.100 of this example) should support

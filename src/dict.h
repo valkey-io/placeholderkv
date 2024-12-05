@@ -238,7 +238,7 @@ void dictSetHashFunctionSeed(uint8_t *seed);
 uint8_t *dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, void *privdata);
 unsigned long
-dictScanDefrag(dict *d, unsigned long v, dictScanFunction *fn, dictDefragFunctions *defragfns, void *privdata);
+dictScanDefrag(dict *d, unsigned long v, dictScanFunction *fn, const dictDefragFunctions *defragfns, void *privdata);
 uint64_t dictGetHash(dict *d, const void *key);
 void dictRehashingInfo(dict *d, unsigned long long *from_size, unsigned long long *to_size);
 

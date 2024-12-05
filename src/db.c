@@ -390,7 +390,7 @@ robj *dbRandomKey(serverDb *db) {
             if (allvolatile && (server.primary_host || server.import_mode) && --maxtries == 0) {
                 /* If the DB is composed only of keys with an expire set,
                  * it could happen that all the keys are already logically
-                 * expired in the repilca, so the function cannot stop because
+                 * expired in the replica, so the function cannot stop because
                  * expireIfNeeded() is false, nor it can stop because
                  * dictGetFairRandomKey() returns NULL (there are keys to return).
                  * To prevent the infinite loop we do some tries, but if there
@@ -1789,7 +1789,7 @@ void propagateDeletion(serverDb *db, robj *key, int lazy) {
     decrRefCount(argv[1]);
 }
 
-int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+static int keyIsExpiredWithDictIndexImpl(serverDb *db, robj *key, int dict_index) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
 
@@ -1806,6 +1806,17 @@ int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
 }
 
 /* Check if the key is expired. */
+int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return 0;
+
+    /* See expireIfNeededWithDictIndex for more details. */
+    if (server.primary_host == NULL && server.import_mode) {
+        if (server.current_client && server.current_client->flag.import_source) return 0;
+    }
+    return 1;
+}
+
+/* Check if the key is expired. */
 int keyIsExpired(serverDb *db, robj *key) {
     int dict_index = getKVStoreIndexForKey(key->ptr);
     return keyIsExpiredWithDictIndex(db, key, dict_index);
@@ -1813,7 +1824,7 @@ int keyIsExpired(serverDb *db, robj *key) {
 
 keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, int flags, int dict_index) {
     if (server.lazy_expire_disabled) return KEY_VALID;
-    if (!keyIsExpiredWithDictIndex(db, key, dict_index)) return KEY_VALID;
+    if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return KEY_VALID;
 
     /* If we are running in the context of a replica, instead of
      * evicting the expired key from the database, we return ASAP:

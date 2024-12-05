@@ -1321,7 +1321,7 @@ end:
 
 /* Reallocate the dictEntry, key and value allocations in a bucket using the
  * provided allocation functions in order to defrag them. */
-static void dictDefragBucket(dictEntry **bucketref, dictDefragFunctions *defragfns, void *privdata) {
+static void dictDefragBucket(dictEntry **bucketref, const dictDefragFunctions *defragfns, void *privdata) {
     dictDefragAllocFunction *defragalloc = defragfns->defragAlloc;
     dictDefragAllocFunction *defragkey = defragfns->defragKey;
     dictDefragAllocFunction *defragval = defragfns->defragVal;
@@ -1499,7 +1499,7 @@ unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, void *pri
  * where NULL means that no reallocation happened and the old memory is still
  * valid. */
 unsigned long
-dictScanDefrag(dict *d, unsigned long v, dictScanFunction *fn, dictDefragFunctions *defragfns, void *privdata) {
+dictScanDefrag(dict *d, unsigned long v, dictScanFunction *fn, const dictDefragFunctions *defragfns, void *privdata) {
     int htidx0, htidx1;
     const dictEntry *de, *next;
     unsigned long m0, m1;
