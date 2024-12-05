@@ -1125,7 +1125,7 @@ long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *cl
 
     int numclients = listLength(server.clients);
     int clients_this_cycle = numclients / server.hz; /* Initial computation based on standard hz */
-    int delayMs;
+    int delay_ms;
 
     if (clients_this_cycle < CLIENTS_CRON_MIN_ITERATIONS) {
         clients_this_cycle = min(numclients, CLIENTS_CRON_MIN_ITERATIONS);
@@ -1134,14 +1134,14 @@ long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *cl
     if (clients_this_cycle > MAX_CLIENTS_PER_CLOCK_TICK) {
         clients_this_cycle = MAX_CLIENTS_PER_CLOCK_TICK;
         float required_hz = (float)numclients / MAX_CLIENTS_PER_CLOCK_TICK;
-        delayMs = 1000.0 / required_hz;
+        delay_ms = 1000.0 / required_hz;
     } else {
-        delayMs = 1000 / server.hz;
+        delay_ms= 1000 / server.hz;
     }
 
     clientsCron(clients_this_cycle);
 
-    return delayMs;
+    return delay_ms;
 }
 
 /* This function handles 'background' operations we are required to do
