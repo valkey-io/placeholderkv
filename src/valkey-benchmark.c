@@ -714,7 +714,6 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
     if (config.cluster_mode && config.read_from_replicas) {
         char *buf = NULL;
         int len;
-        
         len = redisFormatCommand(&buf, "READONLY");
         c->obuf = sdscatlen(c->obuf, buf, len);
         free(buf);
@@ -846,7 +845,7 @@ static void showLatencyReport(void) {
         printf("  %d bytes payload\n", config.datasize);
         printf("  keep alive: %d\n", config.keepalive);
         if (config.cluster_mode) {
-            char * node_prefix = config.read_from_replicas ? "replicas" : "primaries";
+            char *node_prefix = config.read_from_replicas ? "replicas" : "primaries";
             printf("  cluster mode: yes (%d %s)\n", config.cluster_node_count, node_prefix);
             int m;
             for (m = 0; m < config.cluster_node_count; m++) {
@@ -1204,7 +1203,6 @@ static int fetchClusterSlotsConfiguration(client c) {
         int from, to, slot;
         from = r->element[0]->integer;
         to = r->element[1]->integer;
-        
         size_t start, end;
         if (config.read_from_replicas) {
             start = 3;
@@ -1499,7 +1497,7 @@ usage:
         " --replicas         Enable read from replicas in cluster mode.\n"
         "                    This command must be used with the --cluster option.\n"
         "                    When using this option, it is recommended to use only \n"
-        "                    the commands for read requests."        
+        "                    the commands for read requests.\n"
         " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
         " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
         " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
@@ -1686,7 +1684,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid cluster: %d node(s).\n", config.cluster_node_count);
             exit(1);
         }
-        char * node_prefix = config.read_from_replicas ? "replica" : "primary";
+        char *node_prefix = config.read_from_replicas ? "replica" : "primary";
         printf("Cluster has %d %s nodes:\n\n", config.cluster_node_count, node_prefix);
         int i = 0;
         for (; i < config.cluster_node_count; i++) {
