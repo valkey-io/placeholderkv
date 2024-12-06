@@ -3440,6 +3440,28 @@ sds getAllClientsInfoString(int type, int hide_user_data) {
     return o;
 }
 
+sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data) {
+    listNode *ln;
+    listIter li;
+    client *client;
+    sds o = sdsnewlen(SDS_NOINIT, 200 * listLength(server.clients));
+    sdsclear(o);
+    listRewind(server.clients, &li);
+    while ((ln = listNext(&li)) != NULL) {
+        client = listNodeValue(ln);
+        if (client_filter->addr && strcmp(getClientPeerId(client), client_filter->addr) != 0) continue;
+        if (client_filter->laddr && strcmp(getClientSockname(client), client_filter->laddr) != 0) continue;
+        if (client_filter->type != -1 && getClientType(client) != client_filter->type) continue;
+        if (client_filter->id != 0 && client->id != client_filter->id) continue;
+        if (client_filter->user && client->user != client_filter->user) continue;
+        if (client_filter->skipme) continue;
+        if (client_filter->max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter->max_age) continue;
+        o = catClientInfoString(o, client, hide_user_data);
+        o = sdscatlen(o, "\n", 1);
+    }
+    return o;
+}
+
 /* Check validity of an attribute that's gonna be shown in CLIENT LIST. */
 int validateClientAttr(const char *val) {
     /* Check if the charset is ok. We need to do this otherwise
@@ -3559,6 +3581,63 @@ void quitCommand(client *c) {
     c->flag.close_after_reply = 1;
 }
 
+int parseClientFilters(client *c, int i, clientFilter *filter) {
+    while (i < c->argc) {
+        int moreargs = c->argc > i + 1;
+
+        if (!strcasecmp(c->argv[i]->ptr, "id") && moreargs) {
+            long tmp;
+
+            if (getRangeLongFromObjectOrReply(c, c->argv[i + 1], 1, LONG_MAX, &tmp,
+                                              "client-id should be greater than 0") != C_OK)
+                return C_ERR;
+            filter->id = tmp;
+        } else if (!strcasecmp(c->argv[i]->ptr, "maxage") && moreargs) {
+            long long tmp;
+
+            if (getLongLongFromObjectOrReply(c, c->argv[i + 1], &tmp,
+                                             "maxage is not an integer or out of range") != C_OK)
+                return C_ERR;
+            if (tmp <= 0) {
+                addReplyError(c, "maxage should be greater than 0");
+                return C_ERR;
+            }
+
+            filter->max_age = tmp;
+        } else if (!strcasecmp(c->argv[i]->ptr, "type") && moreargs) {
+            filter->type = getClientTypeByName(c->argv[i + 1]->ptr);
+            if (filter->type == -1) {
+                addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[i + 1]->ptr);
+                return C_ERR;
+            }
+        } else if (!strcasecmp(c->argv[i]->ptr, "addr") && moreargs) {
+            filter->addr = c->argv[i + 1]->ptr;
+        } else if (!strcasecmp(c->argv[i]->ptr, "laddr") && moreargs) {
+            filter->laddr = c->argv[i + 1]->ptr;
+        } else if (!strcasecmp(c->argv[i]->ptr, "user") && moreargs) {
+            filter->user = ACLGetUserByName(c->argv[i + 1]->ptr, sdslen(c->argv[i + 1]->ptr));
+            if (filter->user == NULL) {
+                addReplyErrorFormat(c, "No such user '%s'", (char *)c->argv[i + 1]->ptr);
+                return C_ERR;
+            }
+        } else if (!strcasecmp(c->argv[i]->ptr, "skipme") && moreargs) {
+            if (!strcasecmp(c->argv[i + 1]->ptr, "yes")) {
+                filter->skipme = 1;
+            } else if (!strcasecmp(c->argv[i + 1]->ptr, "no")) {
+                filter->skipme = 0;
+            } else {
+                addReplyErrorObject(c, shared.syntaxerr);
+                return C_ERR;
+            }
+        } else {
+            addReplyErrorObject(c, shared.syntaxerr);
+            return C_ERR;
+        }
+        i += 2;
+    }
+    return C_OK;
+}
+
 void clientCommand(client *c) {
     listNode *ln;
     listIter li;
@@ -3643,27 +3722,14 @@ void clientCommand(client *c) {
         /* CLIENT LIST */
         int type = -1;
         sds o = NULL;
-        if (c->argc == 4 && !strcasecmp(c->argv[2]->ptr, "type")) {
-            type = getClientTypeByName(c->argv[3]->ptr);
-            if (type == -1) {
-                addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[3]->ptr);
+        if (c->argc > 3) {
+            clientFilter client_filter = {0, 0, NULL, NULL, NULL, -1, 0};
+            int i = 2;
+
+            if (parseClientFilters(c, i, &client_filter) != C_OK) {
                 return;
             }
-        } else if (c->argc > 3 && !strcasecmp(c->argv[2]->ptr, "id")) {
-            int j;
-            o = sdsempty();
-            for (j = 3; j < c->argc; j++) {
-                long long cid;
-                if (getLongLongFromObjectOrReply(c, c->argv[j], &cid, "Invalid client ID")) {
-                    sdsfree(o);
-                    return;
-                }
-                client *cl = lookupClientByID(cid);
-                if (cl) {
-                    o = catClientInfoString(o, cl, 0);
-                    o = sdscatlen(o, "\n", 1);
-                }
-            }
+            o = getAllFilteredClientsInfoString(&client_filter, 0);
         } else if (c->argc != 2) {
             addReplyErrorObject(c, shared.syntaxerr);
             return;
@@ -3703,75 +3769,19 @@ void clientCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
         /* CLIENT KILL <ip:port>
          * CLIENT KILL <option> [value] ... <option> [value] */
-        char *addr = NULL;
-        char *laddr = NULL;
-        user *user = NULL;
-        int type = -1;
-        uint64_t id = 0;
-        long long max_age = 0;
-        int skipme = 1;
+        clientFilter client_filter = {0, 0, NULL, NULL, NULL, -1, 1};
         int killed = 0, close_this_client = 0;
 
         if (c->argc == 3) {
             /* Old style syntax: CLIENT KILL <addr> */
-            addr = c->argv[2]->ptr;
-            skipme = 0; /* With the old form, you can kill yourself. */
+            client_filter.addr = c->argv[2]->ptr;
+            client_filter.skipme = 0; /* With the old form, you can kill yourself. */
         } else if (c->argc > 3) {
             int i = 2; /* Next option index. */
 
             /* New style syntax: parse options. */
-            while (i < c->argc) {
-                int moreargs = c->argc > i + 1;
-
-                if (!strcasecmp(c->argv[i]->ptr, "id") && moreargs) {
-                    long tmp;
-
-                    if (getRangeLongFromObjectOrReply(c, c->argv[i + 1], 1, LONG_MAX, &tmp,
-                                                      "client-id should be greater than 0") != C_OK)
-                        return;
-                    id = tmp;
-                } else if (!strcasecmp(c->argv[i]->ptr, "maxage") && moreargs) {
-                    long long tmp;
-
-                    if (getLongLongFromObjectOrReply(c, c->argv[i + 1], &tmp,
-                                                     "maxage is not an integer or out of range") != C_OK)
-                        return;
-                    if (tmp <= 0) {
-                        addReplyError(c, "maxage should be greater than 0");
-                        return;
-                    }
-
-                    max_age = tmp;
-                } else if (!strcasecmp(c->argv[i]->ptr, "type") && moreargs) {
-                    type = getClientTypeByName(c->argv[i + 1]->ptr);
-                    if (type == -1) {
-                        addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[i + 1]->ptr);
-                        return;
-                    }
-                } else if (!strcasecmp(c->argv[i]->ptr, "addr") && moreargs) {
-                    addr = c->argv[i + 1]->ptr;
-                } else if (!strcasecmp(c->argv[i]->ptr, "laddr") && moreargs) {
-                    laddr = c->argv[i + 1]->ptr;
-                } else if (!strcasecmp(c->argv[i]->ptr, "user") && moreargs) {
-                    user = ACLGetUserByName(c->argv[i + 1]->ptr, sdslen(c->argv[i + 1]->ptr));
-                    if (user == NULL) {
-                        addReplyErrorFormat(c, "No such user '%s'", (char *)c->argv[i + 1]->ptr);
-                        return;
-                    }
-                } else if (!strcasecmp(c->argv[i]->ptr, "skipme") && moreargs) {
-                    if (!strcasecmp(c->argv[i + 1]->ptr, "yes")) {
-                        skipme = 1;
-                    } else if (!strcasecmp(c->argv[i + 1]->ptr, "no")) {
-                        skipme = 0;
-                    } else {
-                        addReplyErrorObject(c, shared.syntaxerr);
-                        return;
-                    }
-                } else {
-                    addReplyErrorObject(c, shared.syntaxerr);
-                    return;
-                }
-                i += 2;
+            if (parseClientFilters(c, i, &client_filter) != C_OK) {
+                return;
             }
         } else {
             addReplyErrorObject(c, shared.syntaxerr);
@@ -3782,13 +3792,13 @@ void clientCommand(client *c) {
         listRewind(server.clients, &li);
         while ((ln = listNext(&li)) != NULL) {
             client *client = listNodeValue(ln);
-            if (addr && strcmp(getClientPeerId(client), addr) != 0) continue;
-            if (laddr && strcmp(getClientSockname(client), laddr) != 0) continue;
-            if (type != -1 && getClientType(client) != type) continue;
-            if (id != 0 && client->id != id) continue;
-            if (user && client->user != user) continue;
-            if (c == client && skipme) continue;
-            if (max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < max_age) continue;
+            if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) continue;
+            if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) continue;
+            if (client_filter.type != -1 && getClientType(client) != client_filter.type) continue;
+            if (client_filter.id != 0 && client->id != client_filter.id) continue;
+            if (client_filter.user && client->user != client_filter.user) continue;
+            if (c == client && client_filter.skipme) continue;
+            if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) continue;
 
             /* Kill it. */
             if (c == client) {
