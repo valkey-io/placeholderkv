@@ -2,6 +2,14 @@ set testmodule [file normalize tests/modules/moduleconfigs.so]
 set testmoduletwo [file normalize tests/modules/moduleconfigstwo.so]
 set testmoduleparameter [file normalize tests/modules/moduleparameter.so]
 
+proc module_get_args {mod} {
+    foreach line [r module list] {
+        if {[dict get $line name] eq $mod} {
+            return [dict get $line args]
+        }
+    }
+    throw error {module not found}
+}
 
 start_server {tags {"modules"}} {
     r module load $testmodule
@@ -246,13 +254,13 @@ start_server {tags {"modules"}} {
         }
     }
     test {Module Update Args} {
-       r module load $testmoduleparameter 10 20 30
+        r module load $testmoduleparameter 10 20 30
 
-       set t [r module list]
-       set modulename [lmap x [r module list] {dict get $x name}]
-       assert_not_equal [lsearch $modulename moduleparameter] -1
-       assert_equal "{10 20 30}" [lmap x [r module list] {dict get $x args}]
-       assert_equal OK [r testmoduleparameter.update.parameter 40 50 60 70]
-       assert_equal "{40 50 60 70}" [lmap x [r module list] {dict get $x args}]
+        set t [r module list]
+        set modulename [lmap x [r module list] {dict get $x name}]
+        assert_not_equal [lsearch $modulename moduleparameter] -1
+        assert_equal {10 20 30} [module_get_args moduleparameter]
+        assert_equal OK [r testmoduleparameter.update.parameter 40 50 60 70]
+        assert_equal {40 50 60 70} [module_get_args moduleparameter]
     }
 }
