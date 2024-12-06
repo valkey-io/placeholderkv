@@ -39,7 +39,7 @@ jobs:
         id: get_version
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            VERSION="unstable"
+            VERSION=${{ github.base_ref }}
           else
             VERSION="${INPUT_VERSION}"
           fi
