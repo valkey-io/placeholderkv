@@ -37,8 +37,7 @@
 #include "hdr_histogram.h"
 
 /* Dictionary type for latency events. */
-int dictStringKeyCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictStringKeyCompare(const void *key1, const void *key2) {
     return strcmp(key1, key2) == 0;
 }
 
@@ -731,25 +730,23 @@ void latencyCommand(client *c) {
             latencySpecificCommandsFillCDF(c);
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "help") && c->argc == 2) {
-        /* clang-format off */
         const char *help[] = {
-"DOCTOR",
-"    Return a human readable latency analysis report.",
-"GRAPH <event>",
-"    Return an ASCII latency graph for the <event> class.",
-"HISTORY <event>",
-"    Return time-latency samples for the <event> class.",
-"LATEST",
-"    Return the latest latency samples for all events.",
-"RESET [<event> ...]",
-"    Reset latency data of one or more <event> classes.",
-"    (default: reset all data for all event classes)",
-"HISTOGRAM [COMMAND ...]",
-"    Return a cumulative distribution of latencies in the format of a histogram for the specified command names.",
-"    If no commands are specified then all histograms are replied.",
-NULL
+            "DOCTOR",
+            "    Return a human readable latency analysis report.",
+            "GRAPH <event>",
+            "    Return an ASCII latency graph for the <event> class.",
+            "HISTORY <event>",
+            "    Return time-latency samples for the <event> class.",
+            "LATEST",
+            "    Return the latest latency samples for all events.",
+            "RESET [<event> ...]",
+            "    Reset latency data of one or more <event> classes.",
+            "    (default: reset all data for all event classes)",
+            "HISTOGRAM [COMMAND ...]",
+            "    Return a cumulative distribution of latencies in the format of a histogram for the specified command names.",
+            "    If no commands are specified then all histograms are replied.",
+            NULL,
         };
-        /* clang-format on */
         addReplyHelp(c, help);
     } else {
         addReplySubcommandSyntaxError(c);

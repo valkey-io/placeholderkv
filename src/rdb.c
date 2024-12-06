@@ -49,6 +49,9 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 
+/* Size of the static buffer used for rdbcompression */
+#define LZF_STATIC_BUFFER_SIZE (8 * 1024)
+
 /* This macro is called when the internal RDB structure is corrupt */
 #define rdbReportCorruptRDB(...) rdbReportError(1, __LINE__, __VA_ARGS__)
 /* This macro is called when RDB read failed (possibly a short read) */
@@ -388,18 +391,20 @@ writeerr:
 ssize_t rdbSaveLzfStringObject(rio *rdb, unsigned char *s, size_t len) {
     size_t comprlen, outlen;
     void *out;
+    static void *buffer = NULL;
 
     /* We require at least four bytes compression for this to be worth it */
     if (len <= 4) return 0;
     outlen = len - 4;
-    if ((out = zmalloc(outlen + 1)) == NULL) return 0;
-    comprlen = lzf_compress(s, len, out, outlen);
-    if (comprlen == 0) {
-        zfree(out);
-        return 0;
+    if (outlen < LZF_STATIC_BUFFER_SIZE) {
+        if (!buffer) buffer = zmalloc(LZF_STATIC_BUFFER_SIZE);
+        out = buffer;
+    } else {
+        if ((out = zmalloc(outlen + 1)) == NULL) return 0;
     }
-    ssize_t nwritten = rdbSaveLzfBlob(rdb, out, comprlen, len);
-    zfree(out);
+    comprlen = lzf_compress(s, len, out, outlen);
+    ssize_t nwritten = comprlen ? rdbSaveLzfBlob(rdb, out, comprlen, len) : 0;
+    if (out != buffer) zfree(out);
     return nwritten;
 }
 
@@ -1355,6 +1360,7 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
                 sdsfree(slot_info);
                 goto werr;
             }
+            written += res;
             last_slot = curr_slot;
             sdsfree(slot_info);
         }
@@ -3689,6 +3695,21 @@ void bgsaveCommand(client *c) {
     if (c->argc > 1) {
         if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "schedule")) {
             schedule = 1;
+        } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "cancel")) {
+            /* Terminates an in progress BGSAVE */
+            if (server.child_type == CHILD_TYPE_RDB) {
+                /* There is an ongoing bgsave */
+                serverLog(LL_NOTICE, "Background saving will be aborted due to user request");
+                killRDBChild();
+                addReplyStatus(c, "Background saving cancelled");
+            } else if (server.rdb_bgsave_scheduled == 1) {
+                serverLog(LL_NOTICE, "Scheduled background saving will be cancelled due to user request");
+                server.rdb_bgsave_scheduled = 0;
+                addReplyStatus(c, "Scheduled background saving cancelled");
+            } else {
+                addReplyError(c, "Background saving is currently not in progress or scheduled");
+            }
+            return;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);
             return;
@@ -3703,6 +3724,11 @@ void bgsaveCommand(client *c) {
     } else if (hasActiveChildProcess() || server.in_exec) {
         if (schedule || server.in_exec) {
             server.rdb_bgsave_scheduled = 1;
+            if (schedule) {
+                serverLog(LL_NOTICE, "Background saving scheduled due to user request");
+            } else {
+                serverLog(LL_NOTICE, "Background saving scheduled to run after transaction execution");
+            }
             addReplyStatus(c, "Background saving scheduled");
         } else {
             addReplyError(c, "Another child process is active (AOF?): can't BGSAVE right now. "

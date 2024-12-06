@@ -1,3 +1,9 @@
+/*
+ * Copyright Valkey Contributors.
+ * All rights reserved.
+ * SPDX-License-Identifier: BSD 3-Clause
+ */
+
 #include "io_threads.h"
 
 static __thread int thread_id = 0; /* Thread local var */
@@ -303,6 +309,8 @@ void initIOThreads(void) {
 
     serverAssert(server.io_threads_num <= IO_THREADS_MAX_NUM);
 
+    prefetchCommandsBatchInit();
+
     /* Spawn and initialize the I/O threads. */
     for (int i = 1; i < server.io_threads_num; i++) {
         createIOThread(i);
@@ -311,8 +319,7 @@ void initIOThreads(void) {
 
 int trySendReadToIOThreads(client *c) {
     if (server.active_io_threads_num <= 1) return C_ERR;
-    if (!server.io_threads_do_reads) return C_ERR;
-    /* If IO thread is areadty reading, return C_OK to make sure the main thread will not handle it. */
+    /* If IO thread is already reading, return C_OK to make sure the main thread will not handle it. */
     if (c->io_read_state != CLIENT_IDLE) return C_OK;
     /* Currently, replica/master writes are not offloaded and are processed synchronously. */
     if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
@@ -434,8 +441,8 @@ void IOThreadFreeArgv(void *data) {
 /* This function attempts to offload the client's argv to an IO thread.
  * Returns C_OK if the client's argv were successfully offloaded to an IO thread,
  * C_ERR otherwise. */
-int tryOffloadFreeArgvToIOThreads(client *c) {
-    if (server.active_io_threads_num <= 1 || c->argc == 0) {
+int tryOffloadFreeArgvToIOThreads(client *c, int argc, robj **argv) {
+    if (server.active_io_threads_num <= 1 || argc == 0) {
         return C_ERR;
     }
 
@@ -449,11 +456,11 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
     int last_arg_to_free = -1;
 
     /* Prepare the argv */
-    for (int j = 0; j < c->argc; j++) {
-        if (c->argv[j]->refcount > 1) {
-            decrRefCount(c->argv[j]);
+    for (int j = 0; j < argc; j++) {
+        if (argv[j]->refcount > 1) {
+            decrRefCount(argv[j]);
             /* Set argv[j] to NULL to avoid double free */
-            c->argv[j] = NULL;
+            argv[j] = NULL;
         } else {
             last_arg_to_free = j;
         }
@@ -461,17 +468,17 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
 
     /* If no argv to free, free the argv array at the main thread */
     if (last_arg_to_free == -1) {
-        zfree(c->argv);
+        zfree(argv);
         return C_OK;
     }
 
     /* We set the refcount of the last arg to free to 0 to indicate that
      * this is the last argument to free. With this approach, we don't need to
      * send the argc to the IO thread and we can send just the argv ptr. */
-    c->argv[last_arg_to_free]->refcount = 0;
+    argv[last_arg_to_free]->refcount = 0;
 
     /* Must succeed as we checked the free space before. */
-    IOJobQueue_push(jq, IOThreadFreeArgv, c->argv);
+    IOJobQueue_push(jq, IOThreadFreeArgv, argv);
 
     return C_OK;
 }

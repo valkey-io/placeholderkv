@@ -1,5 +1,7 @@
 set testmodule [file normalize tests/modules/moduleconfigs.so]
 set testmoduletwo [file normalize tests/modules/moduleconfigstwo.so]
+set testmoduleparameter [file normalize tests/modules/moduleparameter.so]
+
 
 start_server {tags {"modules"}} {
     r module load $testmodule
@@ -243,5 +245,14 @@ start_server {tags {"modules"}} {
             assert_equal [r config get moduleconfigs.memory_numeric] "moduleconfigs.memory_numeric 1024"
         }
     }
-}
+    test {Module Update Args} {
+       r module load $testmoduleparameter 10 20 30
 
+       set t [r module list]
+       set modulename [lmap x [r module list] {dict get $x name}]
+       assert_not_equal [lsearch $modulename moduleparameter] -1
+       assert_equal "{10 20 30}" [lmap x [r module list] {dict get $x args}]
+       assert_equal OK [r testmoduleparameter.update.parameter 40 50 60 70]
+       assert_equal "{40 50 60 70}" [lmap x [r module list] {dict get $x args}]
+    }
+}

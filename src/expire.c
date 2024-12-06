@@ -42,7 +42,7 @@
 
 /* Constants table from pow(0.98, 1) to pow(0.98, 16).
  * Help calculating the db->avg_ttl. */
-static double avg_ttl_factor[16] = {0.98,     0.9604,   0.941192, 0.922368, 0.903921, 0.885842, 0.868126, 0.850763,
+static double avg_ttl_factor[16] = {0.98, 0.9604, 0.941192, 0.922368, 0.903921, 0.885842, 0.868126, 0.850763,
                                     0.833748, 0.817073, 0.800731, 0.784717, 0.769022, 0.753642, 0.738569, 0.723798};
 
 /* Helper function for the activeExpireCycle() function.
@@ -111,12 +111,11 @@ int activeExpireCycleTryExpire(serverDb *db, dictEntry *de, long long now) {
  * order to do more work in both the fast and slow expire cycles.
  */
 
-#define ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP 20   /* Keys for each DB loop. */
-#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000 /* Microseconds. */
-#define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25  /* Max % of CPU to use. */
-#define ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE                                                                           \
-    10 /* % of stale keys after which                                                                                  \
-          we do extra efforts. */
+#define ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP 20    /* Keys for each DB loop. */
+#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000  /* Microseconds. */
+#define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25   /* Max % of CPU to use. */
+#define ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE 10 /* % of stale keys after which \
+                                                   we do extra efforts. */
 
 /* Data used by the expire dict scan callback. */
 typedef struct {
@@ -521,8 +520,11 @@ int checkAlreadyExpired(long long when) {
      * of a replica instance.
      *
      * Instead we add the already expired key to the database with expire time
-     * (possibly in the past) and wait for an explicit DEL from the primary. */
-    return (when <= commandTimeSnapshot() && !server.loading && !server.primary_host);
+     * (possibly in the past) and wait for an explicit DEL from the primary.
+     *
+     * If the server is a primary and in the import mode, we also add the already
+     * expired key and wait for an explicit DEL from the import source. */
+    return (when <= commandTimeSnapshot() && !server.loading && !server.primary_host && !server.import_mode);
 }
 
 #define EXPIRE_NX (1 << 0)
@@ -668,17 +670,7 @@ void expireGenericCommand(client *c, long long basetime, int unit) {
     }
 
     if (checkAlreadyExpired(when)) {
-        robj *aux;
-
-        int deleted = dbGenericDelete(c->db, key, server.lazyfree_lazy_expire, DB_FLAG_KEY_EXPIRED);
-        serverAssertWithInfo(c, key, deleted);
-        server.dirty++;
-
-        /* Replicate/AOF this as an explicit DEL or UNLINK. */
-        aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;
-        rewriteClientCommandVector(c, 2, aux, key);
-        signalModifiedKey(c, c->db, key);
-        notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, c->db->id);
+        deleteExpiredKeyFromOverwriteAndPropagate(c, key);
         addReply(c, shared.cone);
         return;
     } else {
