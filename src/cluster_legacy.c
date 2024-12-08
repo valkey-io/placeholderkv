@@ -1082,6 +1082,7 @@ void clusterInit(void) {
     server.cluster->myself = NULL;
     server.cluster->currentEpoch = 0;
     server.cluster->state = CLUSTER_FAIL;
+    server.cluster->fail_reason = CLUSTER_FAIL_NONE;
     server.cluster->size = 0;
     server.cluster->todo_before_sleep = 0;
     server.cluster->nodes = dictCreate(&clusterNodesDictType);
@@ -2669,7 +2670,8 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
              *
              * If the sender and myself are in the same shard, try psync. */
             clusterSetPrimary(sender, !are_in_same_shard, !are_in_same_shard);
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_FSYNC_CONFIG);
+            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_FSYNC_CONFIG |
+                                 CLUSTER_TODO_BROADCAST_ALL);
         } else if (nodeIsPrimary(myself) && (sender_slots >= migrated_our_slots) && !are_in_same_shard) {
             /* When all our slots are lost to the sender and the sender belongs to
              * a different shard, this is likely due to a client triggered slot
@@ -4363,12 +4365,17 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 
     /* We did not voted for a replica about this primary for two
      * times the node timeout. This is not strictly needed for correctness
-     * of the algorithm but makes the base case more linear. */
-    if (mstime() - node->replicaof->voted_time < server.cluster_node_timeout * 2) {
+     * of the algorithm but makes the base case more linear.
+     *
+     * This limitation does not restrict manual failover. If a user initiates
+     * a manual failover, we need to allow it to vote, otherwise the manual
+     * failover may time out. */
+    if (!force_ack && mstime() - node->replicaof->voted_time < server.cluster_node_timeout * 2) {
         serverLog(LL_WARNING,
-                  "Failover auth denied to %.40s %s: "
-                  "can't vote about this primary before %lld milliseconds",
+                  "Failover auth denied to %.40s (%s): "
+                  "can't vote for any replica of %.40s (%s) within %lld milliseconds",
                   node->name, node->human_nodename,
+                  node->replicaof->name, node->replicaof->human_nodename,
                   (long long)((server.cluster_node_timeout * 2) - (mstime() - node->replicaof->voted_time)));
         return;
     }
@@ -4394,7 +4401,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 
     /* We can vote for this replica. */
     server.cluster->lastVoteEpoch = server.cluster->currentEpoch;
-    node->replicaof->voted_time = mstime();
+    if (!force_ack) node->replicaof->voted_time = mstime();
     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
     clusterSendFailoverAuth(node);
     serverLog(LL_NOTICE, "Failover auth granted to %.40s (%s) for epoch %llu", node->name, node->human_nodename,
@@ -4487,7 +4494,7 @@ void clusterLogCantFailover(int reason) {
     case CLUSTER_CANT_FAILOVER_WAITING_DELAY: msg = "Waiting the delay before I can start a new failover."; break;
     case CLUSTER_CANT_FAILOVER_EXPIRED: msg = "Failover attempt expired."; break;
     case CLUSTER_CANT_FAILOVER_WAITING_VOTES: msg = "Waiting for votes, but majority still not reached."; break;
-    default: msg = "Unknown reason code."; break;
+    default: serverPanic("Unknown cant failover reason code.");
     }
     lastlog_time = time(NULL);
     serverLog(LL_NOTICE, "Currently unable to failover: %s", msg);
@@ -4533,7 +4540,7 @@ void clusterFailoverReplaceYourPrimary(void) {
 
     /* 4) Pong all the other nodes so that they can update the state
      *    accordingly and detect that we switched to primary role. */
-    clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+    clusterDoBeforeSleep(CLUSTER_TODO_BROADCAST_ALL);
 
     /* 5) If there was a manual failover in progress, clear the state. */
     resetManualFailover();
@@ -4843,6 +4850,27 @@ void clusterHandleReplicaMigration(int max_replicas) {
  * data loss due to the asynchronous primary-replica replication.
  * -------------------------------------------------------------------------- */
 
+void manualFailoverCanStart(void) {
+    serverAssert(server.cluster->mf_can_start == 0);
+
+    if (server.cluster->failover_auth_time) {
+        /* There is another manual failover requested by the user.
+         * If we have an ongoing election, reset it because the user may initiate
+         * manual failover again when the previous manual failover timed out.
+         * Otherwise, if the previous election timed out (see auth_timeout) and
+         * before the next retry (see auth_retry_time), the new manual failover
+         * will pause the primary and replica can not do anything to advance the
+         * manual failover, and then the manual failover eventually times out. */
+        server.cluster->failover_auth_time = 0;
+        serverLog(LL_WARNING,
+                  "Failover election in progress for epoch %llu, but received a new manual failover. "
+                  "Resetting the election.",
+                  (unsigned long long)server.cluster->failover_auth_epoch);
+    }
+
+    server.cluster->mf_can_start = 1;
+}
+
 /* Reset the manual failover state. This works for both primaries and replicas
  * as all the state about manual failover is cleared.
  *
@@ -4883,7 +4911,7 @@ void clusterHandleManualFailover(void) {
     if (server.cluster->mf_primary_offset == replicationGetReplicaOffset()) {
         /* Our replication offset matches the primary replication offset
          * announced after clients were paused. We can start the failover. */
-        server.cluster->mf_can_start = 1;
+        manualFailoverCanStart();
         serverLog(LL_NOTICE, "All primary replication stream processed, "
                              "manual failover can start.");
         clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
@@ -4909,6 +4937,8 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
     /* A Node in HANDSHAKE state has a limited lifespan equal to the
      * configured node timeout. */
     if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
+        serverLog(LL_WARNING, "Clusterbus handshake timeout %s:%d after %lldms", node->ip,
+                  node->cport, handshake_timeout);
         clusterDelNode(node);
         return 1;
     }
@@ -5001,7 +5031,7 @@ void clusterCron(void) {
 
     /* Ping some random node 1 time every 10 iterations, so that we usually ping
      * one random node every second. */
-    if (!(iteration % 10)) {
+    if (!server.debug_cluster_disable_random_ping && !(iteration % 10)) {
         int j;
 
         /* Check a few random nodes and ping the one with the oldest
@@ -5178,6 +5208,13 @@ void clusterBeforeSleep(void) {
         int fsync = flags & CLUSTER_TODO_FSYNC_CONFIG;
         clusterSaveConfigOrDie(fsync);
     }
+
+    if (flags & CLUSTER_TODO_BROADCAST_ALL) {
+        /* Broadcast a pong to all known nodes. This is useful when something changes
+         * in the configuration and we want to make the cluster aware it before the
+         * regular ping. */
+        clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+    }
 }
 
 void clusterDoBeforeSleep(int flags) {
@@ -5326,6 +5363,23 @@ void clusterCloseAllSlots(void) {
  * Cluster state evaluation function
  * -------------------------------------------------------------------------- */
 
+void clusterLogFailReason(int reason) {
+    if (reason == CLUSTER_FAIL_NONE) return;
+
+    char *msg;
+    switch (reason) {
+    case CLUSTER_FAIL_NOT_FULL_COVERAGE:
+        msg = "At least one hash slot is not served by any available node. "
+              "Please check the 'cluster-require-full-coverage' configuration.";
+        break;
+    case CLUSTER_FAIL_MINORITY_PARTITION:
+        msg = "I am part of a minority partition.";
+        break;
+    default: serverPanic("Unknown fail reason code.");
+    }
+    serverLog(LL_WARNING, "Cluster is currently down: %s", msg);
+}
+
 /* The following are defines that are only used in the evaluation function
  * and are based on heuristics. Actually the main point about the rejoin and
  * writable delay is that they should be a few orders of magnitude larger
@@ -5335,7 +5389,7 @@ void clusterCloseAllSlots(void) {
 #define CLUSTER_WRITABLE_DELAY 2000
 
 void clusterUpdateState(void) {
-    int j, new_state;
+    int j, new_state, new_reason;
     int reachable_primaries = 0;
     static mstime_t among_minority_time;
     static mstime_t first_call_time = 0;
@@ -5356,12 +5410,14 @@ void clusterUpdateState(void) {
     /* Start assuming the state is OK. We'll turn it into FAIL if there
      * are the right conditions. */
     new_state = CLUSTER_OK;
+    new_reason = CLUSTER_FAIL_NONE;
 
     /* Check if all the slots are covered. */
     if (server.cluster_require_full_coverage) {
         for (j = 0; j < CLUSTER_SLOTS; j++) {
             if (server.cluster->slots[j] == NULL || server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL)) {
                 new_state = CLUSTER_FAIL;
+                new_reason = CLUSTER_FAIL_NOT_FULL_COVERAGE;
                 break;
             }
         }
@@ -5396,6 +5452,7 @@ void clusterUpdateState(void) {
 
         if (reachable_primaries < needed_quorum) {
             new_state = CLUSTER_FAIL;
+            new_reason = CLUSTER_FAIL_MINORITY_PARTITION;
             among_minority_time = mstime();
         }
     }
@@ -5419,7 +5476,21 @@ void clusterUpdateState(void) {
         serverLog(new_state == CLUSTER_OK ? LL_NOTICE : LL_WARNING, "Cluster state changed: %s",
                   new_state == CLUSTER_OK ? "ok" : "fail");
         server.cluster->state = new_state;
+
+        /* Cluster state changes from ok to fail, print a log. */
+        if (new_state == CLUSTER_FAIL) {
+            clusterLogFailReason(new_reason);
+            server.cluster->fail_reason = new_reason;
+        }
     }
+
+    /* Cluster state is still fail, but the reason has changed, print a log. */
+    if (new_state == CLUSTER_FAIL && new_reason != server.cluster->fail_reason) {
+        clusterLogFailReason(new_reason);
+        server.cluster->fail_reason = new_reason;
+    }
+
+    if (new_state == CLUSTER_OK) server.cluster->fail_reason = CLUSTER_FAIL_NONE;
 }
 
 /* This function is called after the node startup in order to verify that data
@@ -5581,12 +5652,12 @@ sds representClusterNodeFlags(sds ci, uint16_t flags) {
  * else each slot is added separately. */
 sds representSlotInfo(sds ci, uint16_t *slot_info_pairs, int slot_info_pairs_count) {
     for (int i = 0; i < slot_info_pairs_count; i += 2) {
-        unsigned long start = slot_info_pairs[i];
-        unsigned long end = slot_info_pairs[i + 1];
+        unsigned int start = slot_info_pairs[i];
+        unsigned int end = slot_info_pairs[i + 1];
         if (start == end) {
-            ci = sdscatfmt(ci, " %i", start);
+            ci = sdscatfmt(ci, " %u", start);
         } else {
-            ci = sdscatfmt(ci, " %i-%i", start, end);
+            ci = sdscatfmt(ci, " %u-%u", start, end);
         }
     }
     return ci;
@@ -6082,6 +6153,9 @@ void removeChannelsInSlot(unsigned int slot) {
 unsigned int delKeysInSlot(unsigned int hashslot) {
     if (!countKeysInSlot(hashslot)) return 0;
 
+    /* We may lose a slot during the pause. We need to track this
+     * state so that we don't assert in propagateNow(). */
+    server.server_del_keys_in_slot = 1;
     unsigned int j = 0;
 
     kvstoreDictIterator *kvs_di = NULL;
@@ -6106,6 +6180,8 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
     }
     kvstoreReleaseDictIterator(kvs_di);
 
+    server.server_del_keys_in_slot = 0;
+    serverAssert(server.execution_nesting == 0);
     return j;
 }
 
@@ -6523,7 +6599,7 @@ void clusterCommandSetSlot(client *c) {
                 }
                 /* After importing this slot, let the other nodes know as
                  * soon as possible. */
-                clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+                clusterDoBeforeSleep(CLUSTER_TODO_BROADCAST_ALL);
             }
         }
     }
@@ -6555,6 +6631,10 @@ int clusterCommandSpecial(client *c) {
             addReplyErrorFormat(c, "Invalid node address specified: %s:%s", (char *)c->argv[2]->ptr,
                                 (char *)c->argv[3]->ptr);
         } else {
+            sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
+            serverLog(LL_NOTICE, "Cluster meet %s:%lld (user request from '%s').", (char *)c->argv[2]->ptr, port,
+                      client);
+            sdsfree(client);
             addReply(c, shared.ok);
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "flushslots") && c->argc == 2) {
@@ -6669,6 +6749,9 @@ int clusterCommandSpecial(client *c) {
             addReplyError(c, "Can't forget my master!");
             return 1;
         }
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
+        serverLog(LL_NOTICE, "Cluster forget %s (user request from '%s').", (char *)c->argv[2]->ptr, client);
+        sdsfree(client);
         clusterBlacklistAddNode(n);
         clusterDelNode(n);
         clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_SAVE_CONFIG);
@@ -6715,8 +6798,7 @@ int clusterCommandSpecial(client *c) {
          * If the instance is a replica, it had a totally different replication history.
          * In these both cases, myself as a replica has to do a full sync. */
         clusterSetPrimary(n, 1, 1);
-        clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
-        clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_SAVE_CONFIG);
+        clusterDoBeforeSleep(CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_BROADCAST_ALL);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "count-failure-reports") && c->argc == 3) {
         /* CLUSTER COUNT-FAILURE-REPORTS <NODE ID> */
@@ -6758,7 +6840,7 @@ int clusterCommandSpecial(client *c) {
         }
         resetManualFailover();
         server.cluster->mf_end = mstime() + CLUSTER_MF_TIMEOUT;
-        sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
 
         if (takeover) {
             /* A takeover does not perform any initial check. It just
@@ -6773,7 +6855,7 @@ int clusterCommandSpecial(client *c) {
              * primary to agree about the offset. We just failover taking over
              * it without coordination. */
             serverLog(LL_NOTICE, "Forced failover user request accepted (user request from '%s').", client);
-            server.cluster->mf_can_start = 1;
+            manualFailoverCanStart();
             /* We can start a manual failover as soon as possible, setting a flag
              * here so that we don't need to waiting for the cron to kick in. */
             clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_MANUALFAILOVER);
@@ -6837,6 +6919,9 @@ int clusterCommandSpecial(client *c) {
                              "master nodes containing keys");
             return 1;
         }
+        sds client = catClientInfoShortString(sdsempty(), c, server.hide_user_data_from_log);
+        serverLog(LL_NOTICE, "Cluster reset (user request from '%s').", client);
+        sdsfree(client);
         clusterReset(hard);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "links") && c->argc == 2) {

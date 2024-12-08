@@ -286,7 +286,9 @@ static int cache_exist(int fd) {
 int test_reclaimFilePageCache(int argc, char **argv, int flags) {
     UNUSED(argc);
     UNUSED(argv);
-    UNUSED(flags);
+
+    /* The test is incompatible with valgrind, skip it. */
+    if (flags & UNIT_TEST_VALGRIND) return 0;
 
 #if defined(__linux__)
     char *tmpfile = "/tmp/redis-reclaim-cache-test";

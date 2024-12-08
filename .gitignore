@@ -51,3 +51,5 @@ tests/rdma/rdma-test
 tags
 build-debug/
 build-release/
+cmake-build-debug/
+cmake-build-release/

@@ -967,6 +967,7 @@ VALKEYMODULE_API void (*ValkeyModule_SetModuleAttribs)(ValkeyModuleCtx *ctx, con
     VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_IsModuleNameBusy)(const char *name) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_WrongArity)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
+VALKEYMODULE_API int (*ValkeyModule_UpdateRuntimeArgs)(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_ReplyWithLongLong)(ValkeyModuleCtx *ctx, long long ll) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_GetSelectedDb)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_SelectDb)(ValkeyModuleCtx *ctx, int newid) VALKEYMODULE_ATTR;
@@ -1673,6 +1674,7 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(SetModuleAttribs);
     VALKEYMODULE_GET_API(IsModuleNameBusy);
     VALKEYMODULE_GET_API(WrongArity);
+    VALKEYMODULE_GET_API(UpdateRuntimeArgs);
     VALKEYMODULE_GET_API(ReplyWithLongLong);
     VALKEYMODULE_GET_API(ReplyWithError);
     VALKEYMODULE_GET_API(ReplyWithErrorFormat);

@@ -681,6 +681,7 @@ void moduleReleaseTempClient(client *c) {
     c->bufpos = 0;
     c->raw_flag = 0;
     c->flag.module = 1;
+    c->flag.fake = 1;
     c->user = NULL; /* Root user */
     c->cmd = c->lastcmd = c->realcmd = c->io_parsed_cmd = NULL;
     if (c->bstate.async_rm_call_handle) {
@@ -2252,6 +2253,27 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
     if (module_handle == NULL) return 0;
     ValkeyModuleCommand *cp = cmd->module_cmd;
     return (cp->module == module_handle);
+}
+
+/* ValkeyModule_UpdateRuntimeArgs can be used to update the module argument values.
+ * The function parameter 'argc' indicates the number of updated arguments, and 'argv'
+ * represents the values of the updated arguments.
+ * Once 'CONFIG REWRITE' command is called, the updated argument values can be saved into conf file.
+ *
+ * The function always returns VALKEYMODULE_OK. */
+int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
+    struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
+    for (int i = 0; i < loadmod->argc; i++) {
+        decrRefCount(loadmod->argv[i]);
+    }
+    zfree(loadmod->argv);
+    loadmod->argv = argc - 1 ? zmalloc(sizeof(robj *) * (argc - 1)) : NULL;
+    loadmod->argc = argc - 1;
+    for (int i = 1; i < argc; i++) {
+        loadmod->argv[i - 1] = argv[i];
+        incrRefCount(loadmod->argv[i - 1]);
+    }
+    return VALKEYMODULE_OK;
 }
 
 /* --------------------------------------------------------------------------
@@ -13343,7 +13365,7 @@ const char *VM_GetCurrentCommandName(ValkeyModuleCtx *ctx) {
  * defrag callback.
  */
 struct ValkeyModuleDefragCtx {
-    long long int endtime;
+    monotime endtime;
     unsigned long *cursor;
     struct serverObject *key; /* Optional name of key processed, NULL when unknown. */
     int dbid;                 /* The dbid of the key being processed, -1 when unknown. */
@@ -13372,7 +13394,7 @@ int VM_RegisterDefragFunc(ValkeyModuleCtx *ctx, ValkeyModuleDefragFunc cb) {
  * so it generally makes sense to do small batches of work in between calls.
  */
 int VM_DefragShouldStop(ValkeyModuleDefragCtx *ctx) {
-    return (ctx->endtime != 0 && ctx->endtime < ustime());
+    return (ctx->endtime != 0 && ctx->endtime <= getMonotonicUs());
 }
 
 /* Store an arbitrary cursor value for future re-use.
@@ -13454,7 +13476,7 @@ ValkeyModuleString *VM_DefragValkeyModuleString(ValkeyModuleDefragCtx *ctx, Valk
  * Returns a zero value (and initializes the cursor) if no more needs to be done,
  * or a non-zero value otherwise.
  */
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid) {
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid) {
     moduleValue *mv = value->ptr;
     moduleType *mt = mv->type;
 
@@ -13559,6 +13581,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(SetModuleAttribs);
     REGISTER_API(IsModuleNameBusy);
     REGISTER_API(WrongArity);
+    REGISTER_API(UpdateRuntimeArgs);
     REGISTER_API(ReplyWithLongLong);
     REGISTER_API(ReplyWithError);
     REGISTER_API(ReplyWithErrorFormat);

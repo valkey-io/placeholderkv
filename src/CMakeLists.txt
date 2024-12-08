@@ -28,6 +28,16 @@ if (FORCE_DEFRAG)
     target_compile_definitions(valkey-server PRIVATE HAVE_DEFRAG)
 endif ()
 
+if (BUILD_SANITIZER)
+    # 'BUILD_SANITIZER' is defined in ValkeySetup module (based on user input)
+    # If defined, the variables 'VALKEY_SANITAIZER_CFLAGS' and 'VALKEY_SANITAIZER_LDFLAGS'
+    # are set with the link & compile flags required
+    message(STATUS "Adding sanitizer flags for target valkey-server")
+    target_compile_options(valkey-server PRIVATE ${VALKEY_SANITAIZER_CFLAGS})
+    target_link_options(valkey-server PRIVATE ${VALKEY_SANITAIZER_LDFLAGS})
+endif ()
+unset(BUILD_SANITIZER CACHE)
+
 # Target: valkey-cli
 list(APPEND CLI_LIBS "linenoise")
 valkey_build_and_install_bin(valkey-cli "${VALKEY_CLI_SRCS}" "${VALKEY_SERVER_LDFLAGS}" "${CLI_LIBS}" "redis-cli")
@@ -51,7 +61,7 @@ if (BUILD_RDMA_MODULE)
     set(MODULE_NAME "valkey-rdma")
     message(STATUS "Building RDMA module")
     add_library(${MODULE_NAME} SHARED "${VALKEY_RDMA_MODULE_SRCS}")
-    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE -DUSE_RDMA=1)
+    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE=2 -DUSE_RDMA=1)
     target_link_libraries(${MODULE_NAME} "${RDMA_LIBS}")
     # remove the "lib" prefix from the module
     set_target_properties(${MODULE_NAME} PROPERTIES PREFIX "")

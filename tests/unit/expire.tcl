@@ -832,6 +832,85 @@ start_server {tags {"expire"}} {
         close_replication_stream $repl
         assert_equal [r debug set-active-expire 1] {OK}
     } {} {needs:debug}
+
+    test {Import mode should forbid active expiration} {
+        r flushall
+
+        r config set import-mode yes
+        assert_equal [r client import-source on] {OK}
+
+        r set foo1 bar PX 1
+        r set foo2 bar PX 1
+        after 10
+
+        assert_equal [r dbsize] {2}
+
+        assert_equal [r client import-source off] {OK}
+        r config set import-mode no
+
+        # Verify all keys have expired
+        wait_for_condition 40 100 {
+            [r dbsize] eq 0
+        } else {
+            fail "Keys did not actively expire."
+        }
+    }
+
+    test {Import mode should forbid lazy expiration} {
+        r flushall
+        r debug set-active-expire 0 
+
+        r config set import-mode yes
+        assert_equal [r client import-source on] {OK}
+
+        r set foo1 1 PX 1
+        after 10
+
+        r get foo1
+        assert_equal [r dbsize] {1}
+
+        assert_equal [r client import-source off] {OK}
+        r config set import-mode no
+
+        r get foo1
+
+        assert_equal [r dbsize] {0}
+
+        assert_equal [r debug set-active-expire 1] {OK}
+    } {} {needs:debug}
+
+    test {Client can visit expired key in import-source state} {
+        r flushall
+
+        r config set import-mode yes
+
+        r set foo1 1 PX 1
+        after 10
+
+        # Normal clients cannot visit expired key.
+        assert_equal [r get foo1] {}
+        assert_equal [r ttl foo1] {-2}
+        assert_equal [r dbsize] 1
+
+        # Client can visit expired key when in import-source state.
+        assert_equal [r client import-source on] {OK}
+        assert_equal [r ttl foo1] {0}
+        assert_equal [r get foo1] {1}
+        assert_equal [r incr foo1] {2}
+        assert_equal [r randomkey] {foo1}
+        assert_equal [r scan 0 match * count 10000] {0 foo1}
+        assert_equal [r keys *] {foo1}
+
+        assert_equal [r client import-source off] {OK}
+        r config set import-mode no
+
+        # Verify all keys have expired
+        wait_for_condition 40 100 {
+            [r dbsize] eq 0
+        } else {
+            fail "Keys did not actively expire."
+        }
+    }
 }
 
 start_cluster 1 0 {tags {"expire external:skip cluster"}} {

@@ -364,4 +364,17 @@ void setcpuaffinity(const char *cpulist);
 #define valkey_prefetch(addr) ((void)(addr))
 #endif
 
+/* Check if we can compile AVX2 code */
+#if defined(__x86_64__) && ((defined(__GNUC__) && __GNUC__ >= 5) || (defined(__clang__) && __clang_major__ >= 4))
+#if defined(__has_attribute) && __has_attribute(target)
+#define HAVE_AVX2
+#endif
+#endif
+
+#if defined(HAVE_AVX2)
+#define ATTRIBUTE_TARGET_AVX2 __attribute__((target("avx2")))
+#else
+#define ATTRIBUTE_TARGET_AVX2
+#endif
+
 #endif

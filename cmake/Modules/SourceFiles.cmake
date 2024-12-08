@@ -74,6 +74,7 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/geohash.c
     ${CMAKE_SOURCE_DIR}/src/geohash_helper.c
     ${CMAKE_SOURCE_DIR}/src/childinfo.c
+    ${CMAKE_SOURCE_DIR}/src/allocator_defrag.c
     ${CMAKE_SOURCE_DIR}/src/defrag.c
     ${CMAKE_SOURCE_DIR}/src/siphash.c
     ${CMAKE_SOURCE_DIR}/src/rax.c
@@ -87,6 +88,7 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/tracking.c
     ${CMAKE_SOURCE_DIR}/src/socket.c
     ${CMAKE_SOURCE_DIR}/src/tls.c
+    ${CMAKE_SOURCE_DIR}/src/rdma.c
     ${CMAKE_SOURCE_DIR}/src/sha256.c
     ${CMAKE_SOURCE_DIR}/src/timeout.c
     ${CMAKE_SOURCE_DIR}/src/setcpuaffinity.c
