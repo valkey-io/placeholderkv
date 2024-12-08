@@ -890,15 +890,8 @@ void ltrimCommand(client *c) {
     }
 
     /* Remove list elements to perform the trim */
-    if (o->encoding == OBJ_ENCODING_QUICKLIST) {
-        quicklistDelRange(o->ptr, 0, ltrim);
-        quicklistDelRange(o->ptr, -rtrim, rtrim);
-    } else if (o->encoding == OBJ_ENCODING_LISTPACK) {
-        o->ptr = lpDeleteRange(o->ptr, 0, ltrim);
-        o->ptr = lpDeleteRange(o->ptr, -rtrim, rtrim);
-    } else {
-        serverPanic("Unknown list encoding");
-    }
+    listTypeDelRange(o, 0, ltrim);
+    listTypeDelRange(o, -rtrim, rtrim);
 
     notifyKeyspaceEvent(NOTIFY_LIST, "ltrim", c->argv[1], c->db->id);
     if (listTypeLength(o) == 0) {

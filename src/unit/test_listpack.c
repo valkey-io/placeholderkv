@@ -1394,3 +1394,46 @@ int test_listpackBenchmarkFree(int argc, char **argv, int flags) {
     lpFree(lp);
     return 0;
 }
+
+int test_listpackBenchRandom(int argc, char **argv, int flags) {
+    /* lpNextRandom normal usage */
+    UNUSED(argc);
+    UNUSED(argv);
+    UNUSED(flags);
+
+    /* Create some data */
+    unsigned char *lp = lpNew(0);
+    unsigned int size = 1000;
+    unsigned int count = 100000;
+    long long start;
+
+    for (size_t i = 1; i < size; i *= 10) {
+        for (;;) {
+            lp = lpAppend(lp, (unsigned char *)"quux", 4);
+            if (lpLength(lp) >= i) {
+                break;
+            }
+        }
+
+        start = usec();
+        /* Pick a subset of the elements of every possible subset size */
+        for (size_t i = 0; i < count; i++) {
+            unsigned int j = 0;
+            // unsigned int len = 0; /* initialize to silence warning */
+            // long long llele = 0;  /* initialize to silence warning */
+            lpNextRandom(lp, lpFirst(lp), &j, 1, 0);
+        }
+        printf("lpNextRandom, List size: %8zu, total %6lld usec\n", i, (usec() - start));
+
+        start = usec();
+        int r = 0;
+        for (size_t i = 0; i < count; i++) {
+            r = rand() % lpLength(lp);
+            lpSeek(lp, r);
+        }
+        printf("lpSeek, List size: %8zu, total %6lld usec\n", i, (usec() - start));
+    }
+    lpFree(lp);
+
+    return 0;
+}
