@@ -1449,6 +1449,10 @@ typedef struct zskiplistNode {
     struct zskiplistNode *backward;
     struct zskiplistLevel {
         struct zskiplistNode *forward;
+        /* At each level we keep the span, which is the number of elements which are on the "subtree" 
+         * from this node at this level to the next node at the same level.
+         * One exception is the value at level 0. In level 0 the span can only be 1 or 0 (in case the last elements in the list)
+         * So we use it in order to hold the height of the node, which is the number of levels. */
         unsigned long span;
     } level[];
 } zskiplistNode;
