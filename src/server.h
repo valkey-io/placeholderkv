@@ -704,7 +704,7 @@ typedef enum {
 typedef struct ValkeyModuleType moduleType;
 
 /* Macro to check if the client is in the middle of module based authentication. */
-#define clientHasModuleAuthInProgress(c) ((c)->module_auth_ctx != NULL)
+#define clientHasModuleAuthInProgress(c) (((c)->module_data && (c)->module_data->module_auth_ctx != NULL))
 
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
@@ -850,6 +850,7 @@ typedef struct multiState {
                              certain flag. */
     size_t argv_len_sums; /* mem used by all commands arguments */
     int alloc_count;      /* total number of multiCmd struct memory reserved. */
+    list watched_keys;
 } multiState;
 
 /* This structure holds the blocking operation state for a client.
@@ -1090,93 +1091,52 @@ typedef struct ClientFlags {
     uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
-typedef struct client {
-    uint64_t id; /* Client incremental unique ID. */
-    union {
-        uint64_t raw_flag;
-        struct ClientFlags flag;
-    };
-    connection *conn;
-    int resp;                            /* RESP protocol version. Can be 2 or 3. */
-    uint32_t capa;                       /* Client capabilities: CLIENT_CAPA* macros. */
-    serverDb *db;                        /* Pointer to currently SELECTed DB. */
-    robj *name;                          /* As set by CLIENT SETNAME. */
-    robj *lib_name;                      /* The client library name as set by CLIENT SETINFO. */
-    robj *lib_ver;                       /* The client library version as set by CLIENT SETINFO. */
-    sds querybuf;                        /* Buffer we use to accumulate client queries. */
-    size_t qb_pos;                       /* The position we have read in querybuf. */
-    size_t querybuf_peak;                /* Recent (100ms or more) peak of querybuf size. */
-    int argc;                            /* Num of arguments of current command. */
-    robj **argv;                         /* Arguments of current command. */
-    int argv_len;                        /* Size of argv array (may be more than argc) */
-    int original_argc;                   /* Num of arguments of original command if arguments were rewritten. */
-    robj **original_argv;                /* Arguments of original command if arguments were rewritten. */
-    size_t argv_len_sum;                 /* Sum of lengths of objects in argv list. */
-    volatile uint8_t io_read_state;      /* Indicate the IO read state of the client */
-    volatile uint8_t io_write_state;     /* Indicate the IO write state of the client */
-    uint8_t cur_tid;                     /* ID of IO thread currently performing IO for this client */
-    int nread;                           /* Number of bytes of the last read. */
-    int nwritten;                        /* Number of bytes of the last write. */
-    int read_flags;                      /* Client Read flags - used to communicate the client read state. */
-    uint16_t write_flags;                /* Client Write flags - used to communicate the client write state. */
-    struct serverCommand *cmd, *lastcmd; /* Last command executed. */
-    struct serverCommand *realcmd;       /* The original command that was executed by the client,
-                                           Used to update error stats in case the c->cmd was modified
-                                           during the command invocation (like on GEOADD for example). */
-    struct serverCommand *io_parsed_cmd; /* The command that was parsed by the IO thread. */
-    user *user;                          /* User associated with this connection. If the
-                                            user is set to NULL the connection can do
-                                            anything (admin). */
-    int reqtype;                         /* Request protocol type: PROTO_REQ_* */
-    int multibulklen;                    /* Number of multi bulk arguments left to read. */
-    long bulklen;                        /* Length of bulk argument in multi bulk request. */
-    list *reply;                         /* List of reply objects to send to the client. */
-    listNode *io_last_reply_block;       /* Last client reply block when sent to IO thread */
-    unsigned long long reply_bytes;      /* Tot bytes of objects in reply list. */
-    list *deferred_reply_errors;         /* Used for module thread safe contexts. */
-    size_t sentlen;                      /* Amount of bytes already sent in the current
-                                            buffer or object being sent. */
-    time_t ctime;                        /* Client creation time. */
-    long duration;                       /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
-    int slot;                            /* The slot the client is executing against. Set to -1 if no slot is being used */
-    dictEntry *cur_script;               /* Cached pointer to the dictEntry of the script being executed. */
-    time_t last_interaction;             /* Time of the last interaction, used for timeout */
-    time_t obuf_soft_limit_reached_time;
-    int repl_state;                            /* Replication state if this is a replica. */
-    int repl_start_cmd_stream_on_ack;          /* Install replica write handler on first ACK. */
-    int repldbfd;                              /* Replication DB file descriptor. */
-    off_t repldboff;                           /* Replication DB file offset. */
-    off_t repldbsize;                          /* Replication DB file size. */
-    sds replpreamble;                          /* Replication DB preamble. */
-    long long read_reploff;                    /* Read replication offset if this is a primary. */
-    long long reploff;                         /* Applied replication offset if this is a primary. */
-    long long repl_applied;                    /* Applied replication data count in querybuf, if this is a replica. */
-    long long repl_ack_off;                    /* Replication ack offset, if this is a replica. */
-    long long repl_aof_off;                    /* Replication AOF fsync ack offset, if this is a replica. */
-    long long repl_ack_time;                   /* Replication ack time, if this is a replica. */
-    long long repl_last_partial_write;         /* The last time the server did a partial write from the RDB child pipe to this
-                                                  replica  */
-    long long psync_initial_offset;            /* FULLRESYNC reply offset other replicas
-                                                  copying this replica output buffer
-                                                  should use. */
-    char replid[CONFIG_RUN_ID_SIZE + 1];       /* primary replication ID (if primary). */
-    int replica_listening_port;                /* As configured with: REPLCONF listening-port */
-    char *replica_addr;                        /* Optionally given by REPLCONF ip-address */
-    int replica_version;                       /* Version on the form 0xMMmmpp. */
-    short replica_capa;                        /* Replica capabilities: REPLICA_CAPA_* bitwise OR. */
-    short replica_req;                         /* Replica requirements: REPLICA_REQ_* */
-    uint64_t associated_rdb_client_id;         /* The client id of this replica's rdb connection */
-    time_t rdb_client_disconnect_time;         /* Time of the first freeClient call on this client. Used for delaying free. */
-    multiState mstate;                         /* MULTI/EXEC state */
-    blockingState bstate;                      /* blocking state */
-    long long woff;                            /* Last write global replication offset. */
-    list *watched_keys;                        /* Keys WATCHED for MULTI/EXEC CAS */
-    dict *pubsub_channels;                     /* channels a client is interested in (SUBSCRIBE) */
-    dict *pubsub_patterns;                     /* patterns a client is interested in (PSUBSCRIBE) */
-    dict *pubsubshard_channels;                /* shard level channels a client is interested in (SSUBSCRIBE) */
-    sds peerid;                                /* Cached peer ID. */
-    sds sockname;                              /* Cached connection target address. */
-    listNode *client_list_node;                /* list node in client list */
+typedef struct ClientPubSubData {
+    dict *pubsub_channels;      /* channels a client is interested in (SUBSCRIBE) */
+    dict *pubsub_patterns;      /* patterns a client is interested in (PSUBSCRIBE) */
+    dict *pubsubshard_channels; /* shard level channels a client is interested in (SSUBSCRIBE) */
+    /* If this client is in tracking mode and this field is non zero,
+     * invalidation messages for keys fetched by this client will be sent to
+     * the specified client ID. */
+    uint64_t client_tracking_redirection;
+    rax *client_tracking_prefixes; /* A dictionary of prefixes we are already
+                                      subscribed to in BCAST mode, in the
+                                      context of client side caching. */
+} ClientPubSubData;
+
+typedef struct ClientReplicationData {
+    int repl_state;                      /* Replication state if this is a replica. */
+    int repl_start_cmd_stream_on_ack;    /* Install replica write handler on first ACK. */
+    int repldbfd;                        /* Replication DB file descriptor. */
+    off_t repldboff;                     /* Replication DB file offset. */
+    off_t repldbsize;                    /* Replication DB file size. */
+    sds replpreamble;                    /* Replication DB preamble. */
+    long long read_reploff;              /* Read replication offset if this is a primary. */
+    long long reploff;                   /* Applied replication offset if this is a primary. */
+    long long repl_applied;              /* Applied replication data count in querybuf, if this is a replica. */
+    long long repl_ack_off;              /* Replication ack offset, if this is a replica. */
+    long long repl_aof_off;              /* Replication AOF fsync ack offset, if this is a replica. */
+    long long repl_ack_time;             /* Replication ack time, if this is a replica. */
+    long long repl_last_partial_write;   /* The last time the server did a partial write from the RDB child pipe to this
+                                            replica  */
+    long long psync_initial_offset;      /* FULLRESYNC reply offset other replicas
+                                            copying this replica output buffer
+                                            should use. */
+    char replid[CONFIG_RUN_ID_SIZE + 1]; /* primary replication ID (if primary). */
+    int replica_listening_port;          /* As configured with: REPLCONF listening-port */
+    char *replica_addr;                  /* Optionally given by REPLCONF ip-address */
+    int replica_version;                 /* Version on the form 0xMMmmpp. */
+    short replica_capa;                  /* Replica capabilities: REPLICA_CAPA_* bitwise OR. */
+    short replica_req;                   /* Replica requirements: REPLICA_REQ_* */
+    uint64_t associated_rdb_client_id;   /* The client id of this replica's rdb connection */
+    time_t rdb_client_disconnect_time;   /* Time of the first freeClient call on this client. Used for delaying free. */
+    listNode *ref_repl_buf_node;         /* Referenced node of replication buffer blocks,
+                                           see the definition of replBufBlock. */
+    size_t ref_block_pos;                /* Access position of referenced buffer block,
+                                           i.e. the next offset to send. */
+} ClientReplicationData;
+
+typedef struct ClientModuleData {
     void *module_blocked_client;               /* Pointer to the ValkeyModuleBlockedClient associated with this
                                                 * client. This is set in case of module authentication before the
                                                 * unblocked client is reprocessed to handle reply callbacks. */
@@ -1192,50 +1152,95 @@ typedef struct client {
     void *auth_module;                         /* The module that owns the callback, which is used
                                                 * to disconnect the client if the module is
                                                 * unloaded for cleanup. Opaque for the Server Core.*/
+} ClientModuleData;
 
-    /* If this client is in tracking mode and this field is non zero,
-     * invalidation messages for keys fetched by this client will be sent to
-     * the specified client ID. */
-    uint64_t client_tracking_redirection;
-    rax *client_tracking_prefixes; /* A dictionary of prefixes we are already
-                                      subscribed to in BCAST mode, in the
-                                      context of client side caching. */
+typedef struct client {
+    uint64_t id; /* Client incremental unique ID. */
+    connection *conn;
+    sds querybuf;                        /* Buffer we use to accumulate client queries. */
+    size_t qb_pos;                       /* The position we have read in querybuf. */
+    robj **argv;                         /* Arguments of current command. */
+    int argc;                            /* Num of arguments of current command. */
+    int argv_len;                        /* Size of argv array (may be more than argc) */
+    size_t argv_len_sum;                 /* Sum of lengths of objects in argv list. */
+    int reqtype;                         /* Request protocol type: PROTO_REQ_* */
+    int multibulklen;                    /* Number of multi bulk arguments left to read. */
+    long bulklen;                        /* Length of bulk argument in multi bulk request. */
+    long long woff;                      /* Last write global replication offset. */
+    struct serverCommand *cmd;           /* Current command. */
+    struct serverCommand *lastcmd;       /* Last command executed. */
+    struct serverCommand *realcmd;       /* The original command that was executed by the client */
+    struct serverCommand *io_parsed_cmd; /* The command that was parsed by the IO thread. */
+    time_t last_interaction;             /* Time of the last interaction, used for timeout */
+    serverDb *db;                        /* Pointer to currently SELECTed DB. */
+    ClientPubSubData *pubsub_data;       /* Required for: pubsub commands and tracking. lazily initialized when first needed */
+    ClientReplicationData *repl_data;    /* Required for Replication operations. lazily initialized when first needed */
+    ClientModuleData *module_data;       /* Required for Module operations. lazily initialized when first needed */
+    multiState *mstate;                  /* MULTI/EXEC state, lazily initialized when first needed */
+    blockingState *bstate;               /* Blocking state, lazily initialized when first needed */
+    long duration;                       /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
+    char *buf;                           /* Output buffer */
+    size_t buf_usable_size;              /* Usable size of buffer. */
+    list *reply;                         /* List of reply objects to send to the client. */
+    listNode *io_last_reply_block;       /* Last client reply block when sent to IO thread */
+    size_t io_last_bufpos;               /* The client's bufpos at the time it was sent to the IO thread */
+    unsigned long long reply_bytes;      /* Tot bytes of objects in reply list. */
+    size_t sentlen;                      /* Amount of bytes already sent in the current buffer or object being sent. */
+    listNode clients_pending_write_node; /* list node in clients_pending_write or in clients_pending_io_write list */
+    int bufpos;
+    int original_argc;    /* Num of arguments of original command if arguments were rewritten. */
+    robj **original_argv; /* Arguments of original command if arguments were rewritten. */
+    union {
+        uint64_t raw_flag;
+        struct ClientFlags flag;
+    };
+    uint16_t write_flags;            /* Client Write flags - used to communicate the client write state. */
+    volatile uint8_t io_read_state;  /* Indicate the IO read state of the client */
+    volatile uint8_t io_write_state; /* Indicate the IO write state of the client */
+    uint8_t resp;                    /* RESP protocol version. Can be 2 or 3. */
+    uint8_t cur_tid;                 /* ID of IO thread currently performing IO for this client */
+    /* In updateClientMemoryUsage() we track the memory usage of
+     * each client and add it to the sum of all the clients of a given type,
+     * however we need to remember what was the old contribution of each
+     * client, and in which category the client was, in order to remove it
+     * before adding it the new value. */
+    uint8_t last_memory_type;
+    uint8_t capa;                                 /* Client capabilities: CLIENT_CAPA* macros. */
+    listNode pending_read_list_node;              /* IO thread only ?*/
+    unsigned long long net_input_bytes;           /* Total network input bytes read from this client. */
+    unsigned long long net_input_bytes_curr_cmd;  /* Total network input bytes read for the* execution of this client's current command. */
+    unsigned long long net_output_bytes;          /* Total network output bytes sent to this client. */
+    unsigned long long commands_processed;        /* Total count of commands this client executed. */
+    unsigned long long net_output_bytes_curr_cmd; /* Total network output bytes sent to this client, by the current command. */
+    size_t buf_peak;                              /* Peak used size of buffer in last 5 sec interval. */
+    int nwritten;                                 /* Number of bytes of the last write. */
+    int nread;                                    /* Number of bytes of the last read. */
+    int read_flags;                               /* Client Read flags - used to communicate the client read state. */
+    int slot;                                     /* The slot the client is executing against. Set to -1 if no slot is being used */
+    listNode *mem_usage_bucket_node;
+    clientMemUsageBucket *mem_usage_bucket;
     /* In updateClientMemoryUsage() we track the memory usage of
      * each client and add it to the sum of all the clients of a given type,
      * however we need to remember what was the old contribution of each
      * client, and in which category the client was, in order to remove it
      * before adding it the new value. */
     size_t last_memory_usage;
-    int last_memory_type;
-
-    listNode *mem_usage_bucket_node;
-    clientMemUsageBucket *mem_usage_bucket;
-
-    listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
-                                  * see the definition of replBufBlock. */
-    size_t ref_block_pos;        /* Access position of referenced buffer block,
-                                  * i.e. the next offset to send. */
-
-    /* list node in clients_pending_write or in clients_pending_io_write list */
-    listNode clients_pending_write_node;
-    listNode pending_read_list_node; /* list node in clients_pending_io_read list */
-    /* Response buffer */
-    size_t buf_peak;                   /* Peak used size of buffer in last 5 sec interval. */
+    listNode *client_list_node;        /* list node in client list */
     mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
-    int bufpos;
-    size_t io_last_bufpos;  /* The client's bufpos at the time it was sent to the IO thread */
-    size_t buf_usable_size; /* Usable size of buffer. */
-    char *buf;
+    size_t querybuf_peak;              /* Recent (100ms or more) peak of querybuf size. */
+    dictEntry *cur_script;             /* Cached pointer to the dictEntry of the script being executed. */
+    user *user;                        /* User associated with this connection */
+    time_t obuf_soft_limit_reached_time;
+    list *deferred_reply_errors; /* Used for module thread safe contexts. */
+    robj *name;                  /* As set by CLIENT SETNAME. */
+    robj *lib_name;              /* The client library name as set by CLIENT SETINFO. */
+    robj *lib_ver;               /* The client library version as set by CLIENT SETINFO. */
+    sds peerid;                  /* Cached peer ID. */
+    sds sockname;                /* Cached connection target address. */
+    time_t ctime;                /* Client creation time. */
 #ifdef LOG_REQ_RES
     clientReqResInfo reqres;
 #endif
-    unsigned long long net_input_bytes;          /* Total network input bytes read from this client. */
-    unsigned long long net_input_bytes_curr_cmd; /* Total network input bytes read for the
-                                                  * execution of this client's current command. */
-    unsigned long long net_output_bytes;         /* Total network output bytes sent to this client. */
-    unsigned long long commands_processed;       /* Total count of commands this client executed. */
-    unsigned long long
-        net_output_bytes_curr_cmd; /* Total network output bytes sent to this client, by the current command. */
 } client;
 
 /* When a command generates a lot of discrete elements to the client output buffer, it is much faster to
@@ -2919,6 +2924,8 @@ void abortFailover(const char *err);
 const char *getFailoverStateString(void);
 int sendCurrentOffsetToReplica(client *replica);
 void addRdbReplicaToPsyncWait(client *replica);
+void initClientReplicationData(client *c);
+void freeClientReplicationData(client *c);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char *filename, int rdbflags);
@@ -3257,6 +3264,8 @@ void unmarkClientAsPubSub(client *c);
 int pubsubTotalSubscriptions(void);
 dict *getClientPubSubChannels(client *c);
 dict *getClientPubSubShardChannels(client *c);
+void initClientPubSubData(client *c);
+void freeClientPubSubData(client *c);
 
 /* Keyspace events notification */
 void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
@@ -3499,6 +3508,7 @@ typedef struct luaScript {
 /* Blocked clients API */
 void processUnblockedClients(void);
 void initClientBlockingState(client *c);
+void freeClientBlockingState(client *c);
 void blockClient(client *c, int btype);
 void unblockClient(client *c, int queue_for_reprocessing);
 void unblockClientOnTimeout(client *c);

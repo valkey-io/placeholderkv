@@ -228,5 +228,7 @@ int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime end
 void moduleDefragGlobals(void);
 void *moduleGetHandleByName(char *modulename);
 int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
+void initClientModuleData(client *c);
+void freeClientModuleData(client *c);
 
 #endif /* _MODULE_H_ */
