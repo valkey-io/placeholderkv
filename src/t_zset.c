@@ -112,11 +112,11 @@ static inline void zslSetNodeHeight(zskiplistNode *x, int height) {
 
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
-zskiplistNode *zslCreateNode(int level, double score, sds ele) {
-    zskiplistNode *zn = zmalloc(sizeof(*zn) + level * sizeof(struct zskiplistLevel));
+zskiplistNode *zslCreateNode(int height, double score, sds ele) {
+    zskiplistNode *zn = zmalloc(sizeof(*zn) + height * sizeof(struct zskiplistLevel));
     zn->score = score;
     zn->ele = ele;
-    zslSetNodeHeight(zn, level);
+    zslSetNodeHeight(zn, height);
     return zn;
 }
 
@@ -551,10 +551,7 @@ unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
     return 0;
 }
 
-/* Find the rank for an element by both score and key.
- * Returns 0 when the element cannot be found, rank otherwise.
- * Note that the rank is 1-based due to the span of zsl->header to the
- * first element. */
+/* Find the rank for a specific skipllist node. */
 unsigned long zslGetRankByNode(zskiplist *zsl, zskiplistNode *x) {
     int i = zslGetNodeHeight(x) - 1;
     unsigned long rank = zslGetNodeSpanAtLevel(x, i);
