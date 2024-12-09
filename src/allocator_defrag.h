@@ -7,8 +7,8 @@
  * and the version that has the experimental.utilization namespace in mallctl . */
 #if (defined(JEMALLOC_VERSION_MAJOR) &&                                                                 \
     (JEMALLOC_VERSION_MAJOR > 5 ||                                                                      \
-     (JEMALLOC_VERSION_MAJOR == 5 && JEMALLOC_VERSION_MINOR > 2) ||                                     \
-     (JEMALLOC_VERSION_MAJOR == 5 && JEMALLOC_VERSION_MINOR == 2 && JEMALLOC_VERSION_BUGFIX >= 1))) ||  \
+      (JEMALLOC_VERSION_MAJOR == 5 && JEMALLOC_VERSION_MINOR > 2) ||                                    \
+      (JEMALLOC_VERSION_MAJOR == 5 && JEMALLOC_VERSION_MINOR == 2 && JEMALLOC_VERSION_BUGFIX >= 1))) || \
     defined(DEBUG_FORCE_DEFRAG)
 #define HAVE_DEFRAG
 #endif
