@@ -156,7 +156,7 @@ void freeEvalScriptsSync(dict *scripts, list *scripts_lru_list, list *engine_cal
     }
 }
 
-static int resetEngineEvalEnvCallback(scriptingEngine *engine, void *context) {
+static void resetEngineEvalEnvCallback(scriptingEngine *engine, void *context) {
     int async = context != NULL;
     callableLazyEvalReset *callback = scriptingEngineCallResetEvalEnvFunc(engine, async);
 
@@ -164,8 +164,6 @@ static int resetEngineEvalEnvCallback(scriptingEngine *engine, void *context) {
         list *callbacks = context;
         listAddNodeTail(callbacks, callback);
     }
-
-    return 1;
 }
 
 /* Release resources related to Lua scripting.
@@ -173,12 +171,12 @@ static int resetEngineEvalEnvCallback(scriptingEngine *engine, void *context) {
 void evalRelease(int async) {
     if (async) {
         list *engine_callbacks = listCreate();
-        engineManagerForEachEngine(resetEngineEvalEnvCallback, engine_callbacks);
+        scriptingEngineManagerForEachEngine(resetEngineEvalEnvCallback, engine_callbacks);
         freeEvalScriptsAsync(evalCtx.scripts, evalCtx.scripts_lru_list, engine_callbacks);
 
     } else {
         freeEvalScriptsSync(evalCtx.scripts, evalCtx.scripts_lru_list, NULL);
-        engineManagerForEachEngine(resetEngineEvalEnvCallback, NULL);
+        scriptingEngineManagerForEachEngine(resetEngineEvalEnvCallback, NULL);
     }
 }
 
@@ -319,7 +317,7 @@ static void evalDeleteScript(client *c, sds sha) {
     scriptHolder *sh = dictGetVal(de);
 
     /* Delete the script from the engine. */
-    engineCallFreeFunction(sh->engine, VMSE_EVAL, sh->script);
+    scriptingEngineCallFreeFunction(sh->engine, VMSE_EVAL, sh->script);
 
     evalCtx.scripts_mem -= sdsAllocSize(sha) + getStringObjectSdsUsedMemory(sh->body);
     dictFreeUnlinkedEntry(evalCtx.scripts, de);
@@ -397,7 +395,7 @@ static int evalRegisterNewScript(client *c, robj *body, char **sha) {
     }
 
     serverAssert(engine_name != NULL);
-    scriptingEngine *engine = engineManagerFind(engine_name);
+    scriptingEngine *engine = scriptingEngineManagerFind(engine_name);
     if (!engine) {
         if (c != NULL) {
             addReplyErrorFormat(c, "Could not find scripting engine '%s'", engine_name);
@@ -414,12 +412,12 @@ static int evalRegisterNewScript(client *c, robj *body, char **sha) {
     robj *_err = NULL;
     size_t num_compiled_functions = 0;
     compiledFunction **functions =
-        engineCallCompileCode(engine,
-                              VMSE_EVAL,
-                              (sds)body->ptr + shebang_len,
-                              0,
-                              &num_compiled_functions,
-                              &_err);
+        scriptingEngineCallCompileCode(engine,
+                                       VMSE_EVAL,
+                                       (sds)body->ptr + shebang_len,
+                                       0,
+                                       &num_compiled_functions,
+                                       &_err);
     if (functions == NULL) {
         serverAssert(_err != NULL);
         if (c != NULL) {
@@ -449,7 +447,7 @@ static int evalRegisterNewScript(client *c, robj *body, char **sha) {
     }
     sh->body = body;
     int retval = dictAdd(evalCtx.scripts, _sha, sh);
-    serverAssertWithInfo(c ? c : engineGetClient(engine), NULL, retval == DICT_OK);
+    serverAssertWithInfo(c ? c : scriptingEngineGetClient(engine), NULL, retval == DICT_OK);
     evalCtx.scripts_mem += sdsAllocSize(_sha) + getStringObjectSdsUsedMemory(body);
     incrRefCount(body);
     zfree(functions);
@@ -501,21 +499,21 @@ static void evalGenericCommand(client *c, int evalsha) {
     int ro = c->cmd->proc == evalRoCommand || c->cmd->proc == evalShaRoCommand;
 
     scriptRunCtx rctx;
-    if (scriptPrepareForRun(&rctx, engineGetClient(sh->engine), c, sha, sh->flags, ro) != C_OK) {
+    if (scriptPrepareForRun(&rctx, scriptingEngineGetClient(sh->engine), c, sha, sh->flags, ro) != C_OK) {
         return;
     }
     rctx.flags |= SCRIPT_EVAL_MODE; /* mark the current run as EVAL (as opposed to FCALL) so we'll
                                       get appropriate error messages and logs */
 
-    engineCallFunction(sh->engine,
-                       &rctx,
-                       c,
-                       sh->script,
-                       VMSE_EVAL,
-                       c->argv + 3,
-                       numkeys,
-                       c->argv + 3 + numkeys,
-                       c->argc - 3 - numkeys);
+    scriptingEngineCallFunction(sh->engine,
+                                &rctx,
+                                c,
+                                sh->script,
+                                VMSE_EVAL,
+                                c->argv + 3,
+                                numkeys,
+                                c->argv + 3 + numkeys,
+                                c->argc - 3 - numkeys);
     scriptResetRun(&rctx);
 
     if (sh->node) {
@@ -654,16 +652,15 @@ void scriptCommand(client *c) {
     }
 }
 
-static int getEngineUsedMemory(scriptingEngine *engine, void *context) {
+static void getEngineUsedMemory(scriptingEngine *engine, void *context) {
     size_t *sum = (size_t *)context;
-    engineMemoryInfo mem_info = engineCallGetMemoryInfo(engine, VMSE_EVAL);
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(engine, VMSE_EVAL);
     *sum += mem_info.used_memory;
-    return 1;
 }
 
 unsigned long evalMemory(void) {
     size_t memory = 0;
-    engineManagerForEachEngine(getEngineUsedMemory, &memory);
+    scriptingEngineManagerForEachEngine(getEngineUsedMemory, &memory);
     return memory;
 }
 

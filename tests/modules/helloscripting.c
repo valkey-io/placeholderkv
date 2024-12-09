@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * This module implements a very simple stack based scripting language.
@@ -28,6 +29,15 @@
  * CONSTI 432    # pushes the value 432 to the top of the stack
  * RETURN        # returns the current value on the top of the stack and marks
  *               # the end of the function declaration.
+ *
+ * FUNCTION sleep # declaration of function 'sleep'
+ * ARGS 0         # pushes the value in the first argument to the top of the
+ *                # stack
+ * SLEEP          # Pops the current value in the stack and sleeps for `value`
+ *                # seconds
+ * CONSTI 0       # pushes the value 0 to the top of the stack
+ * RETURN         # returns the current value on the top of the stack and marks
+ *                # the end of the function declaration.
  * ```
  */
 
@@ -38,6 +48,7 @@ typedef enum HelloInstKind {
     FUNCTION = 0,
     CONSTI,
     ARGS,
+    SLEEP,
     RETURN,
     _NUM_INSTRUCTIONS, // Not a real instruction.
 } HelloInstKind;
@@ -49,6 +60,7 @@ const char *HelloInstKindStr[] = {
     "FUNCTION",
     "CONSTI",
     "ARGS",
+    "SLEEP",
     "RETURN",
 };
 
@@ -185,6 +197,10 @@ static int helloLangParseCode(const char *code,
             ValkeyModule_Assert(currentFunc != NULL);
             helloLangParseArgs(currentFunc);
             break;
+        case SLEEP:
+            ValkeyModule_Assert(currentFunc != NULL);
+            currentFunc->num_instructions++;
+            break;
         case RETURN:
             ValkeyModule_Assert(currentFunc != NULL);
             currentFunc->num_instructions++;
@@ -204,13 +220,40 @@ static int helloLangParseCode(const char *code,
     return 0;
 }
 
+static ValkeyModuleScriptingEngineExecutionState executeSleepInst(ValkeyModuleScriptingEngineServerRuntimeCtx *server_ctx,
+                             uint32_t seconds) {
+    uint32_t elapsed_milliseconds = 0;
+    ValkeyModuleScriptingEngineExecutionState state = VMSE_STATE_EXECUTING;
+    while(1) {
+        state = ValkeyModule_GetFunctionExecutionState(server_ctx);
+        if (state != VMSE_STATE_EXECUTING) {
+            break;
+        }
+
+        if (elapsed_milliseconds >= (seconds * 1000)) {
+            break;
+        }
+
+        usleep(1000);
+        elapsed_milliseconds++;
+    }
+
+    return state;
+}
+
 /*
  * Executes an HELLO function.
  */
-static uint32_t executeHelloLangFunction(HelloFunc *func,
-                                         ValkeyModuleString **args, int nargs) {
+static ValkeyModuleScriptingEngineExecutionState executeHelloLangFunction(ValkeyModuleScriptingEngineServerRuntimeCtx *server_ctx,
+                                                                          HelloFunc *func,
+                                                                          ValkeyModuleString **args,
+                                                                          int nargs,
+                                                                          uint32_t *result) {
+    ValkeyModule_Assert(result != NULL);
     uint32_t stack[64];
+    uint32_t val = 0;
     int sp = 0;
+    ValkeyModuleScriptingEngineExecutionState state = VMSE_STATE_EXECUTING;
 
     for (uint32_t pc = 0; pc < func->num_instructions; pc++) {
         HelloInst instr = func->instructions[pc];
@@ -226,21 +269,27 @@ static uint32_t executeHelloLangFunction(HelloFunc *func,
             uint32_t arg = str2int(argStr);
             stack[sp++] = arg;
             break;
-        }
+	    }
+        case SLEEP: {
+            val = stack[--sp];
+            state = executeSleepInst(server_ctx, val);
+            break;
+	    }
         case RETURN: {
             ValkeyModule_Assert(sp > 0);
-            uint32_t val = stack[--sp];
+            val = stack[--sp];
             ValkeyModule_Assert(sp == 0);
-            return val;
-        }
+            *result = val;
+            return state;
+	    }
         case FUNCTION:
-        default:
+        case _NUM_INSTRUCTIONS:
             ValkeyModule_Assert(0);
         }
     }
 
     ValkeyModule_Assert(0);
-    return 0;
+    return state;
 }
 
 static ValkeyModuleScriptingEngineMemoryInfo engineGetMemoryInfo(ValkeyModuleCtx *module_ctx,
@@ -353,19 +402,30 @@ static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(Valke
 static void
 callHelloLangFunction(ValkeyModuleCtx *module_ctx,
                       ValkeyModuleScriptingEngineCtx *engine_ctx,
-                      ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
+                      ValkeyModuleScriptingEngineServerRuntimeCtx *server_ctx,
                       ValkeyModuleScriptingEngineCompiledFunction *compiled_function,
                       ValkeyModuleScriptingEngineSubsystemType type,
                       ValkeyModuleString **keys, size_t nkeys,
                       ValkeyModuleString **args, size_t nargs) {
     VALKEYMODULE_NOT_USED(engine_ctx);
-    VALKEYMODULE_NOT_USED(func_ctx);
-    VALKEYMODULE_NOT_USED(type);
     VALKEYMODULE_NOT_USED(keys);
     VALKEYMODULE_NOT_USED(nkeys);
 
+    ValkeyModule_Assert(type == VMSE_EVAL || type == VMSE_FUNCTION);
+
     HelloFunc *func = (HelloFunc *)compiled_function->function;
-    uint32_t result = executeHelloLangFunction(func, args, nargs);
+    uint32_t result;
+    ValkeyModuleScriptingEngineExecutionState state = executeHelloLangFunction(server_ctx, func, args, nargs, &result);
+    ValkeyModule_Assert(state == VMSE_STATE_KILLED || state == VMSE_STATE_EXECUTING);
+
+    if (state == VMSE_STATE_KILLED) {
+        if (type == VMSE_EVAL) {
+            ValkeyModule_ReplyWithError(module_ctx, "ERR Script killed by user with SCRIPT KILL.");
+        }
+        if (type == VMSE_FUNCTION) {
+            ValkeyModule_ReplyWithError(module_ctx, "ERR Script killed by user with FUNCTION KILL");
+        }
+    }
 
     ValkeyModule_ReplyWithLongLong(module_ctx, result);
 }

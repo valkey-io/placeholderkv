@@ -123,6 +123,22 @@ start_server {tags {"modules"}} {
         assert_equal $result 432
     }
 
+    test {Test function kill} {
+        set rd [valkey_deferring_client]
+        r config set busy-reply-threshold 10
+        r function load REPLACE "#!hello name=mylib\nFUNCTION sleep\nARGS 0\nSLEEP\nARGS 0\nRETURN"
+        $rd fcall sleep 0 100
+        after 1000
+        catch {r ping} e
+        assert_match {BUSY*} $e
+        assert_match {running_script {name sleep command {fcall sleep 0 100} duration_ms *} engines {*}} [r FUNCTION STATS]
+        r function kill
+        after 1000 ;
+        assert_equal [r ping] "PONG"
+        assert_error {ERR Script killed by user with FUNCTION KILL*} {$rd read}
+        $rd close
+    }
+
     test {Unload scripting engine module} {
         set result [r module unload helloengine]
         assert_equal $result "OK"

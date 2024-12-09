@@ -31,14 +31,14 @@ typedef void (*engineIterCallback)(scriptingEngine *engine, void *context);
  * Engine manager API functions.
  */
 int scriptingEngineManagerInit(void);
-size_t scriptingEngineManagerGetCacheMemory(void);
+size_t scriptingEngineManagerGetTotalMemoryOverhead(void);
 size_t scriptingEngineManagerGetNumEngines(void);
 size_t scriptingEngineManagerGetMemoryUsage(void);
-int scriptingEngineManagerRegisterEngine(const char *engine_name,
-                                ValkeyModule *engine_module,
-                                engineCtx *engine_ctx,
-                                engineMethods *engine_methods);
-int scriptingEngineManagerUnregisterEngine(const char *engine_name);
+int scriptingEngineManagerRegister(const char *engine_name,
+                                   ValkeyModule *engine_module,
+                                   engineCtx *engine_ctx,
+                                   engineMethods *engine_methods);
+int scriptingEngineManagerUnregister(const char *engine_name);
 scriptingEngine *scriptingEngineManagerFind(const char *engine_name);
 void scriptingEngineManagerForEachEngine(engineIterCallback callback, void *context);
 

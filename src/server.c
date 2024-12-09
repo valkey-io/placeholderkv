@@ -1369,11 +1369,10 @@ void checkChildrenDone(void) {
     }
 }
 
-static int sumEngineUsedMemory(scriptingEngine *engine, void *context) {
+static void sumEngineUsedMemory(scriptingEngine *engine, void *context) {
     size_t *total_memory = (size_t *)context;
-    engineMemoryInfo mem_info = engineCallGetMemoryInfo(engine, VMSE_ALL);
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(engine, VMSE_ALL);
     *total_memory += mem_info.used_memory;
-    return 1;
 }
 
 /* Called from serverCron and cronUpdateMemoryStats to update cached memory metrics. */
@@ -1402,7 +1401,7 @@ void cronUpdateMemoryStats(void) {
              * so we must deduct it in order to be able to calculate correct
              * "allocator fragmentation" ratio */
             size_t engines_memory = 0;
-            engineManagerForEachEngine(sumEngineUsedMemory, &engines_memory);
+            scriptingEngineManagerForEachEngine(sumEngineUsedMemory, &engines_memory);
             server.cron_malloc_stats.allocator_resident = server.cron_malloc_stats.process_rss - engines_memory;
         }
         if (!server.cron_malloc_stats.allocator_active)

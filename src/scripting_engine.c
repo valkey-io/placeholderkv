@@ -142,7 +142,7 @@ int scriptingEngineManagerUnregister(const char *engine_name) {
 
     functionsRemoveLibFromEngine(e);
 
-    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e);
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e, VMSE_ALL);
     engineMgr.total_memory_overhead -= zmalloc_size(e) +
                                        sdsAllocSize(e->name) +
                                        mem_info.engine_memory_overhead;
@@ -215,17 +215,17 @@ static void engineTeardownModuleCtx(scriptingEngine *e) {
     }
 }
 
-compiledFunction **scriptinEngineCallCompileCode(scriptingEngine *engine,
-                                                 subsystemType type,
-                                                 const char *code,
-                                                 size_t timeout,
-                                                 size_t *out_num_compiled_functions,
-                                                 robj **err) {
+compiledFunction **scriptingEngineCallCompileCode(scriptingEngine *engine,
+                                                  subsystemType type,
+                                                  const char *code,
+                                                  size_t timeout,
+                                                  size_t *out_num_compiled_functions,
+                                                  robj **err) {
     serverAssert(type == VMSE_EVAL || type == VMSE_FUNCTION);
 
     engineSetupModuleCtx(engine, NULL);
 
-    compiledFunction **functions = engine->impl->methods.compile_code(
+    compiledFunction **functions = engine->impl.methods.compile_code(
         engine->module_ctx,
         engine->impl.ctx,
         type,
@@ -290,11 +290,11 @@ size_t scriptingEngineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
 }
 
 callableLazyEvalReset *scriptingEngineCallResetEvalEnvFunc(scriptingEngine *engine,
-                                                  int async) {
+                                                           int async) {
     engineSetupModuleCtx(engine, NULL);
     callableLazyEvalReset *callback = engine->impl.methods.reset_eval_env(
         engine->module_ctx,
-        engine->impl->ctx,
+        engine->impl.ctx,
         async);
     engineTeardownModuleCtx(engine);
     return callback;
