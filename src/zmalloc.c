@@ -205,7 +205,6 @@ void *zmalloc_usable(size_t size, size_t *usable) {
     return ptr;
 }
 
-
 /* Try allocating memory and zero it, and return NULL if failed.
  * '*usable' is set to the usable size if non NULL. */
 static inline void *ztrycalloc_usable_internal(size_t size, size_t *usable) {
