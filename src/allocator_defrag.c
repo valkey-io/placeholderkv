@@ -43,11 +43,9 @@
  * the other component to ensure both are using the same allocator configuration.
  */
 
-#include <stdio.h>
-#include "serverassert.h"
-#include "zmalloc.h"
-#include "allocator_defrag.h"
 #include "server.h"
+#include "serverassert.h"
+#include "allocator_defrag.h"
 
 #if defined(HAVE_DEFRAG) && defined(USE_JEMALLOC)
 
