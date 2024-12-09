@@ -551,7 +551,7 @@ unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
     return 0;
 }
 
-/* Find the rank for a specific skipllist node. */
+/* Find the rank for a specific skiplist node. */
 unsigned long zslGetRankByNode(zskiplist *zsl, zskiplistNode *x) {
     int i = zslGetNodeHeight(x) - 1;
     unsigned long rank = zslGetNodeSpanAtLevel(x, i);
@@ -1228,8 +1228,8 @@ unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsig
 /* Utility function used for mapping the hashtable entry to the matching skiplist node.
  * For example, this is used in case of ZRANK query. */
 static inline zskiplistNode *zsetGetSLNodeByEntry(dictEntry *de) {
-    double *score_ref = ((double *)dictGetVal(de));
-    return (zskiplistNode *)(score_ref - 1);
+    char *score_ref = ((char *)dictGetVal(de));
+    return (zskiplistNode *)(score_ref - offsetof(zskiplistNode, score));
 }
 
 unsigned long zsetLength(const robj *zobj) {
