@@ -1049,6 +1049,14 @@ __attribute__((noinline, weak)) void _serverAssert(const char *estr, const char 
     bugReportEnd(0, 0);
 }
 
+/* Returns the argv argument in binary representation, limited to length 128. */
+sds getArgvReprString(robj *argv) {
+    robj *decoded = getDecodedObject(argv);
+    sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
+    decrRefCount(decoded);
+    return repr;
+}
+
 /* Checks if the argument at the given index should be redacted from logs. */
 int shouldRedactArg(const client *c, int idx) {
     serverAssert(idx < c->argc);
@@ -1073,16 +1081,12 @@ void _serverAssertPrintClientInfo(const client *c) {
             serverLog(LL_WARNING, "client->argv[%d]: %zu bytes", j, sdslen((sds)c->argv[j]->ptr));
             continue;
         }
-        char buf[128];
-        char *arg;
-
-        if (c->argv[j]->type == OBJ_STRING && sdsEncodedObject(c->argv[j])) {
-            arg = (char *)c->argv[j]->ptr;
-        } else {
-            snprintf(buf, sizeof(buf), "Object type: %u, encoding: %u", c->argv[j]->type, c->argv[j]->encoding);
-            arg = buf;
+        sds repr = getArgvReprString(c->argv[j]);
+        serverLog(LL_WARNING, "client->argv[%d] = %s (refcount: %d)", j, repr, c->argv[j]->refcount);
+        sdsfree(repr);
+        if (!strcasecmp(c->argv[j]->ptr, "auth") || !strcasecmp(c->argv[j]->ptr, "auth2")) {
+            break;
         }
-        serverLog(LL_WARNING, "client->argv[%d] = \"%s\" (refcount: %d)", j, arg, c->argv[j]->refcount);
     }
 }
 
@@ -1890,23 +1894,18 @@ void logCurrentClient(client *cc, const char *title) {
     client = catClientInfoString(sdsempty(), cc, server.hide_user_data_from_log);
     serverLog(LL_WARNING | LL_RAW, "%s\n", client);
     sdsfree(client);
-    serverLog(LL_WARNING | LL_RAW, "argc: '%d'\n", cc->argc);
+    serverLog(LL_WARNING | LL_RAW, "argc: %d\n", cc->argc);
     for (j = 0; j < cc->argc; j++) {
         if (shouldRedactArg(cc, j)) {
             serverLog(LL_WARNING | LL_RAW, "argv[%d]: %zu bytes\n", j, sdslen((sds)cc->argv[j]->ptr));
             continue;
         }
-        robj *decoded;
-        decoded = getDecodedObject(cc->argv[j]);
-        sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
-        serverLog(LL_WARNING | LL_RAW, "argv[%d]: '%s'\n", j, (char *)repr);
-        if (!strcasecmp(decoded->ptr, "auth") || !strcasecmp(decoded->ptr, "auth2")) {
-            sdsfree(repr);
-            decrRefCount(decoded);
+        sds repr = getArgvReprString(cc->argv[j]);
+        serverLog(LL_WARNING | LL_RAW, "argv[%d]: %s\n", j, repr);
+        sdsfree(repr);
+        if (!strcasecmp(cc->argv[j]->ptr, "auth") || !strcasecmp(cc->argv[j]->ptr, "auth2")) {
             break;
         }
-        sdsfree(repr);
-        decrRefCount(decoded);
     }
     /* Check if the first argument, usually a key, is found inside the
      * selected DB, and if so print info about the associated object. */
