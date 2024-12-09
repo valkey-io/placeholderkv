@@ -4103,7 +4103,7 @@ void clientCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
         /* CLIENT IMPORT-SOURCE ON|OFF */
         if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
-            addReplyError(c, "Server is not in import mode and we only allow to close import-source status.");
+            addReplyError(c, "Server is not in import mode");
             return;
         }
         if (!strcasecmp(c->argv[2]->ptr, "on")) {

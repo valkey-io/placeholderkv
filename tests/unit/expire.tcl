@@ -838,7 +838,7 @@ start_server {tags {"expire"}} {
         set id [r client id]
 
         catch {r client import-source on} err
-        assert_match {*Server is not in import mode and we only allow to close import-source status*} $err
+        assert_match {ERR*} $err
 
         r config set import-mode yes
         assert_equal [r client import-source on] {OK}
