@@ -1369,7 +1369,7 @@ static void updateDefragCpuPercent(void) {
 
 void cancelActiveDefrag(void) {
     if (defragIsRunning()) {
-        // Defrag has been disabled while running
+        // Defrag is requested to stop while running
         endDefragCycle(false);
     }
 }
