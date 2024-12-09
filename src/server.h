@@ -3354,6 +3354,7 @@ void enterExecutionUnit(int update_cached_time, long long us);
 void exitExecutionUnit(void);
 void resetServerStats(void);
 void monitorActiveDefrag(void);
+void cancelActiveDefrag(void);
 void defragWhileBlocked(void);
 unsigned int getLRUClock(void);
 unsigned int LRU_CLOCK(void);

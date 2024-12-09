@@ -1367,6 +1367,12 @@ static void updateDefragCpuPercent(void) {
     }
 }
 
+void cancelActiveDefrag(void) {
+    if (defragIsRunning()) {
+        // Defrag has been disabled while running
+        endDefragCycle(false);
+    }
+}
 
 void monitorActiveDefrag(void) {
     if (!server.active_defrag_enabled) return;
@@ -1381,6 +1387,10 @@ void monitorActiveDefrag(void) {
 }
 
 #else /* HAVE_DEFRAG */
+
+void cancelActiveDefrag(void) {
+    /* Not implemented yet. */
+}
 
 void monitorActiveDefrag(void) {
     /* Not implemented yet. */

@@ -559,6 +559,10 @@ long long emptyData(int dbnum, int flags, void(callback)(dict *)) {
         return -1;
     }
 
+    /* In case we are in the process of activedefrag, the db keys and expire might be in the stage of defrag.
+     * we thus cancel the active defrag so that it will be restarted from the beginning. */
+    cancelActiveDefrag();
+
     /* Fire the flushdb modules event. */
     moduleFireServerEvent(VALKEYMODULE_EVENT_FLUSHDB, VALKEYMODULE_SUBEVENT_FLUSHDB_START, &fi);
 
