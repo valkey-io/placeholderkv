@@ -22,9 +22,9 @@ if (VALKEY_RELEASE_BUILD)
     set_property(TARGET valkey-server PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif ()
 
-if (FORCE_DEFRAG)
+if (DEBUG_FORCE_DEFRAG)
     message(STATUS "Forcing Active Defrag run on valkey-server")
-    target_compile_definitions(valkey-server PRIVATE FORCE_DEFRAG)
+    target_compile_definitions(valkey-server PRIVATE DEBUG_FORCE_DEFRAG)
     target_compile_definitions(valkey-server PRIVATE HAVE_DEFRAG)
 endif ()
 
