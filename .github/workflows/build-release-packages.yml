@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
-      is_test: ${{ steps.check-env.outputs.IS_TEST }}
+      is_test: ${{ steps.check-if-testing.outputs.IS_TEST }}
     steps:
       - run: |
           echo "Version: ${{ inputs.version || github.ref_name }}"
@@ -54,8 +54,8 @@ jobs:
           # only ever be a tag
           INPUT_VERSION: ${{ inputs.version || github.ref_name }}
 
-      - name: Set bucket name
-        id: check-env
+      - name: Check if we are testing
+        id: check-if-testing
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "IS_TEST=true" >> $GITHUB_OUTPUT
