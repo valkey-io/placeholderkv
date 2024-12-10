@@ -1900,7 +1900,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
     } else if (rdbtype == RDB_TYPE_SET) {
         /* Read Set value */
         if ((len = rdbLoadLen(rdb, NULL)) == RDB_LENERR) return NULL;
-        if (len == 0) goto emptykey;
+        if (len == 0 && !server.allow_empty_set) goto emptykey;
 
         /* Use a regular set when there are too many entries. */
         size_t max_entries = server.set_max_intset_entries;
@@ -2356,6 +2356,18 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
             o->type = OBJ_SET;
             o->encoding = OBJ_ENCODING_INTSET;
+
+            if (intsetLen((intset *)encoded) == 0) {
+                if (!server.allow_empty_set) {
+                    zfree(encoded);
+                    o->ptr = NULL;
+                    decrRefCount(o);
+                    goto emptykey;
+                }
+
+                zfree(encoded);
+                o->ptr = intsetNew();
+            }
             if (intsetLen(o->ptr) > server.set_max_intset_entries) setTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             break;
         case RDB_TYPE_SET_LISTPACK:
@@ -2371,10 +2383,15 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             o->encoding = OBJ_ENCODING_LISTPACK;
 
             if (setTypeSize(o) == 0) {
+                if (!server.allow_empty_set) {
+                    zfree(encoded);
+                    o->ptr = NULL;
+                    decrRefCount(o);
+                    goto emptykey;
+                }
+
                 zfree(encoded);
-                o->ptr = NULL;
-                decrRefCount(o);
-                goto emptykey;
+                o->ptr = lpNew(0);
             }
             if (setTypeSize(o) > server.set_max_listpack_entries) setTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             break;
