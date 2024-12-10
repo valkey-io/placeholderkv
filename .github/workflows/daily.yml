@@ -699,10 +699,6 @@ jobs:
     timeout-minutes: 14400
     strategy:
       fail-fast: false
-      matrix:
-        compiler: [gcc, clang]
-    env:
-      CC: ${{ matrix.compiler }}
     steps:
       - name: prep
         if: github.event_name == 'workflow_dispatch'
