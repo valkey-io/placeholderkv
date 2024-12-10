@@ -4,7 +4,7 @@ start_server {tags {"maxmemory" "external:skip"}} {
     set server_pid [s process_id]
 
     proc init_test {client_eviction} {
-        r flushdb
+        r flushdb sync
 
         set prev_maxmemory_clients [r config get maxmemory-clients]
         if $client_eviction {
