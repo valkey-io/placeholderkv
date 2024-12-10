@@ -834,21 +834,16 @@ start_server {tags {"expire"}} {
     } {} {needs:debug}
 
     test {import-source can be closed when import-mode is off} {
-        r flushall
-        set id [r client id]
-
-        catch {r client import-source on} err
-        assert_match {ERR*} $err
+        r config set import-mode no
+        assert_error "ERR Server is not in import mode" {r client import-source on}
 
         r config set import-mode yes
         assert_equal [r client import-source on] {OK}
-
-        assert_match {*flags=I*} [r client list id $id]
+        assert_match {*flags=I*} [r client list id [r client id]]
 
         r config set import-mode no
         assert_equal [r client import-source off] {OK}
-
-        assert_match {*flags=N*} [r client list id $id]
+        assert_match {*flags=N*} [r client list id [r client id]]
     }
 
     test {Import mode should forbid active expiration} {
