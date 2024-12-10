@@ -34,6 +34,7 @@
  */
 
 #include "server.h"
+#include "script.h"
 #include <stddef.h>
 
 #ifdef HAVE_DEFRAG
@@ -279,6 +280,12 @@ robj *activeDefragStringOb(robj *ob) {
  * and should NOT be accessed. */
 static luaScript *activeDefragLuaScript(luaScript *script) {
     luaScript *ret = NULL;
+
+    /* In case we are in the process of eval some script we do not want to replace the script being run
+     * so we just bail out without really defragging here. */
+    if (scriptIsRunning()) {
+        return script;
+    }
 
     /* try to defrag script struct */
     if ((ret = activeDefragAlloc(script))) {
