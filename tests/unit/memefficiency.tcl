@@ -138,8 +138,12 @@ run_solo {defrag} {
                 # reset stats and load the AOF file
                 r config resetstat
                 r config set key-load-delay -25 ;# sleep on average 1/25 usec
+                # Note: This test is checking if defrag is working DURING AOF loading (while
+                #       timers are not active).  So we don't give any extra time, and we deactivate
+                #       defrag immediately after the AOF loading is complete.  During loading,
+                #       defrag will get invoked less often, causing starvation prevention.  We
+                #       should expect longer latency measurements.
                 r debug loadaof
-                after 1000 ;# give defrag a chance to work before turning it off
                 r config set activedefrag no
 
                 # measure hits and misses right after aof loading
