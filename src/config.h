@@ -40,6 +40,7 @@
 #ifdef __linux__
 #include <features.h>
 #include <fcntl.h>
+#include <sys/socket.h>
 #endif
 
 #if defined(__APPLE__) && defined(MAC_OS_X_VERSION_MAX_ALLOWED) && MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
@@ -89,6 +90,13 @@
 #if defined(SO_MARK)
 #define HAVE_SOCKOPTMARKID 1
 #define SOCKOPTMARKID SO_MARK
+#endif
+#endif
+
+/* MSG_ZEROCOPY. */
+#ifdef __linux__
+#if defined(SO_ZEROCOPY)
+#define HAVE_MSG_ZEROCOPY 1
 #endif
 #endif
 

@@ -137,7 +137,7 @@ static void connSocketShutdown(connection *conn) {
 /* Close the connection and free resources. */
 static void connSocketClose(connection *conn) {
     if (conn->fd != -1) {
-        aeDeleteFileEvent(server.el, conn->fd, AE_READABLE | AE_WRITABLE);
+        aeDeleteFileEvent(server.el, conn->fd, AE_READABLE | AE_WRITABLE | AE_ERROR_QUEUE);
         close(conn->fd);
         conn->fd = -1;
     }
@@ -238,20 +238,22 @@ static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc fun
     if (func == conn->read_handler) return C_OK;
 
     conn->read_handler = func;
-    if (!conn->read_handler && !conn->err_queue_handler)
+    if (!conn->read_handler)
         aeDeleteFileEvent(server.el, conn->fd, AE_READABLE);
     else if (aeCreateFileEvent(server.el, conn->fd, AE_READABLE, conn->type->ae_handler, conn) == AE_ERR)
         return C_ERR;
     return C_OK;
 }
 
+/* Register an error queue handler, to be called when the connection has a
+ * new error message. If NULL, the existing handler is removed. */
 static int connSocketSetErrorQueueHandler(connection *conn, ConnectionCallbackFunc func) {
-    if (func == conn->err_queue_handler) return C_OK;
+    if (func == conn->error_queue_handler) return C_OK;
 
-    conn->err_queue_handler = func;
-    if (!conn->err_queue_handler && !conn->read_handler) {
-        aeDeleteFileEvent(server.el, conn->fd, AE_READABLE);
-    } else if (aeCreateFileEvent(server.el, conn->fd, AE_READABLE, conn->type->ae_handler, conn) == AE_ERR) {
+    conn->error_queue_handler = func;
+    if (!conn->error_queue_handler) {
+        aeDeleteFileEvent(server.el, conn->fd, AE_ERROR_QUEUE);
+    } else if (aeCreateFileEvent(server.el, conn->fd, AE_ERROR_QUEUE, conn->type->ae_handler, conn) == AE_ERR) {
         return C_ERR;
     }
     return C_OK;
@@ -296,10 +298,12 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
 
     int call_write = (mask & AE_WRITABLE) && conn->write_handler;
     int call_read = (mask & AE_READABLE) && conn->read_handler;
-    int call_err_queue = (mask & AE_READABLE) && conn->err_queue_handler;
+    int call_error_queue = (mask & AE_ERROR_QUEUE) && conn->error_queue_handler;
+    if (mask & AE_ERROR_QUEUE)
+        serverLog(LL_WARNING, "got event for fd %d with event mask %d. Will call error handler: %d", conn->fd, mask, call_error_queue);
 
-    if (call_err_queue) {
-        if (!callHandler(conn, conn->err_queue_handler)) return;
+    if (call_error_queue) {
+        if (!callHandler(conn, conn->error_queue_handler)) return;
     }
 
     /* Handle normal I/O flows */

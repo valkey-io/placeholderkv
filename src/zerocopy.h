@@ -3,35 +3,29 @@
 
 #include "server.h"
 
-#define ZERO_COPY_RECORD_BUF_INIT_SIZE 1024
+#define ZERO_COPY_RECORD_TRACKER_INIT_SIZE 1024
 #define ZERO_COPY_MIN_WRITE_SIZE 10*1024 /* 10KiB is the threshold referenced by the Linux kernel
                                           * as being beneficial to enable zero copy, and shows
                                           * positive performance across all tested data sizes:
                                           * https://docs.kernel.org/networking/msg_zerocopy.html */
+#define ZERO_COPY_DOWNSIZE_UTILIZATION_WATERMARK 0.4
 
-/* Create a new zero copy record buffer with the given capacity. */
-zeroCopyRecordBuffer *createZeroCopyRecordBuffer(void);
+int shouldUseZeroCopy(size_t len);
+ssize_t zeroCopyWriteToConn(connection *conn, char *buf, size_t len);
+zeroCopyTracker *createZeroCopyTracker(void);
+void freeZeroCopyTracker(zeroCopyTracker *tracker);
+zeroCopyRecord *zeroCopyTrackerGet(zeroCopyTracker *tracker, uint32_t index);
+zeroCopyRecord *zeroCopyTrackerFront(zeroCopyTracker *tracker);
+void zeroCopyTrackerPop(zeroCopyTracker *tracker);
+zeroCopyRecord *zeroCopyTrackerExtend(zeroCopyTracker *tracker);
+zeroCopyRecord *zeroCopyTrackerEnd(zeroCopyTracker *tracker);
 
-/* Free an existing zero copy buffer and decrement reference counts as needed*/
-void freeZeroCopyRecordBuffer(zeroCopyRecordBuffer *buf);
+/* When connections are closed, they may leave orphan zero copy records that
+ * are still in use by the kernel. */
+void zeroCopyStartDraining(zeroCopyTracker *tracker, connection *conn);
 
-/* Get a zero copy record for a specific sequence number. */
-zeroCopyRecord *zeroCopyRecordBufferGet(zeroCopyRecordBuffer *buf, size_t index);
-
-/* Get the first zero copy record in the buffer. */
-zeroCopyRecord *zeroCopyRecordBufferFront(zeroCopyRecordBuffer *buf);
-
-/* Remove the first zero copy record in the buffer. */
-void zeroCopyRecordBufferPop(zeroCopyRecordBuffer *buf);
-
-/* Add a new zero copy record to the end of the buffer. */
-zeroCopyRecord *zeroCopyRecordBufferExtend(zeroCopyRecordBuffer *buf);
-
-/* Get the last zero copy record in the buffer. */
-zeroCopyRecord *zeroCopyRecordBufferEnd(zeroCopyRecordBuffer *buf);
-
-/* Callback for when there is a new message on the connection's error queue.
+/* Callback for when there is a new message on the connection's message queue.
  * Assumes that the client object is stored as private data in the connection. */
-void handleZeroCopyMessage(connection *conn);
+void processZeroCopyMessages(connection *conn);
 
 #endif  /* ZEROCOPY_H */

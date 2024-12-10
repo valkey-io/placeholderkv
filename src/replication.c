@@ -364,6 +364,7 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         fo->refcount--;
         trimmed_blocks++;
         server.repl_backlog->histlen -= fo->size;
+        serverLog(LL_WARNING, "Trimming backlog block! %lu length, %llu offset", fo->size, fo->repl_offset);
 
         /* Go to use next replication buffer block node. */
         listNode *next = listNextNode(first);
@@ -1035,11 +1036,6 @@ int startBgsaveForReplication(int mincapa, int req) {
 void syncCommand(client *c) {
     /* ignore SYNC if already replica or in monitor mode */
     if (c->flag.replica) return;
-
-    /* Enable zero copy at the socket level for replication links. This simply
-     * enables zero copy to be used later, and does not change any default
-     * behavior of the socket. */
-    connSetZeroCopy(c->conn, 1);
 
     /* Check if this is a failover request to a replica with the same replid and
      * become a primary if so. */
@@ -4742,8 +4738,8 @@ void replicationCron(void) {
      * replicas number + 1(replication backlog). */
     if (listLength(server.repl_buffer_blocks) > 0) {
         replBufBlock *o = listNodeValue(listFirst(server.repl_buffer_blocks));
-        serverAssert(o->refcount > 0);
-        serverAssert(o->refcount <= (int)listLength(server.replicas) + 1 + (int)raxSize(server.replicas_waiting_psync));
+        serverAssert(o->refcount > 0 &&
+                     o->refcount <= (int)listLength(server.replicas) + 1 + (int)raxSize(server.replicas_waiting_psync) + server.draining_zero_copy_connections);
     }
 
     /* Refresh the number of replicas with lag <= min-replicas-max-lag. */

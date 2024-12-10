@@ -2683,6 +2683,7 @@ void initServer(void) {
     server.tracking_pending_keys = listCreate();
     server.pending_push_messages = listCreate();
     server.clients_waiting_acks = listCreate();
+    server.draining_zero_copy_connections = 0;
     server.get_ack_from_replicas = 0;
     server.paused_actions = 0;
     memset(server.client_pause_per_purpose, 0, sizeof(server.client_pause_per_purpose));

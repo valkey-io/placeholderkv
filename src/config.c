@@ -2560,6 +2560,21 @@ static int updateExtendedRedisCompat(const char **err) {
     return 1;
 }
 
+static int applyTcpTxZerocopy(const char **err) {
+    #ifndef HAVE_MSG_ZEROCOPY
+    if (server.tcp_tx_zerocopy) {
+        static char msg[128];
+        snprintf(msg, sizeof(msg), "TCP zerocopy is not supported by this system")
+        *err = msg;
+        return 0;
+    }
+    return 1;
+    #else
+    UNUSED(err);
+    return 1;
+    #endif
+}
+
 static int updateSighandlerEnabled(const char **err) {
     UNUSED(err);
     if (server.crashlog_enabled)
@@ -3140,6 +3155,7 @@ standardConfig static_configs[] = {
     createBoolConfig("cluster-slot-stats-enabled", NULL, MODIFIABLE_CONFIG, server.cluster_slot_stats_enabled, 0, NULL, NULL),
     createBoolConfig("hide-user-data-from-log", NULL, MODIFIABLE_CONFIG, server.hide_user_data_from_log, 1, NULL, NULL),
     createBoolConfig("import-mode", NULL, MODIFIABLE_CONFIG, server.import_mode, 0, NULL, NULL),
+    createBoolConfig("tcp-tx-zerocopy", NULL, MODIFIABLE_CONFIG, server.tcp_tx_zerocopy, 1, NULL, applyTcpTxZerocopy),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),

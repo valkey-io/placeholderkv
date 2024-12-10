@@ -335,6 +335,7 @@ int anetRecvTimeout(char *err, int fd, long long ms) {
     return ANET_OK;
 }
 
+#ifdef HAVE_MSG_ZEROCOPY
 int anetSetZeroCopy(char *err, int fd, int setting) {
     if (setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &setting, sizeof(setting)) < 0) {
         anetSetError(err, "setsockopt SO_ZEROCOPY: %s", strerror(errno));
@@ -342,6 +343,11 @@ int anetSetZeroCopy(char *err, int fd, int setting) {
     }
     return ANET_OK;
 }
+#else
+int anetSetZeroCopy(char *err, int fd, int setting) {
+    return ANET_OK;
+}
+#endif
 
 /* Resolve the hostname "host" and set the string representation of the
  * IP address into the buffer pointed by "ipbuf".

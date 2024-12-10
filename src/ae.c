@@ -196,6 +196,7 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask, aeFileProc *proc
     fe->mask |= mask;
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
+    if (mask & AE_ERROR_QUEUE) fe->errfileproc = proc;
     fe->clientData = clientData;
     if (fd > eventLoop->maxfd) eventLoop->maxfd = fd;
 
@@ -233,7 +234,7 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask) {
     /* Check whether there are events to be removed.
      * Note: user may remove the AE_BARRIER without
      * touching the actual events. */
-    if (mask & (AE_READABLE | AE_WRITABLE)) {
+    if (mask & (AE_READABLE | AE_WRITABLE | AE_ERROR_QUEUE)) {
         /* Must be invoked after the eventLoop mask is modified,
          * which is required by evport and epoll */
         aeApiDelEvent(eventLoop, fd, mask);
@@ -461,7 +462,9 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
             int fd = eventLoop->fired[j].fd;
             aeFileEvent *fe = &eventLoop->events[fd];
             int mask = eventLoop->fired[j].mask;
-            int fired = 0; /* Number of events fired for current fd. */
+            int fired_err_queue = 0;
+            int fired_write = 0;
+            int fired_read = 0;
 
             /* Normally we execute the readable event first, and the writable
              * event later. This is useful as sometimes we may be able
@@ -478,31 +481,34 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
 
             /* Note the "fe->mask & mask & ..." code: maybe an already
              * processed event removed an element that fired and we still
-             * didn't processed, so we check if the event is still valid.
-             *
-             * Fire the readable event if the call sequence is not
+             * didn't processed, so we check if the event is still valid. */
+            if (fe->mask & mask & AE_ERROR_QUEUE) {
+                fe->errfileproc(eventLoop, fd, fe->clientData, mask);
+                fired_err_queue = 1;
+                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
+            }
+
+            /* Fire the readable event if the call sequence is not
              * inverted. */
-            if (!invert && fe->mask & mask & AE_READABLE) {
+            if (!invert && fe->mask & mask & AE_READABLE && (!fired_err_queue || fe->rfileProc != fe->errfileproc)) {
                 fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                fired++;
+                fired_read = 1;
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
             }
 
             /* Fire the writable event. */
-            if (fe->mask & mask & AE_WRITABLE) {
-                if (!fired || fe->wfileProc != fe->rfileProc) {
-                    fe->wfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired++;
-                }
+            if (fe->mask & mask & AE_WRITABLE && (!fired_err_queue || fe->wfileProc != fe->errfileproc) && (!fired_read || fe->wfileProc != fe->rfileProc)) {
+                fe->wfileProc(eventLoop, fd, fe->clientData, mask);
+                fired_write = 1;
             }
 
             /* If we have to invert the call, fire the readable event now
              * after the writable one. */
             if (invert) {
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-                if ((fe->mask & mask & AE_READABLE) && (!fired || fe->wfileProc != fe->rfileProc)) {
+                if (fe->mask & mask & AE_READABLE && (!fired_err_queue || fe->rfileProc != fe->errfileproc) && (!fired_write || fe->wfileProc != fe->rfileProc)) {
                     fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired++;
+                    fired_read = 1;
                 }
             }
 
@@ -525,11 +531,15 @@ int aeWait(int fd, int mask, long long milliseconds) {
     pfd.fd = fd;
     if (mask & AE_READABLE) pfd.events |= POLLIN;
     if (mask & AE_WRITABLE) pfd.events |= POLLOUT;
+    if (mask & AE_ERROR_QUEUE) pfd.events |= POLLIN;
 
     if ((retval = poll(&pfd, 1, milliseconds)) == 1) {
         if (pfd.revents & POLLIN) retmask |= AE_READABLE;
         if (pfd.revents & POLLOUT) retmask |= AE_WRITABLE;
-        if (pfd.revents & POLLERR) retmask |= AE_WRITABLE;
+        if (pfd.revents & POLLERR) {
+            retmask |= AE_WRITABLE;
+            retmask |= AE_ERROR_QUEUE;
+        }
         if (pfd.revents & POLLHUP) retmask |= AE_WRITABLE;
         return retmask;
     } else {

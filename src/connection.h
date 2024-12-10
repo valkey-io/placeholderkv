@@ -136,7 +136,7 @@ struct connection {
     ConnectionCallbackFunc conn_handler;
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
-    ConnectionCallbackFunc err_queue_handler;
+    ConnectionCallbackFunc error_queue_handler;
 };
 
 #define CONFIG_BINDADDR_MAX 16

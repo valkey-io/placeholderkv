@@ -40,13 +40,15 @@
 #define AE_ERR -1
 
 #define AE_NONE 0     /* No events registered. */
-#define AE_READABLE 1 /* Fire when descriptor is readable. */
-#define AE_WRITABLE 2 /* Fire when descriptor is writable. */
-#define AE_BARRIER 4  /* With WRITABLE, never fire the event if the      \
-                         READABLE event already fired in the same event  \
-                         loop iteration. Useful when you want to persist \
-                         things to disk before sending replies, and want \
-                         to do that in a group fashion. */
+#define AE_READABLE 1<<0 /* Fire when descriptor is readable. */
+#define AE_WRITABLE 1<<1 /* Fire when descriptor is writable. */
+#define AE_BARRIER 1<<2  /* With WRITABLE, never fire the event if the      \
+                            READABLE event already fired in the same event  \
+                            loop iteration. Useful when you want to persist \
+                            things to disk before sending replies, and want \
+                            to do that in a group fashion. */
+#define AE_ERROR_QUEUE 1<<3 /* Fire when descriptor has a message on the \
+                               message queue. */
 
 #define AE_FILE_EVENTS (1 << 0)
 #define AE_TIME_EVENTS (1 << 1)
@@ -75,9 +77,10 @@ typedef int aeCustomPollProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
 typedef struct aeFileEvent {
-    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
+    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER|MESSAGE_QUEUE) */
     aeFileProc *rfileProc;
     aeFileProc *wfileProc;
+    aeFileProc *errfileproc;
     void *clientData;
 } aeFileEvent;
 

@@ -42,7 +42,6 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdatomic.h>
-#include <linux/errqueue.h>
 
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
@@ -236,7 +235,7 @@ client *createClient(connection *conn) {
     c->commands_processed = 0;
     c->io_last_reply_block = NULL;
     c->io_last_bufpos = 0;
-    c->zero_copy_buffer = createZeroCopyRecordBuffer();
+    c->zero_copy_tracker = NULL;
     return c;
 }
 
@@ -1577,6 +1576,16 @@ void unlinkClient(client *c) {
         } else if (c->flag.repl_rdb_channel) {
             shutdown(c->conn->fd, SHUT_RDWR);
         }
+        if (c->zero_copy_tracker && c->zero_copy_tracker->len > 0) {
+            /* At this point, any existing in bound TCP data should be dropped, so we make the
+             * kernel forcibily reset the connection now. */
+            struct linger l = {
+                .l_onoff = 1,
+                .l_linger = 0
+            };
+            setsockopt(c->conn->fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
+        }
+
         connClose(c->conn);
         c->conn = NULL;
     }
@@ -1831,7 +1840,9 @@ void freeClient(client *c) {
     sdsfree(c->peerid);
     sdsfree(c->sockname);
     sdsfree(c->replica_addr);
-    freeZeroCopyRecordBuffer(c->zero_copy_buffer);
+    if (c->zero_copy_tracker) {
+        freeZeroCopyTracker(c->zero_copy_tracker);
+    }
     zfree(c);
 }
 
@@ -2011,11 +2022,17 @@ void writeToReplica(client *c) {
         /* Send current block if it is not fully sent. */
         if (o->used > c->ref_block_pos) {
             size_t data_len = o->used - c->ref_block_pos;
-            int use_zerocopy = data_len > ZERO_COPY_MIN_WRITE_SIZE;
-            if (use_zerocopy)
-                nwritten = connSend(c->conn, o->buf + c->ref_block_pos, data_len, MSG_ZEROCOPY);
-            else
+            int use_zerocopy = shouldUseZeroCopy(data_len);
+            if (use_zerocopy) {
+                /* Lazily enable zero copy at the socket level only on first use */
+                if (!c->zero_copy_tracker) {
+                    connSetZeroCopy(c->conn, 1);
+                    c->zero_copy_tracker = createZeroCopyTracker();
+                }
+                nwritten = zeroCopyWriteToConn(c->conn, o->buf + c->ref_block_pos, data_len);
+            } else {
                 nwritten = connWrite(c->conn, o->buf + c->ref_block_pos, data_len);
+            }
 
             if (nwritten <= 0) {
                 c->write_flags |= WRITE_FLAGS_WRITE_ERROR;
@@ -2025,19 +2042,20 @@ void writeToReplica(client *c) {
             c->ref_block_pos += nwritten;
 
             if (use_zerocopy) {
-                ongoing_zero_copy_write = zeroCopyRecordBufferExtend(c->zero_copy_buffer);
+                ongoing_zero_copy_write = zeroCopyTrackerExtend(c->zero_copy_tracker);
                 ongoing_zero_copy_write->block = o;
                 ongoing_zero_copy_write->active = 1;
                 ongoing_zero_copy_write->last_write_for_block = 0;
-                connSetErrorQueueHandler(c->conn, handleZeroCopyMessage);
+                serverLog(LL_WARNING, "Zero copy write #%u", c->zero_copy_tracker->start + c->zero_copy_tracker->len - 1);
+                connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
             }
         }
 
         /* If the block is fully sent, we may still have active zero copy writes. Check the most
          * recent zero copy write for our connection and see if it matches this block. */
-        if (!ongoing_zero_copy_write) {
-            ongoing_zero_copy_write = zeroCopyRecordBufferEnd(c->zero_copy_buffer);
-            if (ongoing_zero_copy_write->block != o) {
+        if (!ongoing_zero_copy_write && c->zero_copy_tracker) {
+            ongoing_zero_copy_write = zeroCopyTrackerEnd(c->zero_copy_tracker);
+            if (ongoing_zero_copy_write && ongoing_zero_copy_write->block != o) {
                 /* This zero copy record was for a different block, therefore there are no pending
                  * zero copy writes for this block.*/
                 ongoing_zero_copy_write = NULL;
@@ -2050,15 +2068,20 @@ void writeToReplica(client *c) {
             if (!ongoing_zero_copy_write) {
                 /* All writes are done, we can free this block inline. */
                 o->refcount--;
-                incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
             } else {
                 /* There is an ongoing write. The zero copy handler will be responsible for
                  * decrementing the refcount and trimming the backlog once that completes. */
                 ongoing_zero_copy_write->last_write_for_block = 1;
             }
+
             ((replBufBlock *)(listNodeValue(next)))->refcount++;
             c->ref_repl_buf_node = next;
             c->ref_block_pos = 0;
+
+            if (!ongoing_zero_copy_write) {
+                /* Also trim the backlog if decremented the refcount */
+                incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+            }
         }
     }
 }

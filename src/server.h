@@ -1246,12 +1246,12 @@ typedef struct zeroCopyRecord {
     int last_write_for_block;
 } zeroCopyRecord;
 
-typedef struct zeroCopyRecordBuffer {
+typedef struct zeroCopyTracker {
     zeroCopyRecord *records;
-    size_t start;
-    size_t len;
-    size_t capacity;
-} zeroCopyRecordBuffer;
+    uint32_t start;
+    uint32_t len;
+    uint32_t capacity;
+} zeroCopyTracker;
 
 typedef struct client {
     uint64_t id; /* Client incremental unique ID. */
@@ -1378,7 +1378,7 @@ typedef struct client {
                                   * see the definition of replBufBlock. */
     size_t ref_block_pos;        /* Access position of referenced buffer block,
                                   * i.e. the next offset to send. */
-    zeroCopyRecordBuffer *zero_copy_buffer; /* Circular buffer of active writes, indexed
+    zeroCopyTracker *zero_copy_tracker; /* Circular buffer of active writes, indexed
                                         * by sequence number. */
 
     /* list node in clients_pending_write or in clients_pending_io_write list */
@@ -2110,6 +2110,10 @@ struct valkeyServer {
     int repl_replica_lazy_flush;                 /* Lazy FLUSHALL before loading DB? */
     /* Import Mode */
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
+    /* TCP Zero Copy */
+    int tcp_tx_zerocopy; /* If true, use zero copy for writes when possible. */
+    int draining_zero_copy_connections; /* Count of connections that are to be
+                                         * closed once fully drained.*/
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
     int get_ack_from_replicas;  /* If true we send REPLCONF GETACK. */
