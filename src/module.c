@@ -11017,25 +11017,36 @@ typedef struct {
     ValkeyModuleScanKeyCB fn;
 } ScanKeyCBData;
 
-static void moduleScanKeyCallback(void *privdata, const dictEntry *de) {
+static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
     ScanKeyCBData *data = privdata;
     sds key = dictGetKey(de);
     robj *o = data->key->value;
     robj *field = createStringObject(key, sdslen(key));
     robj *value = NULL;
-    if (o->type == OBJ_SET) {
-        value = NULL;
-    } else if (o->type == OBJ_HASH) {
+    if (o->type == OBJ_HASH) {
         sds val = dictGetVal(de);
         value = createStringObject(val, sdslen(val));
     } else if (o->type == OBJ_ZSET) {
         double *val = (double *)dictGetVal(de);
         value = createStringObjectFromLongDouble(*val, 0);
+    } else {
+        serverPanic("unexpected object type");
     }
 
     data->fn(data->key, field, value, data->user_data);
     decrRefCount(field);
     if (value) decrRefCount(value);
+}
+
+static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
+    ScanKeyCBData *data = privdata;
+    robj *o = data->key->value;
+    serverAssert(o->type == OBJ_SET);
+    sds key = entry;
+    robj *field = createStringObject(key, sdslen(key));
+
+    data->fn(data->key, field, NULL, data->user_data);
+    decrRefCount(field);
 }
 
 /* Scan api that allows a module to scan the elements in a hash, set or sorted set key
@@ -11091,14 +11102,15 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         errno = EINVAL;
         return 0;
     }
-    dict *ht = NULL;
+    dict *d = NULL;
+    hashtable *ht = NULL;
     robj *o = key->value;
     if (o->type == OBJ_SET) {
-        if (o->encoding == OBJ_ENCODING_HT) ht = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_HT) ht = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
     } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->dict;
+        if (o->encoding == OBJ_ENCODING_SKIPLIST) d = ((zset *)o->ptr)->dict;
     } else {
         errno = EINVAL;
         return 0;
@@ -11108,9 +11120,16 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         return 0;
     }
     int ret = 1;
-    if (ht) {
+    if (d) {
         ScanKeyCBData data = {key, privdata, fn};
-        cursor->cursor = dictScan(ht, cursor->cursor, moduleScanKeyCallback, &data);
+        cursor->cursor = dictScan(d, cursor->cursor, moduleScanKeyDictCallback, &data);
+        if (cursor->cursor == 0) {
+            cursor->done = 1;
+            ret = 0;
+        }
+    } else if (ht) {
+        ScanKeyCBData data = {key, privdata, fn};
+        cursor->cursor = hashtableScan(ht, cursor->cursor, moduleScanKeyHashtableCallback, &data);
         if (cursor->cursor == 0) {
             cursor->done = 1;
             ret = 0;
