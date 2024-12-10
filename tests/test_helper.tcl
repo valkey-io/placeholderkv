@@ -607,6 +607,7 @@ proc print_help_screen {} {
         "--ignore-encoding  Don't validate object encoding."
         "--ignore-digest    Don't use debug digest validations."
         "--large-memory     Run tests using over 100mb."
+        "--debug-defrag     Indicate the test is running against server compiled with DEBUG_FORCE_DEFRAG option"
         "--help             Print this help screen."
     } "\n"]
 }
@@ -748,6 +749,8 @@ for {set j 0} {$j < [llength $argv]} {incr j} {
         set ::ignoreencoding 1
     } elseif {$opt eq {--ignore-digest}} {
         set ::ignoredigest 1
+    } elseif {$opt eq {--debug-defrag}} {
+        set ::debug_defrag 1
     } elseif {$opt eq {--help}} {
         print_help_screen
         exit 0
