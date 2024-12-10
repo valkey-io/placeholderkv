@@ -54,8 +54,8 @@ struct _kvstore {
     int flags;
     dictType *dtype;
     dict **dicts;
-    long long num_dicts;
-    long long num_dicts_bits;
+    int num_dicts;
+    int num_dicts_bits;
     list *rehashing;                     /* List of dictionaries in this kvstore that are currently rehashing. */
     int resize_cursor;                   /* Cron job uses this cursor to gradually resize dictionaries (only used if num_dicts > 1). */
     int allocated_dicts;                 /* The number of allocated dicts. */
@@ -423,9 +423,11 @@ unsigned long long kvstoreScan(kvstore *kvs,
  * `dictTryExpand` call and in case of `dictExpand` call it signifies no expansion was performed.
  */
 int kvstoreExpand(kvstore *kvs, uint64_t newsize, int try_expand, kvstoreExpandShouldSkipDictIndex *skip_cb) {
+    if (newsize == 0) return 1;
     for (int i = 0; i < kvs->num_dicts; i++) {
-        dict *d = kvstoreGetDict(kvs, i);
-        if (!d || (skip_cb && skip_cb(i))) continue;
+        if (skip_cb && skip_cb(i)) continue;
+        /* If the dictionary doesn't exist, create it */
+        dict *d = createDictIfNeeded(kvs, i);
         int result = try_expand ? dictTryExpand(d, newsize) : dictExpand(d, newsize);
         if (try_expand && result == DICT_ERR) return 0;
     }
@@ -737,7 +739,7 @@ unsigned long kvstoreDictScanDefrag(kvstore *kvs,
                                     int didx,
                                     unsigned long v,
                                     dictScanFunction *fn,
-                                    dictDefragFunctions *defragfns,
+                                    const dictDefragFunctions *defragfns,
                                     void *privdata) {
     dict *d = kvstoreGetDict(kvs, didx);
     if (!d) return 0;
@@ -748,14 +750,27 @@ unsigned long kvstoreDictScanDefrag(kvstore *kvs,
  * within dict, it only reallocates the memory used by the dict structure itself using
  * the provided allocation function. This feature was added for the active defrag feature.
  *
- * The 'defragfn' callback is called with a reference to the dict
- * that callback can reallocate. */
-void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn) {
-    for (int didx = 0; didx < kvs->num_dicts; didx++) {
+ * With 16k dictionaries for cluster mode with 1 shard, this operation may require substantial time
+ * to execute.  A "cursor" is used to perform the operation iteratively.  When first called, a
+ * cursor value of 0 should be provided.  The return value is an updated cursor which should be
+ * provided on the next iteration.  The operation is complete when 0 is returned.
+ *
+ * The 'defragfn' callback is called with a reference to the dict that callback can reallocate. */
+unsigned long kvstoreDictLUTDefrag(kvstore *kvs, unsigned long cursor, kvstoreDictLUTDefragFunction *defragfn) {
+    for (int didx = cursor; didx < kvs->num_dicts; didx++) {
         dict **d = kvstoreGetDictRef(kvs, didx), *newd;
         if (!*d) continue;
+
+        listNode *rehashing_node = NULL;
+        if (listLength(kvs->rehashing) > 0) {
+            rehashing_node = ((kvstoreDictMetadata *)dictMetadata(*d))->rehashing_node;
+        }
+
         if ((newd = defragfn(*d))) *d = newd;
+        if (rehashing_node) listNodeValue(rehashing_node) = *d;
+        return (didx + 1);
     }
+    return 0;
 }
 
 uint64_t kvstoreGetHash(kvstore *kvs, const void *key) {

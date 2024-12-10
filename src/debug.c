@@ -46,6 +46,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "valkey_strtod.h"
+
 #ifdef HAVE_BACKTRACE
 #include <execinfo.h>
 #ifndef __OpenBSD__
@@ -432,10 +434,12 @@ void debugCommand(client *c) {
             "    Some fields of the default behavior may be time consuming to fetch,",
             "    and `fast` can be passed to avoid fetching them.",
             "DROP-CLUSTER-PACKET-FILTER <packet-type>",
-            "    Drop all packets that match the filtered type. Set to -1 allow all packets.",
+            "    Drop all packets that match the filtered type. Set to -1 allow all packets or -2 to drop all packets.",
             "CLOSE-CLUSTER-LINK-ON-PACKET-DROP <0|1>",
             "    This is valid only when DROP-CLUSTER-PACKET-FILTER is set to a valid packet type.",
             "    When set to 1, the cluster link is closed after dropping a packet based on the filter.",
+            "DISABLE-CLUSTER-RANDOM-PING <0|1>",
+            "    Disable sending cluster ping to a random node every second.",
             "OOM",
             "    Crash the server simulating an out-of-memory error.",
             "PANIC",
@@ -606,6 +610,9 @@ void debugCommand(client *c) {
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "close-cluster-link-on-packet-drop") && c->argc == 3) {
         server.debug_cluster_close_link_on_packet_drop = atoi(c->argv[2]->ptr);
+        addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr, "disable-cluster-random-ping") && c->argc == 3) {
+        server.debug_cluster_disable_random_ping = atoi(c->argv[2]->ptr);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "object") && (c->argc == 3 || c->argc == 4)) {
         dictEntry *de;
@@ -841,7 +848,7 @@ void debugCommand(client *c) {
                              "string|integer|double|bignum|null|array|set|map|attrib|push|verbatim|true|false");
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "sleep") && c->argc == 3) {
-        double dtime = strtod(c->argv[2]->ptr, NULL);
+        double dtime = valkey_strtod(c->argv[2]->ptr, NULL);
         long long utime = dtime * 1000000;
         struct timespec tv;
 
@@ -1023,7 +1030,7 @@ void debugCommand(client *c) {
 
 /* =========================== Crash handling  ============================== */
 
-__attribute__((noinline)) void _serverAssert(const char *estr, const char *file, int line) {
+__attribute__((noinline, weak)) void _serverAssert(const char *estr, const char *file, int line) {
     int new_report = bugReportStart();
     serverLog(LL_WARNING, "=== %sASSERTION FAILED ===", new_report ? "" : "RECURSIVE ");
     serverLog(LL_WARNING, "==> %s:%d '%s' is not true", file, line, estr);
@@ -1040,6 +1047,14 @@ __attribute__((noinline)) void _serverAssert(const char *estr, const char *file,
     // remove the signal handler so on abort() we will output the crash report.
     removeSigSegvHandlers();
     bugReportEnd(0, 0);
+}
+
+/* Returns the argv argument in binary representation, limited to length 128. */
+sds getArgvReprString(robj *argv) {
+    robj *decoded = getDecodedObject(argv);
+    sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
+    decrRefCount(decoded);
+    return repr;
 }
 
 /* Checks if the argument at the given index should be redacted from logs. */
@@ -1066,16 +1081,12 @@ void _serverAssertPrintClientInfo(const client *c) {
             serverLog(LL_WARNING, "client->argv[%d]: %zu bytes", j, sdslen((sds)c->argv[j]->ptr));
             continue;
         }
-        char buf[128];
-        char *arg;
-
-        if (c->argv[j]->type == OBJ_STRING && sdsEncodedObject(c->argv[j])) {
-            arg = (char *)c->argv[j]->ptr;
-        } else {
-            snprintf(buf, sizeof(buf), "Object type: %u, encoding: %u", c->argv[j]->type, c->argv[j]->encoding);
-            arg = buf;
+        sds repr = getArgvReprString(c->argv[j]);
+        serverLog(LL_WARNING, "client->argv[%d] = %s (refcount: %d)", j, repr, c->argv[j]->refcount);
+        sdsfree(repr);
+        if (!strcasecmp(c->argv[j]->ptr, "auth") || !strcasecmp(c->argv[j]->ptr, "auth2")) {
+            break;
         }
-        serverLog(LL_WARNING, "client->argv[%d] = \"%s\" (refcount: %d)", j, arg, c->argv[j]->refcount);
     }
 }
 
@@ -1883,23 +1894,18 @@ void logCurrentClient(client *cc, const char *title) {
     client = catClientInfoString(sdsempty(), cc, server.hide_user_data_from_log);
     serverLog(LL_WARNING | LL_RAW, "%s\n", client);
     sdsfree(client);
-    serverLog(LL_WARNING | LL_RAW, "argc: '%d'\n", cc->argc);
+    serverLog(LL_WARNING | LL_RAW, "argc: %d\n", cc->argc);
     for (j = 0; j < cc->argc; j++) {
         if (shouldRedactArg(cc, j)) {
             serverLog(LL_WARNING | LL_RAW, "argv[%d]: %zu bytes\n", j, sdslen((sds)cc->argv[j]->ptr));
             continue;
         }
-        robj *decoded;
-        decoded = getDecodedObject(cc->argv[j]);
-        sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
-        serverLog(LL_WARNING | LL_RAW, "argv[%d]: '%s'\n", j, (char *)repr);
-        if (!strcasecmp(decoded->ptr, "auth") || !strcasecmp(decoded->ptr, "auth2")) {
-            sdsfree(repr);
-            decrRefCount(decoded);
+        sds repr = getArgvReprString(cc->argv[j]);
+        serverLog(LL_WARNING | LL_RAW, "argv[%d]: %s\n", j, repr);
+        sdsfree(repr);
+        if (!strcasecmp(cc->argv[j]->ptr, "auth") || !strcasecmp(cc->argv[j]->ptr, "auth2")) {
             break;
         }
-        sdsfree(repr);
-        decrRefCount(decoded);
     }
     /* Check if the first argument, usually a key, is found inside the
      * selected DB, and if so print info about the associated object. */
