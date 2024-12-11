@@ -390,6 +390,11 @@ int dictSdsKeyCaseCompare(const void *key1, const void *key2) {
     return strcasecmp(key1, key2) == 0;
 }
 
+/* Case insensitive key comparison */
+int hashtableStringKeyCaseCompare(const void *key1, const void *key2) {
+    return strcasecmp(key1, key2);
+}
+
 void dictObjectDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
     decrRefCount(val);
@@ -489,21 +494,30 @@ uint64_t dictEncObjHash(const void *key) {
     }
 }
 
-/* Return 1 if currently we allow dict to expand. Dict may allocate huge
- * memory to contain hash buckets when dict expands, that may lead the server to
- * reject user's requests or evict some keys, we can stop dict to expand
- * provisionally if used memory will be over maxmemory after dict expands,
- * but to guarantee the performance of the server, we still allow dict to expand
- * if dict load factor exceeds HASHTABLE_MAX_LOAD_FACTOR. */
-int dictResizeAllowed(size_t moreMem, double usedRatio) {
-    /* for debug purposes: dict is not allowed to be resized. */
+/* Return 1 if we allow a hash table to expand. It may allocate a huge amount of
+ * memory to contain hash buckets when it expands, that may lead the server to
+ * reject user's requests or evict some keys. We can prevent expansion
+ * provisionally if used memory will be over maxmemory after it expands,
+ * but to guarantee the performance of the server, we still allow it to expand
+ * if the load factor exceeds the hard limit defined in hashtable.c. */
+int hashtableResizeAllowed(size_t moreMem, double usedRatio) {
+    UNUSED(usedRatio);
+
+    /* For debug purposes, not allowed to be resized. */
     if (!server.dict_resizing) return 0;
 
-    if (usedRatio <= HASHTABLE_MAX_LOAD_FACTOR) {
-        return !overMaxmemoryAfterAlloc(moreMem);
-    } else {
-        return 1;
-    }
+    /* Avoid resizing over max memory. */
+    return !overMaxmemoryAfterAlloc(moreMem);
+}
+
+const void *hashtableCommandGetKey(const void *element) {
+    struct serverCommand *command = (struct serverCommand *)element;
+    return command->fullname;
+}
+
+const void *hashtableSubcommandGetKey(const void *element) {
+    struct serverCommand *command = (struct serverCommand *)element;
+    return command->declared_name;
 }
 
 /* Generic hash table type where keys are Objects, Values
@@ -550,44 +564,66 @@ dictType zsetDictType = {
     NULL,              /* allow to expand */
 };
 
+uint64_t hashtableSdsHash(const void *key) {
+    return hashtableGenHashFunction((const char *)key, sdslen((char *)key));
+}
+
+const void *hashtableObjectGetKey(const void *entry) {
+    return objectGetKey(entry);
+}
+
+int hashtableSdsKeyCompare(const void *key1, const void *key2) {
+    const sds sds1 = (const sds)key1, sds2 = (const sds)key2;
+    return sdslen(sds1) != sdslen(sds2) || sdscmp(sds1, sds2);
+}
+
+int hashtableObjKeyCompare(const void *key1, const void *key2) {
+    const robj *o1 = key1, *o2 = key2;
+    return hashtableSdsKeyCompare(o1->ptr, o2->ptr);
+}
+
+void hashtableObjectDestructor(void *val) {
+    if (val == NULL) return; /* Lazy freeing will set value to NULL. */
+    decrRefCount(val);
+}
+
 /* Kvstore->keys, keys are sds strings, vals are Objects. */
-dictType kvstoreKeysDictType = {
-    dictSdsHash,          /* hash function */
-    NULL,                 /* key dup */
-    dictSdsKeyCompare,    /* key compare */
-    NULL,                 /* key is embedded in the dictEntry and freed internally */
-    dictObjectDestructor, /* val destructor */
-    dictResizeAllowed,    /* allow to resize */
-    kvstoreDictRehashingStarted,
-    kvstoreDictRehashingCompleted,
-    kvstoreDictMetadataSize,
-    .embedKey = dictSdsEmbedKey,
-    .embedded_entry = 1,
+hashtableType kvstoreKeysHashtableType = {
+    .entryGetKey = hashtableObjectGetKey,
+    .hashFunction = hashtableSdsHash,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = hashtableObjectDestructor,
+    .resizeAllowed = hashtableResizeAllowed,
+    .rehashingStarted = kvstoreHashtableRehashingStarted,
+    .rehashingCompleted = kvstoreHashtableRehashingCompleted,
+    .trackMemUsage = kvstoreHashtableTrackMemUsage,
+    .getMetadataSize = kvstoreHashtableMetadataSize,
 };
 
 /* Kvstore->expires */
-dictType kvstoreExpiresDictType = {
-    dictSdsHash,       /* hash function */
-    NULL,              /* key dup */
-    dictSdsKeyCompare, /* key compare */
-    NULL,              /* key destructor */
-    NULL,              /* val destructor */
-    dictResizeAllowed, /* allow to resize */
-    kvstoreDictRehashingStarted,
-    kvstoreDictRehashingCompleted,
-    kvstoreDictMetadataSize,
+hashtableType kvstoreExpiresHashtableType = {
+    .entryGetKey = hashtableObjectGetKey,
+    .hashFunction = hashtableSdsHash,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = NULL, /* shared with keyspace table */
+    .resizeAllowed = hashtableResizeAllowed,
+    .rehashingStarted = kvstoreHashtableRehashingStarted,
+    .rehashingCompleted = kvstoreHashtableRehashingCompleted,
+    .trackMemUsage = kvstoreHashtableTrackMemUsage,
+    .getMetadataSize = kvstoreHashtableMetadataSize,
 };
 
-/* Command table. sds string -> command struct pointer. */
-dictType commandTableDictType = {
-    dictSdsCaseHash,            /* hash function */
-    NULL,                       /* key dup */
-    dictSdsKeyCaseCompare,      /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    NULL,                       /* val destructor */
-    NULL,                       /* allow to expand */
-    .no_incremental_rehash = 1, /* no incremental rehash as the command table may be accessed from IO threads. */
-};
+/* Command set, hashed by sds string, stores serverCommand structs. */
+hashtableType commandSetType = {.entryGetKey = hashtableCommandGetKey,
+                                .hashFunction = dictSdsCaseHash,
+                                .keyCompare = hashtableStringKeyCaseCompare,
+                                .instant_rehashing = 1};
+
+/* Sub-command set, hashed by char* string, stores serverCommand structs. */
+hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
+                                   .hashFunction = dictCStrCaseHash,
+                                   .keyCompare = hashtableStringKeyCaseCompare,
+                                   .instant_rehashing = 1};
 
 /* Hash type hash table (note that small hashes are represented with listpacks) */
 dictType hashDictType = {
@@ -632,18 +668,33 @@ dictType objToDictDictType = {
     NULL                  /* allow to expand */
 };
 
-/* Same as objToDictDictType, added some kvstore callbacks, it's used
- * for PUBSUB command to track clients subscribing the channels. */
-dictType kvstoreChannelDictType = {
-    dictObjHash,          /* hash function */
-    NULL,                 /* key dup */
-    dictObjKeyCompare,    /* key compare */
-    dictObjectDestructor, /* key destructor */
-    dictDictDestructor,   /* val destructor */
-    NULL,                 /* allow to expand */
-    kvstoreDictRehashingStarted,
-    kvstoreDictRehashingCompleted,
-    kvstoreDictMetadataSize,
+/* Callback used for hash tables where the entries are dicts and the key
+ * (channel name) is stored in each dict's metadata. */
+const void *hashtableChannelsDictGetKey(const void *entry) {
+    const dict *d = entry;
+    return *((const void **)dictMetadata(d));
+}
+
+void hashtableChannelsDictDestructor(void *entry) {
+    dict *d = entry;
+    robj *channel = *((void **)dictMetadata(d));
+    decrRefCount(channel);
+    dictRelease(d);
+}
+
+/* Similar to objToDictDictType, but changed to hashtable and added some kvstore
+ * callbacks, it's used for PUBSUB command to track clients subscribing the
+ * channels. The elements are dicts where the keys are clients. The metadata in
+ * each dict stores a pointer to the channel name. */
+hashtableType kvstoreChannelHashtableType = {
+    .entryGetKey = hashtableChannelsDictGetKey,
+    .hashFunction = dictObjHash,
+    .keyCompare = hashtableObjKeyCompare,
+    .entryDestructor = hashtableChannelsDictDestructor,
+    .rehashingStarted = kvstoreHashtableRehashingStarted,
+    .rehashingCompleted = kvstoreHashtableRehashingCompleted,
+    .trackMemUsage = kvstoreHashtableTrackMemUsage,
+    .getMetadataSize = kvstoreHashtableMetadataSize,
 };
 
 /* Modules system dictionary type. Keys are module name,
@@ -700,12 +751,18 @@ dictType sdsHashDictType = {
     NULL                   /* allow to expand */
 };
 
+size_t clientSetDictTypeMetadataBytes(dict *d) {
+    UNUSED(d);
+    return sizeof(void *);
+}
+
 /* Client Set dictionary type. Keys are client, values are not used. */
 dictType clientDictType = {
     dictClientHash,       /* hash function */
     NULL,                 /* key dup */
     dictClientKeyCompare, /* key compare */
-    .no_value = 1         /* no values in this dict */
+    .dictMetadataBytes = clientSetDictTypeMetadataBytes,
+    .no_value = 1 /* no values in this dict */
 };
 
 /* This function is called once a background process of some kind terminates,
@@ -715,12 +772,16 @@ dictType clientDictType = {
  * for dict.c to resize or rehash the tables accordingly to the fact we have an
  * active fork child running. */
 void updateDictResizePolicy(void) {
-    if (server.in_fork_child != CHILD_TYPE_NONE)
+    if (server.in_fork_child != CHILD_TYPE_NONE) {
         dictSetResizeEnabled(DICT_RESIZE_FORBID);
-    else if (hasActiveChildProcess())
+        hashtableSetResizePolicy(HASHTABLE_RESIZE_FORBID);
+    } else if (hasActiveChildProcess()) {
         dictSetResizeEnabled(DICT_RESIZE_AVOID);
-    else
+        hashtableSetResizePolicy(HASHTABLE_RESIZE_AVOID);
+    } else {
         dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+        hashtableSetResizePolicy(HASHTABLE_RESIZE_ALLOW);
+    }
 }
 
 const char *strChildType(int type) {
@@ -1160,8 +1221,8 @@ void databasesCron(void) {
 
         for (j = 0; j < dbs_per_call; j++) {
             serverDb *db = &server.db[resize_db % server.dbnum];
-            kvstoreTryResizeDicts(db->keys, CRON_DICTS_PER_DB);
-            kvstoreTryResizeDicts(db->expires, CRON_DICTS_PER_DB);
+            kvstoreTryResizeHashtables(db->keys, CRON_DICTS_PER_DB);
+            kvstoreTryResizeHashtables(db->expires, CRON_DICTS_PER_DB);
             resize_db++;
         }
 
@@ -2177,8 +2238,8 @@ void initServerConfig(void) {
     /* Command table -- we initialize it here as it is part of the
      * initial configuration, since command names may be changed via
      * valkey.conf using the rename-command directive. */
-    server.commands = dictCreate(&commandTableDictType);
-    server.orig_commands = dictCreate(&commandTableDictType);
+    server.commands = hashtableCreate(&commandSetType);
+    server.orig_commands = hashtableCreate(&commandSetType);
     populateCommandTable();
 
     /* Debugging */
@@ -2690,14 +2751,14 @@ void initServer(void) {
 
     /* Create the databases, and initialize other internal state. */
     int slot_count_bits = 0;
-    int flags = KVSTORE_ALLOCATE_DICTS_ON_DEMAND;
+    int flags = KVSTORE_ALLOCATE_HASHTABLES_ON_DEMAND;
     if (server.cluster_enabled) {
         slot_count_bits = CLUSTER_SLOT_MASK_BITS;
-        flags |= KVSTORE_FREE_EMPTY_DICTS;
+        flags |= KVSTORE_FREE_EMPTY_HASHTABLES;
     }
     for (j = 0; j < server.dbnum; j++) {
-        server.db[j].keys = kvstoreCreate(&kvstoreKeysDictType, slot_count_bits, flags);
-        server.db[j].expires = kvstoreCreate(&kvstoreExpiresDictType, slot_count_bits, flags);
+        server.db[j].keys = kvstoreCreate(&kvstoreKeysHashtableType, slot_count_bits, flags);
+        server.db[j].expires = kvstoreCreate(&kvstoreExpiresHashtableType, slot_count_bits, flags);
         server.db[j].expires_cursor = 0;
         server.db[j].blocking_keys = dictCreate(&keylistDictType);
         server.db[j].blocking_keys_unblock_on_nokey = dictCreate(&objectKeyPointerValueDictType);
@@ -2710,10 +2771,10 @@ void initServer(void) {
     /* Note that server.pubsub_channels was chosen to be a kvstore (with only one dict, which
      * seems odd) just to make the code cleaner by making it be the same type as server.pubsubshard_channels
      * (which has to be kvstore), see pubsubtype.serverPubSubChannels */
-    server.pubsub_channels = kvstoreCreate(&kvstoreChannelDictType, 0, KVSTORE_ALLOCATE_DICTS_ON_DEMAND);
+    server.pubsub_channels = kvstoreCreate(&kvstoreChannelHashtableType, 0, KVSTORE_ALLOCATE_HASHTABLES_ON_DEMAND);
     server.pubsub_patterns = dictCreate(&objToDictDictType);
-    server.pubsubshard_channels = kvstoreCreate(&kvstoreChannelDictType, slot_count_bits,
-                                                KVSTORE_ALLOCATE_DICTS_ON_DEMAND | KVSTORE_FREE_EMPTY_DICTS);
+    server.pubsubshard_channels = kvstoreCreate(&kvstoreChannelHashtableType, slot_count_bits,
+                                                KVSTORE_ALLOCATE_HASHTABLES_ON_DEMAND | KVSTORE_FREE_EMPTY_HASHTABLES);
     server.pubsub_clients = 0;
     server.watching_clients = 0;
     server.cronloops = 0;
@@ -3017,13 +3078,13 @@ sds catSubCommandFullname(const char *parent_name, const char *sub_name) {
     return sdscatfmt(sdsempty(), "%s|%s", parent_name, sub_name);
 }
 
-void commandAddSubcommand(struct serverCommand *parent, struct serverCommand *subcommand, const char *declared_name) {
-    if (!parent->subcommands_dict) parent->subcommands_dict = dictCreate(&commandTableDictType);
+void commandAddSubcommand(struct serverCommand *parent, struct serverCommand *subcommand) {
+    if (!parent->subcommands_ht) parent->subcommands_ht = hashtableCreate(&subcommandSetType);
 
     subcommand->parent = parent;                            /* Assign the parent command */
     subcommand->id = ACLGetCommandID(subcommand->fullname); /* Assign the ID used for ACL. */
 
-    serverAssert(dictAdd(parent->subcommands_dict, sdsnew(declared_name), subcommand) == DICT_OK);
+    serverAssert(hashtableAdd(parent->subcommands_ht, subcommand));
 }
 
 /* Set implicit ACl categories (see comment above the definition of
@@ -3075,7 +3136,7 @@ int populateCommandStructure(struct serverCommand *c) {
             sub->fullname = catSubCommandFullname(c->declared_name, sub->declared_name);
             if (populateCommandStructure(sub) == C_ERR) continue;
 
-            commandAddSubcommand(c, sub, sub->declared_name);
+            commandAddSubcommand(c, sub);
         }
     }
 
@@ -3099,22 +3160,20 @@ void populateCommandTable(void) {
         c->fullname = sdsnew(c->declared_name);
         if (populateCommandStructure(c) == C_ERR) continue;
 
-        retval1 = dictAdd(server.commands, sdsdup(c->fullname), c);
+        retval1 = hashtableAdd(server.commands, c);
         /* Populate an additional dictionary that will be unaffected
          * by rename-command statements in valkey.conf. */
-        retval2 = dictAdd(server.orig_commands, sdsdup(c->fullname), c);
-        serverAssert(retval1 == DICT_OK && retval2 == DICT_OK);
+        retval2 = hashtableAdd(server.orig_commands, c);
+        serverAssert(retval1 && retval2);
     }
 }
 
-void resetCommandTableStats(dict *commands) {
-    struct serverCommand *c;
-    dictEntry *de;
-    dictIterator *di;
-
-    di = dictGetSafeIterator(commands);
-    while ((de = dictNext(di)) != NULL) {
-        c = (struct serverCommand *)dictGetVal(de);
+void resetCommandTableStats(hashtable *commands) {
+    hashtableIterator iter;
+    void *next;
+    hashtableInitSafeIterator(&iter, commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *c = next;
         c->microseconds = 0;
         c->calls = 0;
         c->rejected_calls = 0;
@@ -3123,9 +3182,9 @@ void resetCommandTableStats(dict *commands) {
             hdr_close(c->latency_histogram);
             c->latency_histogram = NULL;
         }
-        if (c->subcommands_dict) resetCommandTableStats(c->subcommands_dict);
+        if (c->subcommands_ht) resetCommandTableStats(c->subcommands_ht);
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 void resetErrorTableStats(void) {
@@ -3172,13 +3231,18 @@ void serverOpArrayFree(serverOpArray *oa) {
 /* ====================== Commands lookup and execution ===================== */
 
 int isContainerCommandBySds(sds s) {
-    struct serverCommand *base_cmd = dictFetchValue(server.commands, s);
-    int has_subcommands = base_cmd && base_cmd->subcommands_dict;
+    void *entry;
+    int found_command = hashtableFind(server.commands, s, &entry);
+    struct serverCommand *base_cmd = entry;
+    int has_subcommands = found_command && base_cmd->subcommands_ht;
     return has_subcommands;
 }
 
 struct serverCommand *lookupSubcommand(struct serverCommand *container, sds sub_name) {
-    return dictFetchValue(container->subcommands_dict, sub_name);
+    void *entry = NULL;
+    hashtableFind(container->subcommands_ht, sub_name, &entry);
+    struct serverCommand *subcommand = entry;
+    return subcommand;
 }
 
 /* Look up a command by argv and argc
@@ -3189,9 +3253,11 @@ struct serverCommand *lookupSubcommand(struct serverCommand *container, sds sub_
  * name (e.g. in COMMAND INFO) rather than to find the command
  * a user requested to execute (in processCommand).
  */
-struct serverCommand *lookupCommandLogic(dict *commands, robj **argv, int argc, int strict) {
-    struct serverCommand *base_cmd = dictFetchValue(commands, argv[0]->ptr);
-    int has_subcommands = base_cmd && base_cmd->subcommands_dict;
+struct serverCommand *lookupCommandLogic(hashtable *commands, robj **argv, int argc, int strict) {
+    void *entry = NULL;
+    int found_command = hashtableFind(commands, argv[0]->ptr, &entry);
+    struct serverCommand *base_cmd = entry;
+    int has_subcommands = found_command && base_cmd->subcommands_ht;
     if (argc == 1 || !has_subcommands) {
         if (strict && argc != 1) return NULL;
         /* Note: It is possible that base_cmd->proc==NULL (e.g. CONFIG) */
@@ -3207,7 +3273,7 @@ struct serverCommand *lookupCommand(robj **argv, int argc) {
     return lookupCommandLogic(server.commands, argv, argc, 0);
 }
 
-struct serverCommand *lookupCommandBySdsLogic(dict *commands, sds s) {
+struct serverCommand *lookupCommandBySdsLogic(hashtable *commands, sds s) {
     int argc, j;
     sds *strings = sdssplitlen(s, sdslen(s), "|", 1, &argc);
     if (strings == NULL) return NULL;
@@ -3234,7 +3300,7 @@ struct serverCommand *lookupCommandBySds(sds s) {
     return lookupCommandBySdsLogic(server.commands, s);
 }
 
-struct serverCommand *lookupCommandByCStringLogic(dict *commands, const char *s) {
+struct serverCommand *lookupCommandByCStringLogic(hashtable *commands, const char *s) {
     struct serverCommand *cmd;
     sds name = sdsnew(s);
 
@@ -4877,23 +4943,25 @@ void addReplyCommandSubCommands(client *c,
                                 struct serverCommand *cmd,
                                 void (*reply_function)(client *, struct serverCommand *),
                                 int use_map) {
-    if (!cmd->subcommands_dict) {
+    if (!cmd->subcommands_ht) {
         addReplySetLen(c, 0);
         return;
     }
 
     if (use_map)
-        addReplyMapLen(c, dictSize(cmd->subcommands_dict));
+        addReplyMapLen(c, hashtableSize(cmd->subcommands_ht));
     else
-        addReplyArrayLen(c, dictSize(cmd->subcommands_dict));
-    dictEntry *de;
-    dictIterator *di = dictGetSafeIterator(cmd->subcommands_dict);
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *sub = (struct serverCommand *)dictGetVal(de);
+        addReplyArrayLen(c, hashtableSize(cmd->subcommands_ht));
+
+    void *next;
+    hashtableIterator iter;
+    hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *sub = next;
         if (use_map) addReplyBulkCBuffer(c, sub->fullname, sdslen(sub->fullname));
         reply_function(c, sub);
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* Output the representation of a server command. Used by the COMMAND command and COMMAND INFO. */
@@ -4939,7 +5007,7 @@ void addReplyCommandDocs(client *c, struct serverCommand *cmd) {
     if (cmd->reply_schema) maplen++;
 #endif
     if (cmd->args) maplen++;
-    if (cmd->subcommands_dict) maplen++;
+    if (cmd->subcommands_ht) maplen++;
     addReplyMapLen(c, maplen);
 
     if (cmd->summary) {
@@ -4989,7 +5057,7 @@ void addReplyCommandDocs(client *c, struct serverCommand *cmd) {
         addReplyBulkCString(c, "arguments");
         addReplyCommandArgList(c, cmd->args, cmd->num_args);
     }
-    if (cmd->subcommands_dict) {
+    if (cmd->subcommands_ht) {
         addReplyBulkCString(c, "subcommands");
         addReplyCommandSubCommands(c, cmd, addReplyCommandDocs, 1);
     }
@@ -5046,20 +5114,20 @@ void getKeysSubcommand(client *c) {
 
 /* COMMAND (no args) */
 void commandCommand(client *c) {
-    dictIterator *di;
-    dictEntry *de;
-
-    addReplyArrayLen(c, dictSize(server.commands));
-    di = dictGetIterator(server.commands);
-    while ((de = dictNext(di)) != NULL) {
-        addReplyCommandInfo(c, dictGetVal(de));
+    hashtableIterator iter;
+    void *next;
+    addReplyArrayLen(c, hashtableSize(server.commands));
+    hashtableInitIterator(&iter, server.commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
+        addReplyCommandInfo(c, cmd);
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* COMMAND COUNT */
 void commandCountCommand(client *c) {
-    addReplyLongLong(c, dictSize(server.commands));
+    addReplyLongLong(c, hashtableSize(server.commands));
 }
 
 typedef enum {
@@ -5105,39 +5173,39 @@ int shouldFilterFromCommandList(struct serverCommand *cmd, commandListFilter *fi
 }
 
 /* COMMAND LIST FILTERBY (MODULE <module-name>|ACLCAT <cat>|PATTERN <pattern>) */
-void commandListWithFilter(client *c, dict *commands, commandListFilter filter, int *numcmds) {
-    dictEntry *de;
-    dictIterator *di = dictGetIterator(commands);
-
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+void commandListWithFilter(client *c, hashtable *commands, commandListFilter filter, int *numcmds) {
+    hashtableIterator iter;
+    void *next;
+    hashtableInitIterator(&iter, commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (!shouldFilterFromCommandList(cmd, &filter)) {
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
             (*numcmds)++;
         }
 
-        if (cmd->subcommands_dict) {
-            commandListWithFilter(c, cmd->subcommands_dict, filter, numcmds);
+        if (cmd->subcommands_ht) {
+            commandListWithFilter(c, cmd->subcommands_ht, filter, numcmds);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* COMMAND LIST */
-void commandListWithoutFilter(client *c, dict *commands, int *numcmds) {
-    dictEntry *de;
-    dictIterator *di = dictGetIterator(commands);
-
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+void commandListWithoutFilter(client *c, hashtable *commands, int *numcmds) {
+    hashtableIterator iter;
+    void *next;
+    hashtableInitIterator(&iter, commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
         (*numcmds)++;
 
-        if (cmd->subcommands_dict) {
-            commandListWithoutFilter(c, cmd->subcommands_dict, numcmds);
+        if (cmd->subcommands_ht) {
+            commandListWithoutFilter(c, cmd->subcommands_ht, numcmds);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* COMMAND LIST [FILTERBY (MODULE <module-name>|ACLCAT <cat>|PATTERN <pattern>)] */
@@ -5186,14 +5254,15 @@ void commandInfoCommand(client *c) {
     int i;
 
     if (c->argc == 2) {
-        dictIterator *di;
-        dictEntry *de;
-        addReplyArrayLen(c, dictSize(server.commands));
-        di = dictGetIterator(server.commands);
-        while ((de = dictNext(di)) != NULL) {
-            addReplyCommandInfo(c, dictGetVal(de));
+        hashtableIterator iter;
+        void *next;
+        addReplyArrayLen(c, hashtableSize(server.commands));
+        hashtableInitIterator(&iter, server.commands);
+        while (hashtableNext(&iter, &next)) {
+            struct serverCommand *cmd = next;
+            addReplyCommandInfo(c, cmd);
         }
-        dictReleaseIterator(di);
+        hashtableResetIterator(&iter);
     } else {
         addReplyArrayLen(c, c->argc - 2);
         for (i = 2; i < c->argc; i++) {
@@ -5207,16 +5276,16 @@ void commandDocsCommand(client *c) {
     int i;
     if (c->argc == 2) {
         /* Reply with an array of all commands */
-        dictIterator *di;
-        dictEntry *de;
-        addReplyMapLen(c, dictSize(server.commands));
-        di = dictGetIterator(server.commands);
-        while ((de = dictNext(di)) != NULL) {
-            struct serverCommand *cmd = dictGetVal(de);
+        hashtableIterator iter;
+        void *next;
+        addReplyMapLen(c, hashtableSize(server.commands));
+        hashtableInitIterator(&iter, server.commands);
+        while (hashtableNext(&iter, &next)) {
+            struct serverCommand *cmd = next;
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
             addReplyCommandDocs(c, cmd);
         }
-        dictReleaseIterator(di);
+        hashtableResetIterator(&iter);
     } else {
         /* Reply with an array of the requested commands (if we find them) */
         int numcmds = 0;
@@ -5336,14 +5405,13 @@ const char *getSafeInfoString(const char *s, size_t len, char **tmp) {
     return memmapchars(new, len, unsafe_info_chars, unsafe_info_chars_substs, sizeof(unsafe_info_chars) - 1);
 }
 
-sds genValkeyInfoStringCommandStats(sds info, dict *commands) {
-    struct serverCommand *c;
-    dictEntry *de;
-    dictIterator *di;
-    di = dictGetSafeIterator(commands);
-    while ((de = dictNext(di)) != NULL) {
+sds genValkeyInfoStringCommandStats(sds info, hashtable *commands) {
+    hashtableIterator iter;
+    void *next;
+    hashtableInitSafeIterator(&iter, commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *c = next;
         char *tmpsafe;
-        c = (struct serverCommand *)dictGetVal(de);
         if (c->calls || c->failed_calls || c->rejected_calls) {
             info = sdscatprintf(info,
                                 "cmdstat_%s:calls=%lld,usec=%lld,usec_per_call=%.2f"
@@ -5353,11 +5421,11 @@ sds genValkeyInfoStringCommandStats(sds info, dict *commands) {
                                 c->rejected_calls, c->failed_calls);
             if (tmpsafe != NULL) zfree(tmpsafe);
         }
-        if (c->subcommands_dict) {
-            info = genValkeyInfoStringCommandStats(info, c->subcommands_dict);
+        if (c->subcommands_ht) {
+            info = genValkeyInfoStringCommandStats(info, c->subcommands_ht);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 
     return info;
 }
@@ -5374,24 +5442,23 @@ sds genValkeyInfoStringACLStats(sds info) {
     return info;
 }
 
-sds genValkeyInfoStringLatencyStats(sds info, dict *commands) {
-    struct serverCommand *c;
-    dictEntry *de;
-    dictIterator *di;
-    di = dictGetSafeIterator(commands);
-    while ((de = dictNext(di)) != NULL) {
+sds genValkeyInfoStringLatencyStats(sds info, hashtable *commands) {
+    hashtableIterator iter;
+    void *next;
+    hashtableInitSafeIterator(&iter, commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *c = next;
         char *tmpsafe;
-        c = (struct serverCommand *)dictGetVal(de);
         if (c->latency_histogram) {
             info = fillPercentileDistributionLatencies(
                 info, getSafeInfoString(c->fullname, sdslen(c->fullname), &tmpsafe), c->latency_histogram);
             if (tmpsafe != NULL) zfree(tmpsafe);
         }
-        if (c->subcommands_dict) {
-            info = genValkeyInfoStringLatencyStats(info, c->subcommands_dict);
+        if (c->subcommands_ht) {
+            info = genValkeyInfoStringLatencyStats(info, c->subcommands_ht);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 
     return info;
 }
@@ -6793,6 +6860,7 @@ __attribute__((weak)) int main(int argc, char **argv) {
     uint8_t hashseed[16];
     getRandomBytes(hashseed, sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
+    hashtableSetHashFunctionSeed(hashseed);
 
     char *exec_name = strrchr(argv[0], '/');
     if (exec_name == NULL) exec_name = argv[0];

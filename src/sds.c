@@ -194,12 +194,12 @@ sds sdsdup(const sds s) {
 /*
  * This method returns the minimum amount of bytes required to store the sds (header + data + NULL terminator).
  */
-static inline size_t sdsminlen(sds s) {
+static inline size_t sdsminlen(const sds s) {
     return sdslen(s) + sdsHdrSize(s[-1]) + 1;
 }
 
 /* This method copies the sds `s` into `buf` which is the target character buffer. */
-size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, sds s, uint8_t *hdr_size) {
+size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, const sds s, uint8_t *hdr_size) {
     size_t required_keylen = sdsminlen(s);
     if (buf == NULL) {
         return required_keylen;
@@ -214,6 +214,13 @@ size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, sds s, uint8_t *hdr_s
 void sdsfree(sds s) {
     if (s == NULL) return;
     s_free_with_size(sdsAllocPtr(s), sdsAllocSize(s));
+}
+
+/* This variant of sdsfree() gets its argument as void, and is useful
+ * as free method in data structures that expect a 'void free_object(void*)'
+ * prototype for the free method. */
+void sdsfreeVoid(void *s) {
+    sdsfree(s);
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so

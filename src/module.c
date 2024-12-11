@@ -718,7 +718,7 @@ int moduleCreateEmptyKey(ValkeyModuleKey *key, int type) {
     case VALKEYMODULE_KEYTYPE_STREAM: obj = createStreamObject(); break;
     default: return VALKEYMODULE_ERR;
     }
-    dbAdd(key->db, key->key, obj);
+    dbAdd(key->db, key->key, &obj);
     key->value = obj;
     moduleInitKeyTypeSpecific(key);
     return VALKEYMODULE_OK;
@@ -1298,8 +1298,8 @@ int VM_CreateCommand(ValkeyModuleCtx *ctx,
     cp->serverCmd->arity = cmdfunc ? -1 : -2; /* Default value, can be changed later via dedicated API */
     /* Drain IO queue before modifying commands dictionary to prevent concurrent access while modifying it. */
     drainIOThreadsQueue();
-    serverAssert(dictAdd(server.commands, sdsdup(declared_name), cp->serverCmd) == DICT_OK);
-    serverAssert(dictAdd(server.orig_commands, sdsdup(declared_name), cp->serverCmd) == DICT_OK);
+    serverAssert(hashtableAdd(server.commands, cp->serverCmd));
+    serverAssert(hashtableAdd(server.orig_commands, cp->serverCmd));
     cp->serverCmd->id = ACLGetCommandID(declared_name); /* ID used for ACL. */
     return VALKEYMODULE_OK;
 }
@@ -1431,7 +1431,7 @@ int VM_CreateSubcommand(ValkeyModuleCommand *parent,
 
     /* Check if the command name is busy within the parent command. */
     sds declared_name = sdsnew(name);
-    if (parent_cmd->subcommands_dict && lookupSubcommand(parent_cmd, declared_name) != NULL) {
+    if (parent_cmd->subcommands_ht && lookupSubcommand(parent_cmd, declared_name) != NULL) {
         sdsfree(declared_name);
         return VALKEYMODULE_ERR;
     }
@@ -1441,7 +1441,7 @@ int VM_CreateSubcommand(ValkeyModuleCommand *parent,
         moduleCreateCommandProxy(parent->module, declared_name, fullname, cmdfunc, flags, firstkey, lastkey, keystep);
     cp->serverCmd->arity = -2;
 
-    commandAddSubcommand(parent_cmd, cp->serverCmd, name);
+    commandAddSubcommand(parent_cmd, cp->serverCmd);
     return VALKEYMODULE_OK;
 }
 
@@ -4196,7 +4196,7 @@ int VM_SetExpire(ValkeyModuleKey *key, mstime_t expire) {
         return VALKEYMODULE_ERR;
     if (expire != VALKEYMODULE_NO_EXPIRE) {
         expire += commandTimeSnapshot();
-        setExpire(key->ctx->client, key->db, key->key, expire);
+        key->value = setExpire(key->ctx->client, key->db, key->key, expire);
     } else {
         removeExpire(key->db, key->key);
     }
@@ -4225,7 +4225,7 @@ int VM_SetAbsExpire(ValkeyModuleKey *key, mstime_t expire) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->value == NULL || (expire < 0 && expire != VALKEYMODULE_NO_EXPIRE))
         return VALKEYMODULE_ERR;
     if (expire != VALKEYMODULE_NO_EXPIRE) {
-        setExpire(key->ctx->client, key->db, key->key, expire);
+        key->value = setExpire(key->ctx->client, key->db, key->key, expire);
     } else {
         removeExpire(key->db, key->key);
     }
@@ -4286,7 +4286,9 @@ int VM_GetToDbIdFromOptCtx(ValkeyModuleKeyOptCtx *ctx) {
 int VM_StringSet(ValkeyModuleKey *key, ValkeyModuleString *str) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->iter) return VALKEYMODULE_ERR;
     VM_DeleteKey(key);
-    setKey(key->ctx->client, key->db, key->key, str, SETKEY_NO_SIGNAL);
+    /* Retain str so setKey copies it to db rather than reallocating it. */
+    incrRefCount(str);
+    setKey(key->ctx->client, key->db, key->key, &str, SETKEY_NO_SIGNAL);
     key->value = str;
     return VALKEYMODULE_OK;
 }
@@ -4366,9 +4368,8 @@ int VM_StringTruncate(ValkeyModuleKey *key, size_t newlen) {
     if (key->value == NULL) {
         /* Empty key: create it with the new size. */
         robj *o = createObject(OBJ_STRING, sdsnewlen(NULL, newlen));
-        setKey(key->ctx->client, key->db, key->key, o, SETKEY_NO_SIGNAL);
+        setKey(key->ctx->client, key->db, key->key, &o, SETKEY_NO_SIGNAL);
         key->value = o;
-        decrRefCount(o);
     } else {
         /* Unshare and resize. */
         key->value = dbUnshareStringValue(key->db, key->key, key->value);
@@ -6933,8 +6934,7 @@ int VM_ModuleTypeSetValue(ValkeyModuleKey *key, moduleType *mt, void *value) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->iter) return VALKEYMODULE_ERR;
     VM_DeleteKey(key);
     robj *o = createModuleObject(mt, value);
-    setKey(key->ctx->client, key->db, key->key, o, SETKEY_NO_SIGNAL);
-    decrRefCount(o);
+    setKey(key->ctx->client, key->db, key->key, &o, SETKEY_NO_SIGNAL);
     key->value = o;
     return VALKEYMODULE_OK;
 }
@@ -10900,10 +10900,10 @@ typedef struct ValkeyModuleScanCursor {
     int done;
 } ValkeyModuleScanCursor;
 
-static void moduleScanCallback(void *privdata, const dictEntry *de) {
+static void moduleScanCallback(void *privdata, void *element) {
     ScanCBData *data = privdata;
-    sds key = dictGetKey(de);
-    robj *val = dictGetVal(de);
+    robj *val = element;
+    sds key = objectGetKey(val);
     ValkeyModuleString *keyname = createObject(OBJ_STRING, sdsdup(key));
 
     /* Setup the key handle. */
@@ -12080,20 +12080,21 @@ int moduleFreeCommand(struct ValkeyModule *module, struct serverCommand *cmd) {
     moduleFreeArgs(cmd->args, cmd->num_args);
     zfree(cp);
 
-    if (cmd->subcommands_dict) {
-        dictEntry *de;
-        dictIterator *di = dictGetSafeIterator(cmd->subcommands_dict);
-        while ((de = dictNext(di)) != NULL) {
-            struct serverCommand *sub = dictGetVal(de);
+    if (cmd->subcommands_ht) {
+        hashtableIterator iter;
+        void *next;
+        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        while (hashtableNext(&iter, &next)) {
+            struct serverCommand *sub = next;
             if (moduleFreeCommand(module, sub) != C_OK) continue;
 
-            serverAssert(dictDelete(cmd->subcommands_dict, sub->declared_name) == DICT_OK);
+            serverAssert(hashtableDelete(cmd->subcommands_ht, sub->declared_name));
             sdsfree((sds)sub->declared_name);
             sdsfree(sub->fullname);
             zfree(sub);
         }
-        dictReleaseIterator(di);
-        dictRelease(cmd->subcommands_dict);
+        hashtableResetIterator(&iter);
+        hashtableRelease(cmd->subcommands_ht);
     }
 
     return C_OK;
@@ -12103,19 +12104,20 @@ void moduleUnregisterCommands(struct ValkeyModule *module) {
     /* Drain IO queue before modifying commands dictionary to prevent concurrent access while modifying it. */
     drainIOThreadsQueue();
     /* Unregister all the commands registered by this module. */
-    dictIterator *di = dictGetSafeIterator(server.commands);
-    dictEntry *de;
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+    hashtableIterator iter;
+    void *next;
+    hashtableInitSafeIterator(&iter, server.commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (moduleFreeCommand(module, cmd) != C_OK) continue;
 
-        serverAssert(dictDelete(server.commands, cmd->fullname) == DICT_OK);
-        serverAssert(dictDelete(server.orig_commands, cmd->fullname) == DICT_OK);
+        serverAssert(hashtableDelete(server.commands, cmd->fullname));
+        serverAssert(hashtableDelete(server.orig_commands, cmd->fullname));
         sdsfree((sds)cmd->declared_name);
         sdsfree(cmd->fullname);
         zfree(cmd);
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* We parse argv to add sds "NAME VALUE" pairs to the server.module_configs_queue list of configs.

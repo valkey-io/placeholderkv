@@ -3340,6 +3340,7 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
     if (client->flag.readonly) *p++ = 'r';
     if (client->flag.no_evict) *p++ = 'e';
     if (client->flag.no_touch) *p++ = 'T';
+    if (client->flag.import_source) *p++ = 'I';
     if (p == flags) *p++ = 'N';
     *p++ = '\0';
 
@@ -4101,7 +4102,7 @@ void clientCommand(client *c) {
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
         /* CLIENT IMPORT-SOURCE ON|OFF */
-        if (!server.import_mode) {
+        if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
             addReplyError(c, "Server is not in import mode");
             return;
         }
