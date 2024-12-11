@@ -3,7 +3,7 @@ name: Build Release Packages
 on:
   release:
     types: [published]
-  pull_request:
+  push:
     paths:
       - '.github/workflows/build-release-packages.yml'
       - '.github/workflows/call-build-linux-arm-packages.yml'
@@ -38,7 +38,7 @@ jobs:
       - name: Get the version
         id: get_version
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "push" ]]; then
             VERSION=${{ github.base_ref }}
           else
             VERSION="${INPUT_VERSION}"
@@ -57,7 +57,7 @@ jobs:
       - name: Check if we are testing
         id: check-if-testing
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "IS_TEST=true" >> $GITHUB_OUTPUT
           else
             echo "IS_TEST=false" >> $GITHUB_OUTPUT
