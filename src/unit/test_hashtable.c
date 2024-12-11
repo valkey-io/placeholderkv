@@ -303,6 +303,7 @@ int test_two_phase_insert_and_pop(int argc, char **argv, int flags) {
         TEST_ASSERT(hashtableSize(ht) == size_before_find);
         hashtableTwoPhasePopDelete(ht, &position);
         TEST_ASSERT(hashtableSize(ht) == size_before_find - 1);
+        free(e);
     }
     TEST_ASSERT(hashtableSize(ht) == 0);
 
