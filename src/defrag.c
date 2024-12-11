@@ -84,7 +84,7 @@ struct DefragContext {
 
     long long timeproc_id;      // Eventloop ID of the timerproc (or AE_DELETED_EVENT_ID)
     monotime timeproc_end_time; // Ending time of previous timerproc execution
-    long timeproc_overage_us;   // A correction value if over/under target CPU percent
+    long timeproc_overage_us;   // A correction value if over target CPU percent
 };
 static struct DefragContext defrag;
 
@@ -1157,7 +1157,7 @@ static int computeDefragCycleUs(void) {
          *  the starvation of the timer. */
         dutyCycleUs = targetCpuPercent * waitedUs / (100 - targetCpuPercent);
 
-        // Also adjust for any accumulated overage(underage).
+        // Also adjust for any accumulated overage.
         dutyCycleUs -= defrag.timeproc_overage_us;
         defrag.timeproc_overage_us = 0;
 
@@ -1176,8 +1176,11 @@ static int computeDefragCycleUs(void) {
  * computeDefragCycleUs computation. */
 static int computeDelayMs(monotime intendedEndtime) {
     defrag.timeproc_end_time = getMonotonicUs();
-    int overage = defrag.timeproc_end_time - intendedEndtime;
+    long overage = defrag.timeproc_end_time - intendedEndtime;
     defrag.timeproc_overage_us += overage; // track over/under desired CPU
+    /* Allow negative overage (underage) to count against existing overage, but don't allow
+     * underage (from short stages) to be accumulated.  */
+    if (defrag.timeproc_overage_us < 0) defrag.timeproc_overage_us = 0;
 
     int targetCpuPercent = server.active_defrag_cpu_percent;
     serverAssert(targetCpuPercent > 0 && targetCpuPercent < 100);
@@ -1189,7 +1192,7 @@ static int computeDelayMs(monotime intendedEndtime) {
     long totalCycleTimeUs = server.active_defrag_cycle_us * 100 / targetCpuPercent;
     long delayUs = totalCycleTimeUs - server.active_defrag_cycle_us;
     // Only increase delay by the fraction of the overage that would be non-duty-cycle
-    delayUs += defrag.timeproc_overage_us * (100 - targetCpuPercent) / 100; // "overage" might be negative
+    delayUs += defrag.timeproc_overage_us * (100 - targetCpuPercent) / 100;
     if (delayUs < 0) delayUs = 0;
     long delayMs = delayUs / 1000; // round down
     return delayMs;
@@ -1254,6 +1257,9 @@ static long long activeDefragTimeProc(struct aeEventLoop *eventLoop, long long i
  * actions.  This interface allows defrag to continue running, avoiding a single long defrag step
  * after the long operation completes. */
 void defragWhileBlocked(void) {
+    // This is called infrequently, while timers are not active.  We might need to start defrag.
+    if (!defragIsRunning()) monitorActiveDefrag();
+
     if (!defragIsRunning()) return;
 
     // Save off the timeproc_id.  If we have a normal termination, it will be cleared.
