@@ -1,6 +1,6 @@
 /* Object implementation.
  *
- * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,8 +29,11 @@
  */
 
 #include "server.h"
+#include "serverassert.h"
 #include "functions.h"
 #include "intset.h" /* Compact integer set structure */
+#include "zmalloc.h"
+#include "sds.h"
 #include <math.h>
 #include <ctype.h>
 
@@ -38,16 +41,66 @@
 #define strtold(a, b) ((long double)strtod((a), (b)))
 #endif
 
+/* For objects with large embedded keys, we reserve space for an expire field,
+ * so if expire is set later, we don't need to reallocate the object. */
+#define KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD 128
+
 /* ===================== Creation and parsing of objects ==================== */
 
-robj *createObject(int type, void *ptr) {
-    robj *o = zmalloc(sizeof(*o));
+/* Creates an object, optionally with embedded key and expire fields. The key
+ * and expire fields can be omitted by passing NULL and -1, respectively. */
+robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long expire) {
+    /* Calculate sizes */
+    int has_expire = (expire != -1 ||
+                      (key != NULL && sdslen(key) >= KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD));
+    size_t key_sds_size = 0;
+    size_t min_size = sizeof(robj);
+    if (has_expire) {
+        min_size += sizeof(long long);
+    }
+    if (key != NULL) {
+        /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
+        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
+        min_size += 1 + key_sds_size;
+    }
+    /* Allocate and set the declared fields. */
+    size_t bufsize = 0;
+    robj *o = zmalloc_usable(min_size, &bufsize);
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
     o->ptr = ptr;
     o->refcount = 1;
     o->lru = 0;
+    o->hasembkey = (key != NULL);
+
+    /* If the allocation has enough space for an expire field, add it even if we
+     * don't need it now. Then we don't need to realloc if it's needed later. */
+    if (key != NULL && !has_expire && bufsize >= min_size + sizeof(long long)) {
+        has_expire = 1;
+        min_size += sizeof(long long);
+    }
+    o->hasexpire = has_expire;
+
+    /* The memory after the struct where we embedded data. */
+    unsigned char *data = (void *)(o + 1);
+
+    /* Set the expire field. */
+    if (o->hasexpire) {
+        *(long long *)data = expire;
+        data += sizeof(long long);
+    }
+
+    /* Copy embedded key. */
+    if (o->hasembkey) {
+        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        data += 1 + key_sds_size;
+    }
+
     return o;
+}
+
+robj *createObject(int type, void *ptr) {
+    return createObjectWithKeyAndExpire(type, ptr, NULL, -1);
 }
 
 void initObjectLRUOrLFU(robj *o) {
@@ -85,31 +138,83 @@ robj *createRawStringObject(const char *ptr, size_t len) {
     return createObject(OBJ_STRING, sdsnewlen(ptr, len));
 }
 
+/* Creates a new embedded string object and copies the content of key, val and
+ * expire to the new object. LRU is set to 0. */
+static robj *createEmbeddedStringObjectWithKeyAndExpire(const char *val_ptr,
+                                                        size_t val_len,
+                                                        const sds key,
+                                                        long long expire) {
+    /* Calculate sizes */
+    size_t key_sds_size = 0;
+    size_t min_size = sizeof(robj);
+    if (expire != -1) {
+        min_size += sizeof(long long);
+    }
+    if (key != NULL) {
+        /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
+        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
+        min_size += 1 + key_sds_size;
+    }
+    /* Size of embedded value (EMBSTR) including \0 term. */
+    min_size += sizeof(struct sdshdr8) + val_len + 1;
+
+    /* Allocate and set the declared fields. */
+    size_t bufsize = 0;
+    robj *o = zmalloc_usable(min_size, &bufsize);
+    o->type = OBJ_STRING;
+    o->encoding = OBJ_ENCODING_EMBSTR;
+    o->refcount = 1;
+    o->lru = 0;
+    o->hasexpire = (expire != -1);
+    o->hasembkey = (key != NULL);
+
+    /* If the allocation has enough space for an expire field, add it even if we
+     * don't need it now. Then we don't need to realloc if it's needed later. */
+    if (!o->hasexpire && bufsize >= min_size + sizeof(long long)) {
+        o->hasexpire = 1;
+        min_size += sizeof(long long);
+    }
+
+    /* The memory after the struct where we embedded data. */
+    unsigned char *data = (void *)(o + 1);
+
+    /* Set the expire field. */
+    if (o->hasexpire) {
+        *(long long *)data = expire;
+        data += sizeof(long long);
+    }
+
+    /* Copy embedded key. */
+    if (o->hasembkey) {
+        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        data += 1 + key_sds_size;
+    }
+
+    /* Copy embedded value (EMBSTR). */
+    struct sdshdr8 *sh = (void *)data;
+    sh->flags = SDS_TYPE_8;
+    sh->len = val_len;
+    size_t capacity = bufsize - (min_size - val_len);
+    sh->alloc = capacity;
+    serverAssert(capacity == sh->alloc); /* Overflow check. */
+    if (val_ptr == SDS_NOINIT) {
+        sh->buf[val_len] = '\0';
+    } else if (val_ptr != NULL) {
+        memcpy(sh->buf, val_ptr, val_len);
+        sh->buf[val_len] = '\0';
+    } else {
+        memset(sh->buf, 0, val_len + 1);
+    }
+    o->ptr = sh->buf;
+
+    return o;
+}
+
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
-    robj *o = zmalloc(sizeof(robj) + sizeof(struct sdshdr8) + len + 1);
-    struct sdshdr8 *sh = (void *)(o + 1);
-
-    o->type = OBJ_STRING;
-    o->encoding = OBJ_ENCODING_EMBSTR;
-    o->ptr = sh + 1;
-    o->refcount = 1;
-    o->lru = 0;
-
-    sh->len = len;
-    sh->alloc = len;
-    sh->flags = SDS_TYPE_8;
-    if (ptr == SDS_NOINIT)
-        sh->buf[len] = '\0';
-    else if (ptr) {
-        memcpy(sh->buf, ptr, len);
-        sh->buf[len] = '\0';
-    } else {
-        memset(sh->buf, 0, len + 1);
-    }
-    return o;
+    return createEmbeddedStringObjectWithKeyAndExpire(ptr, len, NULL, -1);
 }
 
 /* Create a string object with EMBSTR encoding if it is smaller than
@@ -124,6 +229,96 @@ robj *createStringObject(const char *ptr, size_t len) {
         return createEmbeddedStringObject(ptr, len);
     else
         return createRawStringObject(ptr, len);
+}
+
+robj *createStringObjectWithKeyAndExpire(const char *ptr, size_t len, const sds key, long long expire) {
+    /* When to embed? Embed when the sum is up to 64 bytes. There may be better
+     * heuristics, e.g. we can look at the jemalloc sizes (16-byte intervals up
+     * to 128 bytes). */
+    size_t size = sizeof(robj);
+    size += (key != NULL) * (sdslen(key) + 3); /* hdr size (1) + hdr (1) + nullterm (1) */
+    size += (expire != -1) * sizeof(long long);
+    size += 4 + len; /* embstr header (3) + nullterm (1) */
+    if (size <= 64) {
+        return createEmbeddedStringObjectWithKeyAndExpire(ptr, len, key, expire);
+    } else {
+        return createObjectWithKeyAndExpire(OBJ_STRING, sdsnewlen(ptr, len), key, expire);
+    }
+}
+
+sds objectGetKey(const robj *val) {
+    unsigned char *data = (void *)(val + 1);
+    if (val->hasexpire) {
+        /* Skip expire field */
+        data += sizeof(long long);
+    }
+    if (val->hasembkey) {
+        uint8_t hdr_size = *(uint8_t *)data;
+        data += 1 + hdr_size;
+        return (sds)data;
+    }
+    return NULL;
+}
+
+long long objectGetExpire(const robj *val) {
+    unsigned char *data = (void *)(val + 1);
+    if (val->hasexpire) {
+        return *(long long *)data;
+    } else {
+        return -1;
+    }
+}
+
+/* This functions may reallocate the value. The new allocation is returned and
+ * the old object's reference counter is decremented and possibly freed. Use the
+ * returned object instead of 'val' after calling this function. */
+robj *objectSetExpire(robj *val, long long expire) {
+    if (val->hasexpire) {
+        /* Update existing expire field. */
+        unsigned char *data = (void *)(val + 1);
+        *(long long *)data = expire;
+        return val;
+    } else if (expire == -1) {
+        return val;
+    } else {
+        return objectSetKeyAndExpire(val, objectGetKey(val), expire);
+    }
+}
+
+/* This functions may reallocate the value. The new allocation is returned and
+ * the old object's reference counter is decremented and possibly freed. Use the
+ * returned object instead of 'val' after calling this function. */
+robj *objectSetKeyAndExpire(robj *val, sds key, long long expire) {
+    if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_EMBSTR) {
+        robj *new = createStringObjectWithKeyAndExpire(val->ptr, sdslen(val->ptr), key, expire);
+        new->lru = val->lru;
+        decrRefCount(val);
+        return new;
+    }
+
+    /* Create a new object with embedded key. Reuse ptr if possible. */
+    void *ptr;
+    if (val->refcount == 1) {
+        /* Reuse the ptr. There are no other references to val. */
+        ptr = val->ptr;
+        val->ptr = NULL;
+    } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_INT) {
+        /* The pointer is not allocated memory. We can just copy the pointer. */
+        ptr = val->ptr;
+    } else if (val->type == OBJ_STRING && val->encoding == OBJ_ENCODING_RAW) {
+        /* Dup the string. */
+        ptr = sdsdup(val->ptr);
+    } else {
+        serverAssert(val->type != OBJ_STRING);
+        /* There are multiple references to this non-string object. Most types
+         * can be duplicated, but for a module type is not always possible. */
+        serverPanic("Not implemented");
+    }
+    robj *new = createObjectWithKeyAndExpire(val->type, ptr, key, expire);
+    new->encoding = val->encoding;
+    new->lru = val->lru;
+    decrRefCount(val);
+    return new;
 }
 
 /* Same as CreateRawStringObject, can return NULL if allocation fails */
@@ -170,18 +365,10 @@ robj *createStringObjectFromLongLong(long long value) {
     return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
 }
 
-/* The function avoids returning a shared integer when LFU/LRU info
- * are needed, that is, when the object is used as a value in the key
- * space(for instance when the INCR command is used), and the server is
- * configured to evict based on LFU/LRU, so we want LFU/LRU values
- * specific for each key. */
+/* The function doesn't return a shared integer when the object is used as a
+ * value in the key space (for instance when the INCR command is used). */
 robj *createStringObjectFromLongLongForValue(long long value) {
-    if (server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) {
-        /* If the maxmemory policy permits, we can still return shared integers */
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_AUTO);
-    } else {
-        return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
-    }
+    return createStringObjectFromLongLongWithOptions(value, LL2STROBJ_NO_SHARED);
 }
 
 /* Create a string object that contains an sds inside it. That means it can't be
@@ -372,18 +559,18 @@ void incrRefCount(robj *o) {
 
 void decrRefCount(robj *o) {
     if (o->refcount == 1) {
-        /* clang-format off */
-        switch(o->type) {
-        case OBJ_STRING: freeStringObject(o); break;
-        case OBJ_LIST: freeListObject(o); break;
-        case OBJ_SET: freeSetObject(o); break;
-        case OBJ_ZSET: freeZsetObject(o); break;
-        case OBJ_HASH: freeHashObject(o); break;
-        case OBJ_MODULE: freeModuleObject(o); break;
-        case OBJ_STREAM: freeStreamObject(o); break;
-        default: serverPanic("Unknown object type"); break;
+        if (o->ptr != NULL) {
+            switch (o->type) {
+            case OBJ_STRING: freeStringObject(o); break;
+            case OBJ_LIST: freeListObject(o); break;
+            case OBJ_SET: freeSetObject(o); break;
+            case OBJ_ZSET: freeZsetObject(o); break;
+            case OBJ_HASH: freeHashObject(o); break;
+            case OBJ_MODULE: freeModuleObject(o); break;
+            case OBJ_STREAM: freeStreamObject(o); break;
+            default: serverPanic("Unknown object type"); break;
+            }
         }
-        /* clang-format on */
         zfree(o);
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
@@ -391,9 +578,14 @@ void decrRefCount(robj *o) {
     }
 }
 
-/* See dismissObject() */
+/* See dismissObject(). sds is an exception, because the allocation
+ * size is known. Instead of dismissing it with madvise(MADV_DONTNEED)
+ * we free it via the allocator, which has minimal overhead when the
+ * size is known. This has advantage that it allows the allocator to
+ * accumulate free buffers to free whole pages, while madvise is nop
+ * if the buffer is less than a page.  */
 void dismissSds(sds s) {
-    dismissMemory(sdsAllocPtr(s), sdsAllocSize(s));
+    sdsfree(s);
 }
 
 /* See dismissObject() */
@@ -552,8 +744,7 @@ void dismissObject(robj *o, size_t size_hint) {
          * so we avoid these pointless loops when they're not going to do anything. */
 #if defined(USE_JEMALLOC) && defined(__linux__)
     if (o->refcount != 1) return;
-    /* clang-format off */
-    switch(o->type) {
+    switch (o->type) {
     case OBJ_STRING: dismissStringObject(o); break;
     case OBJ_LIST: dismissListObject(o, size_hint); break;
     case OBJ_SET: dismissSetObject(o, size_hint); break;
@@ -562,18 +753,10 @@ void dismissObject(robj *o, size_t size_hint) {
     case OBJ_STREAM: dismissStreamObject(o, size_hint); break;
     default: break;
     }
-    /* clang-format on */
 #else
     UNUSED(o);
     UNUSED(size_hint);
 #endif
-}
-
-/* This variant of decrRefCount() gets its argument as void, and is useful
- * as free method in data structures that expect a 'void free_object(void*)'
- * prototype for the free method. */
-void decrRefCountVoid(void *o) {
-    decrRefCount(o);
 }
 
 int checkType(client *c, robj *o, int type) {
@@ -609,7 +792,7 @@ void trimStringObjectIfNeeded(robj *o, int trim_small_values) {
      * 3. When calling from RM_TrimStringAllocation (trim_small_values is true). */
     size_t len = sdslen(o->ptr);
     if (len >= PROTO_MBULK_BIG_ARG || trim_small_values ||
-        (server.executing_client && server.executing_client->flags & CLIENT_SCRIPT && len < LUA_CMD_OBJCACHE_MAX_LEN)) {
+        (server.executing_client && server.executing_client->flag.script && len < LUA_CMD_OBJCACHE_MAX_LEN)) {
         if (sdsavail(o->ptr) > len / 10) {
             o->ptr = sdsRemoveFreeSpace(o->ptr, 0);
         }
@@ -643,24 +826,15 @@ robj *tryObjectEncodingEx(robj *o, int try_trim) {
      * representable as a 32 nor 64 bit integer. */
     len = sdslen(s);
     if (len <= 20 && string2l(s, len, &value)) {
-        /* This object is encodable as a long. Try to use a shared object.
-         * Note that we avoid using shared integers when maxmemory is used
-         * because every object needs to have a private LRU field for the LRU
-         * algorithm to work well. */
-        if ((server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) && value >= 0 &&
-            value < OBJ_SHARED_INTEGERS) {
+        /* This object is encodable as a long. */
+        if (o->encoding == OBJ_ENCODING_RAW) {
+            sdsfree(o->ptr);
+            o->encoding = OBJ_ENCODING_INT;
+            o->ptr = (void *)value;
+            return o;
+        } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
             decrRefCount(o);
-            return shared.integers[value];
-        } else {
-            if (o->encoding == OBJ_ENCODING_RAW) {
-                sdsfree(o->ptr);
-                o->encoding = OBJ_ENCODING_INT;
-                o->ptr = (void *)value;
-                return o;
-            } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
-                decrRefCount(o);
-                return createStringObjectFromLongLongForValue(value);
-            }
+            return createStringObjectFromLongLongForValue(value);
         }
     }
 
@@ -931,8 +1105,7 @@ int getIntFromObjectOrReply(client *c, robj *o, int *target, const char *msg) {
 }
 
 char *strEncoding(int encoding) {
-    /* clang-format off */
-    switch(encoding) {
+    switch (encoding) {
     case OBJ_ENCODING_RAW: return "raw";
     case OBJ_ENCODING_INT: return "int";
     case OBJ_ENCODING_HT: return "hashtable";
@@ -944,34 +1117,10 @@ char *strEncoding(int encoding) {
     case OBJ_ENCODING_STREAM: return "stream";
     default: return "unknown";
     }
-    /* clang-format on */
 }
 
 /* =========================== Memory introspection ========================= */
 
-
-/* This is a helper function with the goal of estimating the memory
- * size of a radix tree that is used to store Stream IDs.
- *
- * Note: to guess the size of the radix tree is not trivial, so we
- * approximate it considering 16 bytes of data overhead for each
- * key (the ID), and then adding the number of bare nodes, plus some
- * overhead due by the data and child pointers. This secret recipe
- * was obtained by checking the average radix tree created by real
- * workloads, and then adjusting the constants to get numbers that
- * more or less match the real memory usage.
- *
- * Actually the number of nodes and keys may be different depending
- * on the insertion speed and thus the ability of the radix tree
- * to compress prefixes. */
-size_t streamRadixTreeMemoryUsage(rax *rax) {
-    size_t size = sizeof(*rax);
-    size = rax->numele * sizeof(streamID);
-    size += rax->numnodes * sizeof(raxNode);
-    /* Add a fixed overhead due to the aux data pointer, children, ... */
-    size += rax->numnodes * sizeof(long) * 30;
-    return size;
-}
 
 /* Returns the size in bytes consumed by the key's value in RAM.
  * Note that the returned value is just an approximation, especially in the
@@ -989,7 +1138,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
         if (o->encoding == OBJ_ENCODING_INT) {
             asize = sizeof(*o);
         } else if (o->encoding == OBJ_ENCODING_RAW) {
-            asize = sdsZmallocSize(o->ptr) + sizeof(*o);
+            asize = sdsAllocSize(o->ptr) + sizeof(*o);
         } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
             asize = zmalloc_size((void *)o);
         } else {
@@ -1017,7 +1166,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             asize = sizeof(*o) + sizeof(dict) + (sizeof(struct dictEntry *) * dictBuckets(d));
             while ((de = dictNext(di)) != NULL && samples < sample_size) {
                 ele = dictGetKey(de);
-                elesize += dictEntryMemUsage() + sdsZmallocSize(ele);
+                elesize += dictEntryMemUsage(de) + sdsAllocSize(ele);
                 samples++;
             }
             dictReleaseIterator(di);
@@ -1039,8 +1188,8 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             asize = sizeof(*o) + sizeof(zset) + sizeof(zskiplist) + sizeof(dict) +
                     (sizeof(struct dictEntry *) * dictBuckets(d)) + zmalloc_size(zsl->header);
             while (znode != NULL && samples < sample_size) {
-                elesize += sdsZmallocSize(znode->ele);
-                elesize += dictEntryMemUsage() + zmalloc_size(znode);
+                elesize += sdsAllocSize(znode->ele);
+                elesize += dictEntryMemUsage(NULL) + zmalloc_size(znode);
                 samples++;
                 znode = znode->level[0].forward;
             }
@@ -1058,8 +1207,8 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             while ((de = dictNext(di)) != NULL && samples < sample_size) {
                 ele = dictGetKey(de);
                 ele2 = dictGetVal(de);
-                elesize += sdsZmallocSize(ele) + sdsZmallocSize(ele2);
-                elesize += dictEntryMemUsage();
+                elesize += sdsAllocSize(ele) + sdsAllocSize(ele2);
+                elesize += dictEntryMemUsage(de);
                 samples++;
             }
             dictReleaseIterator(di);
@@ -1070,7 +1219,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
     } else if (o->type == OBJ_STREAM) {
         stream *s = o->ptr;
         asize = sizeof(*o) + sizeof(*s);
-        asize += streamRadixTreeMemoryUsage(s->rax);
+        asize += raxAllocSize(s->rax);
 
         /* Now we have to add the listpacks. The last listpack is often non
          * complete, so we estimate the size of the first N listpacks, and
@@ -1110,7 +1259,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             while (raxNext(&ri)) {
                 streamCG *cg = ri.data;
                 asize += sizeof(*cg);
-                asize += streamRadixTreeMemoryUsage(cg->pel);
+                asize += raxAllocSize(cg->pel);
                 asize += sizeof(streamNACK) * raxSize(cg->pel);
 
                 /* For each consumer we also need to add the basic data
@@ -1122,7 +1271,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
                     streamConsumer *consumer = cri.data;
                     asize += sizeof(*consumer);
                     asize += sdslen(consumer->name);
-                    asize += streamRadixTreeMemoryUsage(consumer->pel);
+                    asize += raxAllocSize(consumer->pel);
                     /* Don't count NACKs again, they are shared with the
                      * consumer group PEL. */
                 }
@@ -1174,11 +1323,11 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
      * only if replication buffer memory is more than the repl backlog setting,
      * we consider the excess as replicas' memory. Otherwise, replication buffer
      * memory is the consumption of repl backlog. */
-    if (listLength(server.slaves) && (long long)server.repl_buffer_mem > server.repl_backlog_size) {
-        mh->clients_slaves = server.repl_buffer_mem - server.repl_backlog_size;
+    if (listLength(server.replicas) && (long long)server.repl_buffer_mem > server.repl_backlog_size) {
+        mh->clients_replicas = server.repl_buffer_mem - server.repl_backlog_size;
         mh->repl_backlog = server.repl_backlog_size;
     } else {
-        mh->clients_slaves = 0;
+        mh->clients_replicas = 0;
         mh->repl_backlog = server.repl_buffer_mem;
     }
     if (server.repl_backlog) {
@@ -1187,12 +1336,12 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
                             raxSize(server.repl_backlog->blocks_index) * sizeof(void *);
     }
     mem_total += mh->repl_backlog;
-    mem_total += mh->clients_slaves;
+    mem_total += mh->clients_replicas;
 
     /* Computing the memory used by the clients would be O(N) if done
      * here online. We use our values computed incrementally by
      * updateClientMemoryUsage(). */
-    mh->clients_normal = server.stat_clients_type_memory[CLIENT_TYPE_MASTER] +
+    mh->clients_normal = server.stat_clients_type_memory[CLIENT_TYPE_PRIMARY] +
                          server.stat_clients_type_memory[CLIENT_TYPE_PUBSUB] +
                          server.stat_clients_type_memory[CLIENT_TYPE_NORMAL];
     mem_total += mh->clients_normal;
@@ -1202,7 +1351,7 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
 
     mem = 0;
     if (server.aof_state != AOF_OFF) {
-        mem += sdsZmallocSize(server.aof_buf);
+        mem += sdsAllocSize(server.aof_buf);
     }
     mh->aof_buffer = mem;
     mem_total += mem;
@@ -1215,7 +1364,7 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
 
     for (j = 0; j < server.dbnum; j++) {
         serverDb *db = server.db + j;
-        if (!kvstoreNumAllocatedDicts(db->keys)) continue;
+        if (!kvstoreNumAllocatedHashtables(db->keys)) continue;
 
         unsigned long long keyscount = kvstoreSize(db->keys);
 
@@ -1237,8 +1386,8 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
         mh->overhead_db_hashtable_lut += kvstoreOverheadHashtableLut(db->expires);
         mh->overhead_db_hashtable_rehashing += kvstoreOverheadHashtableRehashing(db->keys);
         mh->overhead_db_hashtable_rehashing += kvstoreOverheadHashtableRehashing(db->expires);
-        mh->db_dict_rehashing_count += kvstoreDictRehashingCount(db->keys);
-        mh->db_dict_rehashing_count += kvstoreDictRehashingCount(db->expires);
+        mh->db_dict_rehashing_count += kvstoreHashtableRehashingCount(db->keys);
+        mh->db_dict_rehashing_count += kvstoreHashtableRehashingCount(db->expires);
     }
 
     mh->overhead_total = mem_total;
@@ -1272,7 +1421,7 @@ sds getMemoryDoctorReport(void) {
     int high_alloc_frag = 0; /* High allocator fragmentation. */
     int high_proc_rss = 0;   /* High process rss overhead. */
     int high_alloc_rss = 0;  /* High rss overhead. */
-    int big_slave_buf = 0;   /* Slave buffers are too big. */
+    int big_replica_buf = 0; /* Replica buffers are too big. */
     int big_client_buf = 0;  /* Client buffers are too big. */
     int many_scripts = 0;    /* Script cache has too many scripts. */
     int num_reports = 0;
@@ -1313,16 +1462,16 @@ sds getMemoryDoctorReport(void) {
         }
 
         /* Clients using more than 200k each average? */
-        long numslaves = listLength(server.slaves);
-        long numclients = listLength(server.clients) - numslaves;
+        long num_replicas = listLength(server.replicas);
+        long numclients = listLength(server.clients) - num_replicas;
         if (mh->clients_normal / numclients > (1024 * 200)) {
             big_client_buf = 1;
             num_reports++;
         }
 
-        /* Slaves using more than 10 MB each? */
-        if (numslaves > 0 && mh->clients_slaves > (1024 * 1024 * 10)) {
-            big_slave_buf = 1;
+        /* Replicas using more than 10 MB each? */
+        if (num_replicas > 0 && mh->clients_replicas > (1024 * 1024 * 10)) {
+            big_replica_buf = 1;
             num_reports++;
         }
 
@@ -1387,12 +1536,12 @@ sds getMemoryDoctorReport(void) {
                    "1.1 (this means that the Resident Set Size of the Valkey process is much larger than the RSS the "
                    "allocator holds). This problem may be due to Lua scripts or Modules.\n\n");
         }
-        if (big_slave_buf) {
+        if (big_replica_buf) {
             s = sdscat(s,
                        " * Big replica buffers: The replica output buffers in this instance are greater than 10MB for "
                        "each replica (on average). This likely means that there is some replica instance that is "
                        "struggling receiving data, either because it is too slow or because of networking issues. As a "
-                       "result, data piles on the master output buffers. Please try to identify what replica is not "
+                       "result, data piles on the primary output buffers. Please try to identify what replica is not "
                        "receiving data correctly and why. You can use the INFO output in order to check the replicas "
                        "delays and the CLIENT LIST command to check the output buffers of each replica.\n\n");
         }
@@ -1437,7 +1586,7 @@ int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle, long lo
         lru_idle = lru_idle * lru_multiplier / LRU_CLOCK_RESOLUTION;
         long lru_abs = lru_clock - lru_idle; /* Absolute access time. */
         /* If the LRU field underflows (since lru_clock is a wrapping clock),
-         * we need to make it positive again. This be handled by the unwrapping
+         * we need to make it positive again. This will be handled by the unwrapping
          * code in estimateObjectIdleTime. I.e. imagine a day when lru_clock
          * wrap arounds (happens once in some 6 months), and becomes a low
          * value, like 10, an lru_idle of 1000 should be near LRU_CLOCK_MAX. */
@@ -1520,25 +1669,22 @@ void objectCommand(client *c) {
  * Usage: MEMORY usage <key> */
 void memoryCommand(client *c) {
     if (!strcasecmp(c->argv[1]->ptr, "help") && c->argc == 2) {
-        /* clang-format off */
         const char *help[] = {
-"DOCTOR",
-"    Return memory problems reports.",
-"MALLOC-STATS",
-"    Return internal statistics report from the memory allocator.",
-"PURGE",
-"    Attempt to purge dirty pages for reclamation by the allocator.",
-"STATS",
-"    Return information about the memory usage of the server.",
-"USAGE <key> [SAMPLES <count>]",
-"    Return memory in bytes used by <key> and its value. Nested values are",
-"    sampled up to <count> times (default: 5, 0 means sample all).",
-NULL
+            "DOCTOR",
+            "    Return memory problems reports.",
+            "MALLOC-STATS",
+            "    Return internal statistics report from the memory allocator.",
+            "PURGE",
+            "    Attempt to purge dirty pages for reclamation by the allocator.",
+            "STATS",
+            "    Return information about the memory usage of the server.",
+            "USAGE <key> [SAMPLES <count>]",
+            "    Return memory in bytes used by <key> and its value. Nested values are",
+            "    sampled up to <count> times (default: 5, 0 means sample all).",
+            NULL,
         };
-        /* clang-format on */
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr, "usage") && c->argc >= 3) {
-        dictEntry *de;
         long long samples = OBJ_COMPUTE_SIZE_DEF_SAMPLES;
         for (int j = 3; j < c->argc; j++) {
             if (!strcasecmp(c->argv[j]->ptr, "samples") && j + 1 < c->argc) {
@@ -1554,13 +1700,12 @@ NULL
                 return;
             }
         }
-        if ((de = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
+        robj *obj = dbFind(c->db, c->argv[2]->ptr);
+        if (obj == NULL) {
             addReplyNull(c);
             return;
         }
-        size_t usage = objectComputeSize(c->argv[2], dictGetVal(de), samples, c->db->id);
-        usage += sdsZmallocSize(dictGetKey(de));
-        usage += dictEntryMemUsage();
+        size_t usage = objectComputeSize(c->argv[2], obj, samples, c->db->id);
         addReplyLongLong(c, usage);
     } else if (!strcasecmp(c->argv[1]->ptr, "stats") && c->argc == 2) {
         struct serverMemOverhead *mh = getMemoryOverheadData();
@@ -1580,7 +1725,7 @@ NULL
         addReplyLongLong(c, mh->repl_backlog);
 
         addReplyBulkCString(c, "clients.slaves");
-        addReplyLongLong(c, mh->clients_slaves);
+        addReplyLongLong(c, mh->clients_replicas);
 
         addReplyBulkCString(c, "clients.normal");
         addReplyLongLong(c, mh->clients_normal);

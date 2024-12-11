@@ -2,7 +2,7 @@
  *
  * ----------------------------------------------------------------------------
  *
- * Copyright (c) 2009-2016, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2016, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,12 +42,11 @@
 
 /* Constants table from pow(0.98, 1) to pow(0.98, 16).
  * Help calculating the db->avg_ttl. */
-static double avg_ttl_factor[16] = {0.98,     0.9604,   0.941192, 0.922368, 0.903921, 0.885842, 0.868126, 0.850763,
+static double avg_ttl_factor[16] = {0.98, 0.9604, 0.941192, 0.922368, 0.903921, 0.885842, 0.868126, 0.850763,
                                     0.833748, 0.817073, 0.800731, 0.784717, 0.769022, 0.753642, 0.738569, 0.723798};
 
 /* Helper function for the activeExpireCycle() function.
- * This function will try to expire the key that is stored in the hash table
- * entry 'de' of the 'expires' hash table of a database.
+ * This function will try to expire the key-value entry 'val'.
  *
  * If the key is found to be expired, it is removed from the database and
  * 1 is returned. Otherwise no operation is performed and 0 is returned.
@@ -56,11 +55,12 @@ static double avg_ttl_factor[16] = {0.98,     0.9604,   0.941192, 0.922368, 0.90
  *
  * The parameter 'now' is the current time in milliseconds as is passed
  * to the function to avoid too many gettimeofday() syscalls. */
-int activeExpireCycleTryExpire(serverDb *db, dictEntry *de, long long now) {
-    long long t = dictGetSignedIntegerVal(de);
+int activeExpireCycleTryExpire(serverDb *db, robj *val, long long now) {
+    long long t = objectGetExpire(val);
+    serverAssert(t >= 0);
     if (now > t) {
         enterExecutionUnit(1, 0);
-        sds key = dictGetKey(de);
+        sds key = objectGetKey(val);
         robj *keyobj = createStringObject(key, sdslen(key));
         deleteExpiredKeyAndPropagate(db, keyobj);
         decrRefCount(keyobj);
@@ -111,12 +111,11 @@ int activeExpireCycleTryExpire(serverDb *db, dictEntry *de, long long now) {
  * order to do more work in both the fast and slow expire cycles.
  */
 
-#define ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP 20   /* Keys for each DB loop. */
-#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000 /* Microseconds. */
-#define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25  /* Max % of CPU to use. */
-#define ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE                                                                           \
-    10 /* % of stale keys after which                                                                                  \
-          we do extra efforts. */
+#define ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP 20    /* Keys for each DB loop. */
+#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000  /* Microseconds. */
+#define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25   /* Max % of CPU to use. */
+#define ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE 10 /* % of stale keys after which \
+                                                   we do extra efforts. */
 
 /* Data used by the expire dict scan callback. */
 typedef struct {
@@ -128,11 +127,11 @@ typedef struct {
     int ttl_samples;       /* num keys with ttl not yet expired */
 } expireScanData;
 
-void expireScanCallback(void *privdata, const dictEntry *const_de) {
-    dictEntry *de = (dictEntry *)const_de;
+void expireScanCallback(void *privdata, void *entry) {
+    robj *val = entry;
     expireScanData *data = privdata;
-    long long ttl = dictGetSignedIntegerVal(de) - data->now;
-    if (activeExpireCycleTryExpire(data->db, de, data->now)) {
+    long long ttl = objectGetExpire(val) - data->now;
+    if (activeExpireCycleTryExpire(data->db, val, data->now)) {
         data->expired++;
         /* Propagate the DEL command */
         postExecutionUnitOperations();
@@ -145,13 +144,13 @@ void expireScanCallback(void *privdata, const dictEntry *const_de) {
     data->sampled++;
 }
 
-static inline int isExpiryDictValidForSamplingCb(dict *d) {
-    long long numkeys = dictSize(d);
-    unsigned long buckets = dictBuckets(d);
+static inline int isExpiryTableValidForSamplingCb(hashtable *ht) {
+    long long numkeys = hashtableSize(ht);
+    unsigned long buckets = hashtableBuckets(ht);
     /* When there are less than 1% filled buckets, sampling the key
      * space is expensive, so stop here waiting for better times...
      * The dictionary will be resized asap. */
-    if (buckets > DICT_HT_INITIAL_SIZE && (numkeys * 100 / buckets < 1)) {
+    if (buckets > 0 && (numkeys * 100 / buckets < 1)) {
         return C_ERR;
     }
     return C_OK;
@@ -280,14 +279,14 @@ void activeExpireCycle(int type) {
              * is very fast: we are in the cache line scanning a sequential
              * array of NULL pointers, so we can scan a lot more buckets
              * than keys in the same time. */
-            long max_buckets = num * 20;
+            long max_buckets = num * 10;
             long checked_buckets = 0;
 
             int origin_ttl_samples = data.ttl_samples;
 
             while (data.sampled < num && checked_buckets < max_buckets) {
                 db->expires_cursor = kvstoreScan(db->expires, db->expires_cursor, -1, expireScanCallback,
-                                                 isExpiryDictValidForSamplingCb, &data);
+                                                 isExpiryTableValidForSamplingCb, &data);
                 if (db->expires_cursor == 0) {
                     db_done = 1;
                     break;
@@ -368,21 +367,21 @@ void activeExpireCycle(int type) {
 }
 
 /*-----------------------------------------------------------------------------
- * Expires of keys created in writable slaves
+ * Expires of keys created in writable replicas
  *
- * Normally slaves do not process expires: they wait the masters to synthesize
- * DEL operations in order to retain consistency. However writable slaves are
- * an exception: if a key is created in the slave and an expire is assigned
- * to it, we need a way to expire such a key, since the master does not know
+ * Normally replicas do not process expires: they wait the primaries to synthesize
+ * DEL operations in order to retain consistency. However writable replicas are
+ * an exception: if a key is created in the replica and an expire is assigned
+ * to it, we need a way to expire such a key, since the primary does not know
  * anything about such a key.
  *
- * In order to do so, we track keys created in the slave side with an expire
- * set, and call the expireSlaveKeys() function from time to time in order to
+ * In order to do so, we track keys created in the replica side with an expire
+ * set, and call the expirereplicaKeys() function from time to time in order to
  * reclaim the keys if they already expired.
  *
  * Note that the use case we are trying to cover here, is a popular one where
- * slaves are put in writable mode in order to compute slow operations in
- * the slave side that are mostly useful to actually read data in a more
+ * replicas are put in writable mode in order to compute slow operations in
+ * the replica side that are mostly useful to actually read data in a more
  * processed way. Think at sets intersections in a tmp key, with an expire so
  * that it is also used as a cache to avoid intersecting every time.
  *
@@ -391,9 +390,9 @@ void activeExpireCycle(int type) {
  *----------------------------------------------------------------------------*/
 
 /* The dictionary where we remember key names and database ID of keys we may
- * want to expire from the slave. Since this function is not often used we
+ * want to expire from the replica. Since this function is not often used we
  * don't even care to initialize the database at startup. We'll do it once
- * the feature is used the first time, that is, when rememberSlaveKeyWithExpire()
+ * the feature is used the first time, that is, when rememberreplicaKeyWithExpire()
  * is called.
  *
  * The dictionary has an SDS string representing the key as the hash table
@@ -402,17 +401,17 @@ void activeExpireCycle(int type) {
  * with a DB id > 63 are not expired, but a trivial fix is to set the bitmap
  * to the max 64 bit unsigned value when we know there is a key with a DB
  * ID greater than 63, and check all the configured DBs in such a case. */
-dict *slaveKeysWithExpire = NULL;
+dict *replicaKeysWithExpire = NULL;
 
-/* Check the set of keys created by the master with an expire set in order to
+/* Check the set of keys created by the primary with an expire set in order to
  * check if they should be evicted. */
-void expireSlaveKeys(void) {
-    if (slaveKeysWithExpire == NULL || dictSize(slaveKeysWithExpire) == 0) return;
+void expireReplicaKeys(void) {
+    if (replicaKeysWithExpire == NULL || dictSize(replicaKeysWithExpire) == 0) return;
 
     int cycles = 0, noexpire = 0;
     mstime_t start = mstime();
     while (1) {
-        dictEntry *de = dictGetRandomKey(slaveKeysWithExpire);
+        dictEntry *de = dictGetRandomKey(replicaKeysWithExpire);
         sds keyname = dictGetKey(de);
         uint64_t dbids = dictGetUnsignedIntegerVal(de);
         uint64_t new_dbids = 0;
@@ -423,7 +422,7 @@ void expireSlaveKeys(void) {
         while (dbids && dbid < server.dbnum) {
             if ((dbids & 1) != 0) {
                 serverDb *db = server.db + dbid;
-                dictEntry *expire = dbFindExpires(db, keyname);
+                robj *expire = dbFindExpires(db, keyname);
                 int expired = 0;
 
                 if (expire && activeExpireCycleTryExpire(server.db + dbid, expire, start)) {
@@ -447,46 +446,45 @@ void expireSlaveKeys(void) {
         }
 
         /* Set the new bitmap as value of the key, in the dictionary
-         * of keys with an expire set directly in the writable slave. Otherwise
+         * of keys with an expire set directly in the writable replica. Otherwise
          * if the bitmap is zero, we no longer need to keep track of it. */
         if (new_dbids)
             dictSetUnsignedIntegerVal(de, new_dbids);
         else
-            dictDelete(slaveKeysWithExpire, keyname);
+            dictDelete(replicaKeysWithExpire, keyname);
 
         /* Stop conditions: found 3 keys we can't expire in a row or
          * time limit was reached. */
         cycles++;
         if (noexpire > 3) break;
         if ((cycles % 64) == 0 && mstime() - start > 1) break;
-        if (dictSize(slaveKeysWithExpire) == 0) break;
+        if (dictSize(replicaKeysWithExpire) == 0) break;
     }
 }
 
 /* Track keys that received an EXPIRE or similar command in the context
- * of a writable slave. */
-void rememberSlaveKeyWithExpire(serverDb *db, robj *key) {
-    if (slaveKeysWithExpire == NULL) {
+ * of a writable replica. */
+void rememberReplicaKeyWithExpire(serverDb *db, robj *key) {
+    if (replicaKeysWithExpire == NULL) {
         static dictType dt = {
             dictSdsHash,       /* hash function */
             NULL,              /* key dup */
-            NULL,              /* val dup */
             dictSdsKeyCompare, /* key compare */
             dictSdsDestructor, /* key destructor */
             NULL,              /* val destructor */
             NULL               /* allow to expand */
         };
-        slaveKeysWithExpire = dictCreate(&dt);
+        replicaKeysWithExpire = dictCreate(&dt);
     }
     if (db->id > 63) return;
 
-    dictEntry *de = dictAddOrFind(slaveKeysWithExpire, key->ptr);
+    dictEntry *de = dictAddOrFind(replicaKeysWithExpire, key->ptr);
     /* If the entry was just created, set it to a copy of the SDS string
      * representing the key: we don't want to need to take those keys
-     * in sync with the main DB. The keys will be removed by expireSlaveKeys()
+     * in sync with the main DB. The keys will be removed by expireReplicaKeys()
      * as it scans to find keys to remove. */
     if (dictGetKey(de) == key->ptr) {
-        dictSetKey(slaveKeysWithExpire, de, sdsdup(key->ptr));
+        dictSetKey(replicaKeysWithExpire, de, sdsdup(key->ptr));
         dictSetUnsignedIntegerVal(de, 0);
     }
 
@@ -496,34 +494,37 @@ void rememberSlaveKeyWithExpire(serverDb *db, robj *key) {
 }
 
 /* Return the number of keys we are tracking. */
-size_t getSlaveKeyWithExpireCount(void) {
-    if (slaveKeysWithExpire == NULL) return 0;
-    return dictSize(slaveKeysWithExpire);
+size_t getReplicaKeyWithExpireCount(void) {
+    if (replicaKeysWithExpire == NULL) return 0;
+    return dictSize(replicaKeysWithExpire);
 }
 
 /* Remove the keys in the hash table. We need to do that when data is
- * flushed from the server. We may receive new keys from the master with
+ * flushed from the server. We may receive new keys from the primary with
  * the same name/db and it is no longer a good idea to expire them.
  *
  * Note: technically we should handle the case of a single DB being flushed
  * but it is not worth it since anyway race conditions using the same set
- * of key names in a writable slave and in its master will lead to
+ * of key names in a writable replica and in its primary will lead to
  * inconsistencies. This is just a best-effort thing we do. */
-void flushSlaveKeysWithExpireList(void) {
-    if (slaveKeysWithExpire) {
-        dictRelease(slaveKeysWithExpire);
-        slaveKeysWithExpire = NULL;
+void flushReplicaKeysWithExpireList(void) {
+    if (replicaKeysWithExpire) {
+        dictRelease(replicaKeysWithExpire);
+        replicaKeysWithExpire = NULL;
     }
 }
 
 int checkAlreadyExpired(long long when) {
     /* EXPIRE with negative TTL, or EXPIREAT with a timestamp into the past
      * should never be executed as a DEL when load the AOF or in the context
-     * of a slave instance.
+     * of a replica instance.
      *
      * Instead we add the already expired key to the database with expire time
-     * (possibly in the past) and wait for an explicit DEL from the master. */
-    return (when <= commandTimeSnapshot() && !server.loading && !server.masterhost);
+     * (possibly in the past) and wait for an explicit DEL from the primary.
+     *
+     * If the server is a primary and in the import mode, we also add the already
+     * expired key and wait for an explicit DEL from the import source. */
+    return (when <= commandTimeSnapshot() && !server.loading && !server.primary_host && !server.import_mode);
 }
 
 #define EXPIRE_NX (1 << 0)
@@ -618,14 +619,16 @@ void expireGenericCommand(client *c, long long basetime, int unit) {
     }
     when += basetime;
 
+    robj *obj = lookupKeyWrite(c->db, key);
+
     /* No key, return zero. */
-    if (lookupKeyWrite(c->db, key) == NULL) {
+    if (obj == NULL) {
         addReply(c, shared.czero);
         return;
     }
 
     if (flag) {
-        current_expire = getExpire(c->db, key);
+        current_expire = objectGetExpire(obj);
 
         /* NX option is set, check current expiry */
         if (flag & EXPIRE_NX) {
@@ -669,21 +672,11 @@ void expireGenericCommand(client *c, long long basetime, int unit) {
     }
 
     if (checkAlreadyExpired(when)) {
-        robj *aux;
-
-        int deleted = dbGenericDelete(c->db, key, server.lazyfree_lazy_expire, DB_FLAG_KEY_EXPIRED);
-        serverAssertWithInfo(c, key, deleted);
-        server.dirty++;
-
-        /* Replicate/AOF this as an explicit DEL or UNLINK. */
-        aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;
-        rewriteClientCommandVector(c, 2, aux, key);
-        signalModifiedKey(c, c->db, key);
-        notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, c->db->id);
+        deleteExpiredKeyFromOverwriteAndPropagate(c, key);
         addReply(c, shared.cone);
         return;
     } else {
-        setExpire(c, c->db, key, when);
+        obj = setExpire(c, c->db, key, when);
         addReply(c, shared.cone);
         /* Propagate as PEXPIREAT millisecond-timestamp
          * Only rewrite the command arg if not already PEXPIREAT */

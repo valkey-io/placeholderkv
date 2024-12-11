@@ -582,6 +582,56 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
       set err1
     } {*WRONGTYPE*}
 
+    test "SET with IFEQ conditional" {
+        r del foo
+
+        r set foo "initial_value"
+
+        assert_equal {OK} [r set foo "new_value" ifeq "initial_value"]
+        assert_equal "new_value" [r get foo]
+
+        assert_equal {} [r set foo "should_not_set" ifeq "wrong_value"]
+        assert_equal "new_value" [r get foo]
+    }
+
+    test "SET with IFEQ conditional - non-string current value" {
+        r del foo
+
+        r sadd foo "some_set_value"
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "some_set_value"}
+    }
+
+
+    test "SET with IFEQ conditional - with get" {
+        r del foo
+
+        assert_equal {} [r set foo "new_value" ifeq "initial_value" get]
+        assert_equal {} [r get foo]
+
+        r set foo "initial_value"
+
+        assert_equal "initial_value" [r set foo "new_value" ifeq "initial_value" get]
+        assert_equal "new_value" [r get foo]
+    }
+
+    test "SET with IFEQ conditional - non string current value with get" {
+        r del foo
+
+        r sadd foo "some_set_value"
+
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "initial_value" get}
+    }
+
+    test "SET with IFEQ conditional - with xx" {
+        r del foo
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" xx}
+    }
+
+    test "SET with IFEQ conditional - with nx" {
+        r del foo
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" nx}
+    }
+
     test {Extended SET EX option} {
         r del foo
         r set foo bar ex 10
@@ -607,6 +657,40 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         r set foo bar pxat [expr [clock milliseconds] + 10000]
         assert_range [r ttl foo] 5 10
     }
+
+    test "SET EXAT / PXAT Expiration time is expired" {
+        r debug set-active-expire 0
+        set repl [attach_to_replication_stream]
+
+        # Key exists.
+        r set foo bar
+        r set foo bar exat [expr [clock seconds] - 100]
+        assert_error {ERR no such key} {r debug object foo}
+        r set foo bar
+        r set foo bar pxat [expr [clock milliseconds] - 10000]
+        assert_error {ERR no such key} {r debug object foo}
+
+        # Key does not exist.
+        r del foo
+        r set foo bar exat [expr [clock seconds] - 100]
+        assert_error {ERR no such key} {r debug object foo}
+        r set foo bar pxat [expr [clock milliseconds] - 10000]
+        assert_error {ERR no such key} {r debug object foo}
+
+        r incr foo
+        assert_replication_stream $repl {
+           {select *}
+           {set foo bar}
+           {unlink foo}
+           {set foo bar}
+           {unlink foo}
+           {incr foo}
+        }
+
+        r debug set-active-expire 1
+        close_replication_stream $repl
+    } {} {needs:debug needs:repl}
+
     test {Extended SET using multiple options at once} {
         r set foo val
         assert {[r set foo bar xx px 10000] eq {OK}}

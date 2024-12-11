@@ -9,6 +9,33 @@ set ::singledb 1
 # cluster creation is complicated with TLS, and the current tests don't really need that coverage
 tags {tls:skip external:skip cluster} {
 
+set base_conf [list cluster-enabled yes cluster-node-timeout 1000]
+start_multiple_servers 3 [list overrides $base_conf] {
+    test {Create 1 node cluster} {
+        exec src/valkey-cli --cluster-yes --cluster create \
+                            127.0.0.1:[srv 0 port]
+
+        wait_for_condition 1000 50 {
+            [CI 0 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+    }
+
+    test {Create 2 node cluster} {
+        exec src/valkey-cli --cluster-yes --cluster create \
+                            127.0.0.1:[srv -1 port] \
+                            127.0.0.1:[srv -2 port]
+
+        wait_for_condition 1000 50 {
+            [CI 1 cluster_state] eq {ok} &&
+            [CI 2 cluster_state] eq {ok}
+        } else {
+            fail "Cluster doesn't stabilize"
+        }
+    }
+}
+
 # start three servers
 set base_conf [list cluster-enabled yes cluster-node-timeout 1000]
 start_multiple_servers 3 [list overrides $base_conf] {
@@ -181,7 +208,7 @@ start_multiple_servers 5 [list overrides $base_conf] {
         # upload a function to all the cluster
         exec src/valkey-cli --cluster-yes --cluster call 127.0.0.1:[srv 0 port] \
                            FUNCTION LOAD {#!lua name=TEST
-                               redis.register_function('test', function() return 'hello' end)
+                               server.register_function('test', function() return 'hello' end)
                            }
 
         # adding node to the cluster
@@ -205,7 +232,7 @@ start_multiple_servers 5 [list overrides $base_conf] {
 
         # add function to node 5
         assert_equal {TEST} [$node5_rd FUNCTION LOAD {#!lua name=TEST
-            redis.register_function('test', function() return 'hello' end)
+            server.register_function('test', function() return 'hello' end)
         }]
 
         # make sure functions was added to node 5

@@ -145,6 +145,7 @@ proc wait_for_cluster_size {cluster_size} {
 # Check that cluster nodes agree about "state", or raise an error.
 proc wait_for_cluster_state {state} {
     for {set j 0} {$j < [llength $::servers]} {incr j} {
+        if {[process_is_paused [srv -$j pid]]} continue
         wait_for_condition 1000 50 {
             [CI $j cluster_state] eq $state
         } else {
@@ -227,6 +228,15 @@ proc cluster_setup {masters replicas node_count slot_allocator replica_allocator
     # Setup master/replica relationships
     $replica_allocator $masters $replicas
 
+    # A helper debug log that can print the server id in the server logs.
+    # This can help us locate the corresponding server in the log file.
+    for {set i 0} {$i < $masters} {incr i} {
+        R $i DEBUG LOG "========== I am primary $i =========="
+    }
+    for {set i $i} {$i < [expr $masters+$replicas]} {incr i} {
+        R $i DEBUG LOG "========== I am replica $i =========="
+    }
+
     wait_for_cluster_propagation
     wait_for_cluster_state "ok"
 
@@ -266,6 +276,14 @@ proc cluster_get_myself id {
         if {[cluster_has_flag $n myself]} {return $n}
     }
     return {}
+}
+
+# Returns the parsed "myself's primary" CLUSTER NODES entry as a dictionary.
+proc cluster_get_myself_primary id {
+    set myself [cluster_get_myself $id]
+    set replicaof [dict get $myself slaveof]
+    set node [cluster_get_node_by_id $id $replicaof]
+    return $node
 }
 
 # Get a specific node by ID by parsing the CLUSTER NODES output
@@ -345,6 +363,27 @@ proc are_hostnames_propagated {match_string} {
     return 1
 }
 
+# Check if cluster's announced IPs are consistent and match a pattern
+# Optionally, a list of clients can be supplied.
+proc are_cluster_announced_ips_propagated {match_string {clients {}}} {
+    for {set j 0} {$j < [llength $::servers]} {incr j} {
+        if {$clients eq {}} {
+            set client [srv [expr -1*$j] "client"]
+        } else {
+            set client [lindex $clients $j]
+        }
+        set cfg [$client cluster slots]
+        foreach node $cfg {
+            for {set i 2} {$i < [llength $node]} {incr i} {
+                if {! [string match $match_string [lindex [lindex $node $i] 0]] } {
+                    return 0
+                }
+            }
+        }
+    }
+    return 1
+}
+
 proc wait_node_marked_fail {ref_node_index instance_id_to_check} {
     wait_for_condition 1000 50 {
         [check_cluster_node_mark fail $ref_node_index $instance_id_to_check]
@@ -370,4 +409,8 @@ proc check_cluster_node_mark {flag ref_node_index instance_id_to_check} {
         }
     }
     fail "Unable to find instance id in cluster nodes. ID: $instance_id_to_check"
+}
+
+proc get_slot_field {slot_output shard_id node_id attrib_id} {
+    return [lindex [lindex [lindex $slot_output $shard_id] $node_id] $attrib_id]
 }

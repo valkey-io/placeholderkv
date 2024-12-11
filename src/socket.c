@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Redis Labs
+ * Copyright (c) 2019, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -203,9 +203,7 @@ static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_hand
     if (conn->state != CONN_STATE_ACCEPTING) return C_ERR;
     conn->state = CONN_STATE_CONNECTED;
 
-    connIncrRefs(conn);
     if (!callHandler(conn, accept_handler)) ret = C_ERR;
-    connDecrRefs(conn);
 
     return ret;
 }
@@ -305,6 +303,7 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
 static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd;
     int max = server.max_new_conns_per_cycle;
+    struct ClientFlags flags = {0};
     char cip[NET_IP_STR_LEN];
     UNUSED(el);
     UNUSED(mask);
@@ -317,7 +316,7 @@ static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int
             return;
         }
         serverLog(LL_VERBOSE, "Accepted %s:%d", cip, cport);
-        acceptCommonHandler(connCreateAcceptedSocket(cfd, NULL), 0, cip);
+        acceptCommonHandler(connCreateAcceptedSocket(cfd, NULL), flags, cip);
     }
 }
 
@@ -338,6 +337,19 @@ static int connSocketIsLocal(connection *conn) {
 
 static int connSocketListen(connListener *listener) {
     return listenToPort(listener);
+}
+
+static void connSocketCloseListener(connListener *listener) {
+    int j;
+
+    for (j = 0; j < listener->count; j++) {
+        if (listener->fd[j] == -1) continue;
+
+        aeDeleteFileEvent(server.el, listener->fd[j], AE_READABLE);
+        close(listener->fd[j]);
+    }
+
+    listener->count = 0;
 }
 
 static int connSocketBlockingConnect(connection *conn, const char *addr, int port, long long timeout) {
@@ -396,6 +408,7 @@ static ConnectionType CT_Socket = {
     .addr = connSocketAddr,
     .is_local = connSocketIsLocal,
     .listen = connSocketListen,
+    .closeListener = connSocketCloseListener,
 
     /* create/shutdown/close connection */
     .conn_create = connCreateSocket,
@@ -422,6 +435,8 @@ static ConnectionType CT_Socket = {
     /* pending data */
     .has_pending_data = NULL,
     .process_pending_data = NULL,
+    .postpone_update_state = NULL,
+    .update_state = NULL,
 };
 
 int connBlock(connection *conn) {

@@ -2,7 +2,7 @@
  *
  * ----------------------------------------------------------------------------
  *
- * Copyright (c) 2009-2016, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2016, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -143,26 +143,14 @@ void evictionPoolAlloc(void) {
  * right. */
 int evictionPoolPopulate(serverDb *db, kvstore *samplekvs, struct evictionPoolEntry *pool) {
     int j, k, count;
-    dictEntry *samples[server.maxmemory_samples];
+    void *samples[server.maxmemory_samples];
 
-    int slot = kvstoreGetFairRandomDictIndex(samplekvs);
-    count = kvstoreDictGetSomeKeys(samplekvs, slot, samples, server.maxmemory_samples);
+    int slot = kvstoreGetFairRandomHashtableIndex(samplekvs);
+    count = kvstoreHashtableSampleEntries(samplekvs, slot, &samples[0], server.maxmemory_samples);
     for (j = 0; j < count; j++) {
         unsigned long long idle;
-        sds key;
-        robj *o;
-        dictEntry *de;
-
-        de = samples[j];
-        key = dictGetKey(de);
-
-        /* If the dictionary we are sampling from is not the main
-         * dictionary (but the expires one) we need to lookup the key
-         * again in the key dictionary to obtain the value object. */
-        if (server.maxmemory_policy != MAXMEMORY_VOLATILE_TTL) {
-            if (samplekvs != db->keys) de = kvstoreDictFind(db->keys, slot, key);
-            o = dictGetVal(de);
-        }
+        robj *o = samples[j];
+        sds key = objectGetKey(o);
 
         /* Calculate the idle time according to the policy. This is called
          * idle just because the code initially handled LRU, but is in fact
@@ -180,7 +168,7 @@ int evictionPoolPopulate(serverDb *db, kvstore *samplekvs, struct evictionPoolEn
             idle = 255 - LFUDecrAndReturn(o);
         } else if (server.maxmemory_policy == MAXMEMORY_VOLATILE_TTL) {
             /* In this case the sooner the expire the better. */
-            idle = ULLONG_MAX - (long)dictGetVal(de);
+            idle = ULLONG_MAX - objectGetExpire(o);
         } else {
             serverPanic("Unknown eviction policy in evictionPoolPopulate()");
         }
@@ -321,7 +309,7 @@ unsigned long LFUDecrAndReturn(robj *o) {
     return counter;
 }
 
-/* We don't want to count AOF buffers and slaves output buffers as
+/* We don't want to count AOF buffers and replicas output buffers as
  * used memory: the eviction should use mostly data size, because
  * it can cause feedback-loop when we push DELs into them, putting
  * more and more DELs will make them bigger, if we count them, we
@@ -377,7 +365,7 @@ size_t freeMemoryGetNotCountedMemory(void) {
  *  'total'     total amount of bytes used.
  *              (Populated both for C_ERR and C_OK)
  *
- *  'logical'   the amount of memory used minus the slaves/AOF buffers.
+ *  'logical'   the amount of memory used minus the replicas/AOF buffers.
  *              (Populated when C_ERR is returned)
  *
  *  'tofree'    the amount of memory that should be released
@@ -393,7 +381,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
     size_t mem_reported, mem_used, mem_tofree;
 
     /* Check if we are over the memory usage limit. If we are not, no need
-     * to subtract the slaves output buffers. We can just return ASAP. */
+     * to subtract the replicas output buffers. We can just return ASAP. */
     mem_reported = zmalloc_used_memory();
     if (total) *total = mem_reported;
 
@@ -404,7 +392,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
     }
     if (mem_reported <= server.maxmemory && !level) return C_OK;
 
-    /* Remove the size of slaves output buffers and AOF buffer from the
+    /* Remove the size of replicas output buffers and AOF buffer from the
      * count of used memory. */
     mem_used = mem_reported;
     size_t overhead = freeMemoryGetNotCountedMemory();
@@ -447,7 +435,7 @@ int overMaxmemoryAfterAlloc(size_t moremem) {
  * eviction cycles until the "maxmemory" condition has resolved or there are no
  * more evictable items.  */
 static int isEvictionProcRunning = 0;
-static int evictionTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+static long long evictionTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
@@ -477,8 +465,8 @@ static int isSafeToPerformEvictions(void) {
     if (isInsideYieldingLongCommand() || server.loading) return 0;
 
     /* By default replicas should ignore maxmemory
-     * and just be masters exact copies. */
-    if (server.masterhost && server.repl_slave_ignore_maxmemory) return 0;
+     * and just be primaries exact copies. */
+    if (server.primary_host && server.repl_replica_ignore_maxmemory) return 0;
 
     /* If 'evict' action is paused, for whatever reason, then return false */
     if (isPausedActionsWithUpdate(PAUSE_ACTION_EVICT)) return 0;
@@ -538,7 +526,7 @@ int performEvictions(void) {
     long long mem_freed = 0; /* Maybe become negative */
     mstime_t latency, eviction_latency;
     long long delta;
-    int slaves = listLength(server.slaves);
+    int replicas = listLength(server.replicas);
     int result = EVICT_FAIL;
 
     if (getMaxmemoryState(&mem_reported, NULL, &mem_tofree, NULL) == C_OK) {
@@ -546,8 +534,8 @@ int performEvictions(void) {
         goto update_metrics;
     }
 
-    if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION) {
-        result = EVICT_FAIL; /* We need to free memory, but policy forbids. */
+    if (server.maxmemory_policy == MAXMEMORY_NO_EVICTION || (iAmPrimary() && server.import_mode)) {
+        result = EVICT_FAIL; /* We need to free memory, but policy forbids or we are in import mode. */
         goto update_metrics;
     }
 
@@ -568,7 +556,7 @@ int performEvictions(void) {
         sds bestkey = NULL;
         int bestdbid;
         serverDb *db;
-        dictEntry *de;
+        robj *valkey;
 
         if (server.maxmemory_policy & (MAXMEMORY_FLAG_LRU | MAXMEMORY_FLAG_LFU) ||
             server.maxmemory_policy == MAXMEMORY_VOLATILE_TTL) {
@@ -592,7 +580,7 @@ int performEvictions(void) {
                     if (current_db_keys == 0) continue;
 
                     total_keys += current_db_keys;
-                    int l = kvstoreNumNonEmptyDicts(kvs);
+                    int l = kvstoreNumNonEmptyHashtables(kvs);
                     /* Do not exceed the number of non-empty slots when looping. */
                     while (l--) {
                         sampled_keys += evictionPoolPopulate(db, kvs, pool);
@@ -617,7 +605,8 @@ int performEvictions(void) {
                     } else {
                         kvs = server.db[bestdbid].expires;
                     }
-                    de = kvstoreDictFind(kvs, pool[k].slot, pool[k].key);
+                    void *entry = NULL;
+                    int found = kvstoreHashtableFind(kvs, pool[k].slot, pool[k].key, &entry);
 
                     /* Remove the entry from the pool. */
                     if (pool[k].key != pool[k].cached) sdsfree(pool[k].key);
@@ -626,8 +615,9 @@ int performEvictions(void) {
 
                     /* If the key exists, is our pick. Otherwise it is
                      * a ghost and we need to try the next element. */
-                    if (de) {
-                        bestkey = dictGetKey(de);
+                    if (found) {
+                        valkey = entry;
+                        bestkey = objectGetKey(valkey);
                         break;
                     } else {
                         /* Ghost... Iterate again. */
@@ -651,10 +641,10 @@ int performEvictions(void) {
                 } else {
                     kvs = db->expires;
                 }
-                int slot = kvstoreGetFairRandomDictIndex(kvs);
-                de = kvstoreDictGetRandomKey(kvs, slot);
-                if (de) {
-                    bestkey = dictGetKey(de);
+                int slot = kvstoreGetFairRandomHashtableIndex(kvs);
+                int found = kvstoreHashtableRandomEntry(kvs, slot, (void **)&valkey);
+                if (found) {
+                    bestkey = objectGetKey(valkey);
                     bestdbid = j;
                     break;
                 }
@@ -697,7 +687,7 @@ int performEvictions(void) {
                  * start spending so much time here that is impossible to
                  * deliver data to the replicas fast enough, so we force the
                  * transmission here inside the loop. */
-                if (slaves) flushSlavesOutputBuffers();
+                if (replicas) flushReplicasOutputBuffers();
 
                 /* Normally our stop condition is the ability to release
                  * a fixed, pre-computed amount of memory. However when we

@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2019, Redis Labs
+ * Copyright (c) 2019, Redis Ltd.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,9 +60,8 @@ typedef enum {
 #define CONN_TYPE_SOCKET "tcp"
 #define CONN_TYPE_UNIX "unix"
 #define CONN_TYPE_TLS "tls"
+#define CONN_TYPE_RDMA "rdma"
 #define CONN_TYPE_MAX 8 /* 8 is enough to be extendable */
-
-typedef enum connTypeForCaching { CACHE_CONN_TCP, CACHE_CONN_TLS, CACHE_CONN_TYPE_MAX } connTypeForCaching;
 
 typedef void (*ConnectionCallbackFunc)(struct connection *conn);
 
@@ -81,6 +80,7 @@ typedef struct ConnectionType {
     int (*addr)(connection *conn, char *ip, size_t ip_len, int *port, int remote);
     int (*is_local)(connection *conn);
     int (*listen)(connListener *listener);
+    void (*closeListener)(connListener *listener);
 
     /* create/shutdown/close connection */
     connection *(*conn_create)(void);
@@ -111,6 +111,12 @@ typedef struct ConnectionType {
     /* pending data */
     int (*has_pending_data)(void);
     int (*process_pending_data)(void);
+
+    /* Postpone update state - with IO threads & TLS we don't want the IO threads to update the event loop events - let
+     * the main-thread do it */
+    void (*postpone_update_state)(struct connection *conn, int);
+    /* Called by the main-thread */
+    void (*update_state)(struct connection *conn);
 
     /* TLS specified methods */
     sds (*get_peer_cert)(struct connection *conn);
@@ -438,6 +444,13 @@ static inline int connListen(connListener *listener) {
     return listener->ct->listen(listener);
 }
 
+/* Close a listened listener */
+static inline void connCloseListener(connListener *listener) {
+    if (listener->count) {
+        listener->ct->closeListener(listener);
+    }
+}
+
 /* Get accept_handler of a connection type */
 static inline aeFileProc *connAcceptHandler(ConnectionType *ct) {
     if (ct) return ct->accept_handler;
@@ -450,10 +463,23 @@ sds getListensInfoString(sds info);
 int RedisRegisterConnectionTypeSocket(void);
 int RedisRegisterConnectionTypeUnix(void);
 int RedisRegisterConnectionTypeTLS(void);
+int RegisterConnectionTypeRdma(void);
 
 /* Return 1 if connection is using TLS protocol, 0 if otherwise. */
 static inline int connIsTLS(connection *conn) {
     return conn && conn->type == connectionTypeTls();
+}
+
+static inline void connUpdateState(connection *conn) {
+    if (conn->type->update_state) {
+        conn->type->update_state(conn);
+    }
+}
+
+static inline void connSetPostponeUpdateState(connection *conn, int on) {
+    if (conn->type->postpone_update_state) {
+        conn->type->postpone_update_state(conn, on);
+    }
 }
 
 #endif /* __REDIS_CONNECTION_H */
