@@ -172,10 +172,12 @@ run_solo {defrag} {
                 # make sure the defragger did enough work to keep the fragmentation low during loading.
                 # we cannot check that it went all the way down, since we don't wait for full defrag cycle to complete.
                 assert {$frag < 1.4}
-                # since the AOF contains simple (fast) SET commands (and the cron during loading runs every 1024 commands),
-                # it'll still not block the loading for long periods of time.
+                # The AOF contains simple (fast) SET commands (and the cron during loading runs every 1024 commands).
+                # Even so, defrag can get starved for periods exceeding 100ms.  Using 200ms for test stability, and
+                # a 75% CPU requirement (as set above), we should allow up to 600ms latency
+                # (as total time = 200 non duty + 600 duty = 800ms, and 75% of 800ms is 600ms).
                 if {!$::no_latency} {
-                    assert {$max_latency <= 40}
+                    assert {$max_latency <= 600}
                 }
             }
             } ;# Active defrag - AOF loading
