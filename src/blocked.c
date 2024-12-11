@@ -122,6 +122,8 @@ void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int failed_
         c->lastcmd->failed_calls++;
     else if (failed_or_rejected & ERROR_COMMAND_REJECTED)
         c->lastcmd->rejected_calls++;
+    else
+        debugServerAssertWithInfo(c, NULL, 0);
     if (server.latency_tracking_enabled)
         updateCommandLatencyHistogram(&(c->lastcmd->latency_histogram), total_cmd_duration * 1000);
     /* Log the command into the Slow log if needed. */
