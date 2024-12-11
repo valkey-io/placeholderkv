@@ -92,6 +92,7 @@ set ::large_memory 0
 set ::log_req_res 0
 set ::force_resp3 0
 set ::solo_tests_count 0
+set ::debug_defrag 0
 
 # Set to 1 when we are running in client mode. The server test uses a
 # server-client model to run tests simultaneously. The server instance
