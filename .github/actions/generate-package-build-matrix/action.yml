@@ -24,7 +24,7 @@ runs:
 
     - name: Get targets
       run: |
-        x86_arch=$(jq -c '[.linux_targets[] | select(.arch=="x86_64") | .target |= sub("ubuntu([0-9]+\\.[0-9]+)"; "ubuntu-\1")]' utils/releasetools/build-config.json)
+        x86_arch=$(jq -c '[.linux_targets[] | select(.arch=="x86_64")]' utils/releasetools/build-config.json)
         x86_matrix=$(echo "{ \"distro\" : $x86_arch }" | jq -c .)
         echo "X86_MATRIX=$x86_matrix" >> $GITHUB_ENV
 
