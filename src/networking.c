@@ -42,11 +42,40 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdatomic.h>
+#include "intset.h"
+#include <stdbool.h>
+
+/**
+ * This struct is used to encapsulate filtering criteria for operations on clients
+ * such as identifying specific clients to kill or retrieve. Each field in the struct
+ * represents a filter that can be applied based on specific attributes of a client.
+ */
+typedef struct {
+    /** A set of client IDs to filter. If NULL, no ID filtering is applied. */
+    intset *ids;
+    /** Maximum age (in seconds) of a client connection for filtering.
+     * Connections younger than this value will not match.
+     * A value of 0 means no age filtering. */
+    long long max_age;
+    /** Address/port of the client. If NULL, no address filtering is applied. */
+    char *addr;
+    /** Remote address/port of the client. If NULL, no address filtering is applied. */
+    char *laddr;
+    /** Filtering clients by authentication user. If NULL, no user-based filtering is applied. */
+    user *user;
+    /** Client type to filter. If set to -1, no type filtering is applied. */
+    int type;
+    /**< Boolean flag to determine if the current client (`me`) should be filtered. 1 means "skip me", 0 means otherwise. */
+    int skipme;
+} clientFilter;
 
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
+int parseClientFilters(client *c, int i, clientFilter *filter);
+bool clientMatchesFilter(client *client, clientFilter client_filter);
+sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_shared_qb = NULL;
@@ -3342,7 +3371,7 @@ sds getAllClientsInfoString(int type, int hide_user_data) {
     listNode *ln;
     listIter li;
     client *client;
-    sds o = sdsnewlen(SDS_NOINIT, 200 * listLength(server.clients));
+    sds o = sdsnewlen(SDS_NOINIT, 500);
     sdsclear(o);
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
@@ -3363,13 +3392,7 @@ sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_d
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
         client = listNodeValue(ln);
-        if (client_filter->addr && strcmp(getClientPeerId(client), client_filter->addr) != 0) continue;
-        if (client_filter->laddr && strcmp(getClientSockname(client), client_filter->laddr) != 0) continue;
-        if (client_filter->type != -1 && getClientType(client) != client_filter->type) continue;
-        if (client_filter->id != 0 && client->id != client_filter->id) continue;
-        if (client_filter->user && client->user != client_filter->user) continue;
-        if (client_filter->skipme) continue;
-        if (client_filter->max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter->max_age) continue;
+        if (!clientMatchesFilter(client, *client_filter)) continue;
         o = catClientInfoString(o, client, hide_user_data);
         o = sdscatlen(o, "\n", 1);
     }
@@ -3499,13 +3522,27 @@ int parseClientFilters(client *c, int i, clientFilter *filter) {
     while (i < c->argc) {
         int moreargs = c->argc > i + 1;
 
-        if (!strcasecmp(c->argv[i]->ptr, "id") && moreargs) {
-            long tmp;
+        if (!strcasecmp(c->argv[i]->ptr, "id")) {
+            if (filter->ids == NULL) {
+                filter->ids = intsetNew(); // Initialize the intset for IDs
+            }
+            i++; // Move to the first ID after "ID"
 
-            if (getRangeLongFromObjectOrReply(c, c->argv[i + 1], 1, LONG_MAX, &tmp,
-                                              "client-id should be greater than 0") != C_OK)
-                return C_ERR;
-            filter->id = tmp;
+            // Process all IDs until a non-numeric argument or end of args
+            while (i < c->argc) {
+                long long id;
+                if (!string2ll(c->argv[i]->ptr, sdslen(c->argv[i]->ptr), &id)) {
+                    break; // Stop processing IDs if a non-numeric argument is encountered
+                }
+                if (id < 1) {
+                    addReplyError(c, "client-id should be greater than 0");
+                    return C_ERR;
+                }
+
+                uint8_t added;
+                filter->ids = intsetAdd(filter->ids, id, &added);
+                i++; // Move to the next argument
+            }
         } else if (!strcasecmp(c->argv[i]->ptr, "maxage") && moreargs) {
             long long tmp;
 
@@ -3518,22 +3555,27 @@ int parseClientFilters(client *c, int i, clientFilter *filter) {
             }
 
             filter->max_age = tmp;
+            i += 2;
         } else if (!strcasecmp(c->argv[i]->ptr, "type") && moreargs) {
             filter->type = getClientTypeByName(c->argv[i + 1]->ptr);
             if (filter->type == -1) {
                 addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[i + 1]->ptr);
                 return C_ERR;
             }
+            i += 2;
         } else if (!strcasecmp(c->argv[i]->ptr, "addr") && moreargs) {
             filter->addr = c->argv[i + 1]->ptr;
+            i += 2;
         } else if (!strcasecmp(c->argv[i]->ptr, "laddr") && moreargs) {
             filter->laddr = c->argv[i + 1]->ptr;
+            i += 2;
         } else if (!strcasecmp(c->argv[i]->ptr, "user") && moreargs) {
             filter->user = ACLGetUserByName(c->argv[i + 1]->ptr, sdslen(c->argv[i + 1]->ptr));
             if (filter->user == NULL) {
                 addReplyErrorFormat(c, "No such user '%s'", (char *)c->argv[i + 1]->ptr);
                 return C_ERR;
             }
+            i += 2;
         } else if (!strcasecmp(c->argv[i]->ptr, "skipme") && moreargs) {
             if (!strcasecmp(c->argv[i + 1]->ptr, "yes")) {
                 filter->skipme = 1;
@@ -3543,13 +3585,27 @@ int parseClientFilters(client *c, int i, clientFilter *filter) {
                 addReplyErrorObject(c, shared.syntaxerr);
                 return C_ERR;
             }
+            i += 2;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);
             return C_ERR;
         }
-        i += 2;
     }
     return C_OK;
+}
+
+bool clientMatchesFilter(client *client, clientFilter client_filter) {
+    // Check each filter condition and return false if the client does not match.
+    if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) return false;
+    if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) return false;
+    if (client_filter.type != -1 && getClientType(client) != client_filter.type) return false;
+    if (client_filter.ids && !intsetFind(client_filter.ids, client->id)) return false;
+    if (client_filter.user && client->user != client_filter.user) return false;
+    if (client_filter.skipme && client == server.current_client) return false; // Skipme check
+    if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) return false;
+
+    // If all conditions are satisfied, the client matches the filter.
+    return true;
 }
 
 void clientCommand(client *c) {
@@ -3637,13 +3693,22 @@ void clientCommand(client *c) {
         int type = -1;
         sds o = NULL;
         if (c->argc > 3) {
-            clientFilter client_filter = {0, 0, NULL, NULL, NULL, -1, 0};
+            clientFilter client_filter = {.ids = NULL,
+                                          .max_age = 0,
+                                          .addr = NULL,
+                                          .laddr = NULL,
+                                          .user = NULL,
+                                          .type = -1,
+                                          .skipme = 0};
+
             int i = 2;
 
             if (parseClientFilters(c, i, &client_filter) != C_OK) {
+                zfree(client_filter.ids);
                 return;
             }
             o = getAllFilteredClientsInfoString(&client_filter, 0);
+            zfree(client_filter.ids);
         } else if (c->argc != 2) {
             addReplyErrorObject(c, shared.syntaxerr);
             return;
@@ -3683,7 +3748,14 @@ void clientCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
         /* CLIENT KILL <ip:port>
          * CLIENT KILL <option> [value] ... <option> [value] */
-        clientFilter client_filter = {0, 0, NULL, NULL, NULL, -1, 1};
+        clientFilter client_filter = {.ids = NULL,
+                                      .max_age = 0,
+                                      .addr = NULL,
+                                      .laddr = NULL,
+                                      .user = NULL,
+                                      .type = -1,
+                                      .skipme = 1};
+
         int killed = 0, close_this_client = 0;
 
         if (c->argc == 3) {
@@ -3695,9 +3767,11 @@ void clientCommand(client *c) {
 
             /* New style syntax: parse options. */
             if (parseClientFilters(c, i, &client_filter) != C_OK) {
+                zfree(client_filter.ids); // Free the intset on error
                 return;
             }
         } else {
+            zfree(client_filter.ids); // Free the intset on error
             addReplyErrorObject(c, shared.syntaxerr);
             return;
         }
@@ -3706,13 +3780,7 @@ void clientCommand(client *c) {
         listRewind(server.clients, &li);
         while ((ln = listNext(&li)) != NULL) {
             client *client = listNodeValue(ln);
-            if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) continue;
-            if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) continue;
-            if (client_filter.type != -1 && getClientType(client) != client_filter.type) continue;
-            if (client_filter.id != 0 && client->id != client_filter.id) continue;
-            if (client_filter.user && client->user != client_filter.user) continue;
-            if (c == client && client_filter.skipme) continue;
-            if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) continue;
+            if (!clientMatchesFilter(client, client_filter)) continue;
 
             /* Kill it. */
             if (c == client) {
@@ -3736,6 +3804,7 @@ void clientCommand(client *c) {
         /* If this client has to be closed, flag it as CLOSE_AFTER_REPLY
          * only after we queued the reply to its output buffers. */
         if (close_this_client) c->flag.close_after_reply = 1;
+        zfree(client_filter.ids);
     } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
         /* CLIENT UNBLOCK <id> [timeout|error] */
         long long id;

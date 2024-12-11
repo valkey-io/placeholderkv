@@ -1250,16 +1250,6 @@ typedef struct client {
 #endif
 } client;
 
-typedef struct {
-    uint64_t id;
-    long long max_age;
-    char *addr;
-    char *laddr;
-    user *user;
-    int type;
-    int skipme;
-} clientFilter;
-
 /* When a command generates a lot of discrete elements to the client output buffer, it is much faster to
  * skip certain types of initialization. This type is used to indicate a client that has been initialized
  * and can be used with addWritePreparedReply* functions. A client can be cast into this type with
@@ -2704,7 +2694,6 @@ int isClientConnIpV6(client *c);
 sds catClientInfoString(sds s, client *client, int hide_user_data);
 sds catClientInfoShortString(sds s, client *client, int hide_user_data);
 sds getAllClientsInfoString(int type, int hide_user_data);
-sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 int clientSetName(client *c, robj *name, const char **err);
 void rewriteClientCommandVector(client *c, int argc, ...);
 void rewriteClientCommandArgument(client *c, int i, robj *newval);
@@ -3792,7 +3781,6 @@ void dumpCommand(client *c);
 void objectCommand(client *c);
 void memoryCommand(client *c);
 void clientCommand(client *c);
-int parseClientFilters(client *c, int i, clientFilter *filter);
 void helloCommand(client *c);
 void clientSetinfoCommand(client *c);
 void evalCommand(client *c);
