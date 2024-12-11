@@ -81,6 +81,46 @@ start_server {tags {"introspection"}} {
         assert_equal $found_self 1
     }
 
+    test {CLIENT LIST with multiple IDs and TYPE filter} {
+        # Create multiple clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        set c3 [valkey_client]
+
+        # Fetch their IDs
+        set id1 [$c1 client id]
+        set id2 [$c2 client id]
+        set id3 [$c3 client id]
+
+        # Filter by multiple IDs and TYPE
+        set cl [split [r client list id $id1 $id2 type normal] "\r\n"]
+
+        # Assert only c1 and c2 are present and match TYPE=N (NORMAL)
+        foreach line $cl {
+            regexp {id=([0-9]+).*flags=([^ ]+)} $line _ client_id flags
+            assert {[lsearch -exact "$id1 $id2" $client_id] != -1}
+            assert {[string match *N* $flags]}
+        }
+
+        # Close clients
+        $c1 close
+        $c2 close
+        $c3 close
+    }
+
+    test {CLIENT LIST with filters matching no clients} {
+        # Create multiple clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+
+        # Use a filter that doesn't match any client (e.g., invalid user)
+        assert_error "ERR No such user 'invalid_user'" {r client list user invalid_user}
+
+        # Close clients
+        $c1 close
+        $c2 close
+    }
+
     test {CLIENT LIST with illegal arguments} {
         assert_error "ERR syntax error" {r client list id 10 wrong_arg}
 
