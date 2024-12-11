@@ -43,29 +43,26 @@
 #include <ctype.h>
 #include <stdatomic.h>
 #include "intset.h"
-#include <stdbool.h>
 
-/**
- * This struct is used to encapsulate filtering criteria for operations on clients
+/* This struct is used to encapsulate filtering criteria for operations on clients
  * such as identifying specific clients to kill or retrieve. Each field in the struct
- * represents a filter that can be applied based on specific attributes of a client.
- */
+ * represents a filter that can be applied based on specific attributes of a client. */
 typedef struct {
-    /** A set of client IDs to filter. If NULL, no ID filtering is applied. */
+    /* A set of client IDs to filter. If NULL, no ID filtering is applied. */
     intset *ids;
-    /** Maximum age (in seconds) of a client connection for filtering.
+    /* Maximum age (in seconds) of a client connection for filtering.
      * Connections younger than this value will not match.
      * A value of 0 means no age filtering. */
     long long max_age;
-    /** Address/port of the client. If NULL, no address filtering is applied. */
+    /* Address/port of the client. If NULL, no address filtering is applied. */
     char *addr;
-    /** Remote address/port of the client. If NULL, no address filtering is applied. */
+    /* Remote address/port of the client. If NULL, no address filtering is applied. */
     char *laddr;
-    /** Filtering clients by authentication user. If NULL, no user-based filtering is applied. */
+    /* Filtering clients by authentication user. If NULL, no user-based filtering is applied. */
     user *user;
-    /** Client type to filter. If set to -1, no type filtering is applied. */
+    /* Client type to filter. If set to -1, no type filtering is applied. */
     int type;
-    /**< Boolean flag to determine if the current client (`me`) should be filtered. 1 means "skip me", 0 means otherwise. */
+    /* Boolean flag to determine if the current client (`me`) should be filtered. 1 means "skip me", 0 means otherwise. */
     int skipme;
 } clientFilter;
 
@@ -74,7 +71,7 @@ static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
 int parseClientFilters(client *c, int i, clientFilter *filter);
-bool clientMatchesFilter(client *client, clientFilter client_filter);
+int clientMatchesFilter(client *client, clientFilter client_filter);
 sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
@@ -3371,7 +3368,7 @@ sds getAllClientsInfoString(int type, int hide_user_data) {
     listNode *ln;
     listIter li;
     client *client;
-    sds o = sdsnewlen(SDS_NOINIT, 500);
+    sds o = sdsnewlen(SDS_NOINIT, 200 * listLength(server.clients));
     sdsclear(o);
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
@@ -3387,7 +3384,7 @@ sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_d
     listNode *ln;
     listIter li;
     client *client;
-    sds o = sdsnewlen(SDS_NOINIT, 200 * listLength(server.clients));
+    sds o = sdsnewlen(SDS_NOINIT, 500);
     sdsclear(o);
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
@@ -3594,18 +3591,18 @@ int parseClientFilters(client *c, int i, clientFilter *filter) {
     return C_OK;
 }
 
-bool clientMatchesFilter(client *client, clientFilter client_filter) {
+int clientMatchesFilter(client *client, clientFilter client_filter) {
     // Check each filter condition and return false if the client does not match.
-    if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) return false;
-    if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) return false;
-    if (client_filter.type != -1 && getClientType(client) != client_filter.type) return false;
-    if (client_filter.ids && !intsetFind(client_filter.ids, client->id)) return false;
-    if (client_filter.user && client->user != client_filter.user) return false;
-    if (client_filter.skipme && client == server.current_client) return false; // Skipme check
-    if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) return false;
+    if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) return 0;
+    if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) return 0;
+    if (client_filter.type != -1 && getClientType(client) != client_filter.type) return 0;
+    if (client_filter.ids && !intsetFind(client_filter.ids, client->id)) return 0;
+    if (client_filter.user && client->user != client_filter.user) return 0;
+    if (client_filter.skipme && client == server.current_client) return 0; // Skipme check
+    if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) return 0;
 
     // If all conditions are satisfied, the client matches the filter.
-    return true;
+    return 1;
 }
 
 void clientCommand(client *c) {
@@ -3767,12 +3764,12 @@ void clientCommand(client *c) {
 
             /* New style syntax: parse options. */
             if (parseClientFilters(c, i, &client_filter) != C_OK) {
-                zfree(client_filter.ids); // Free the intset on error
+                goto client_kill_done; // Free the intset on error
                 return;
             }
         } else {
-            zfree(client_filter.ids); // Free the intset on error
             addReplyErrorObject(c, shared.syntaxerr);
+            goto client_kill_done; // Free the intset on error
             return;
         }
 
@@ -3804,6 +3801,7 @@ void clientCommand(client *c) {
         /* If this client has to be closed, flag it as CLOSE_AFTER_REPLY
          * only after we queued the reply to its output buffers. */
         if (close_this_client) c->flag.close_after_reply = 1;
+    client_kill_done:
         zfree(client_filter.ids);
     } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
         /* CLIENT UNBLOCK <id> [timeout|error] */
