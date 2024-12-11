@@ -169,12 +169,6 @@ typedef struct clusterNode {
     int *updated_slots;      /* Used by updateClusterSlotsConfiguration */
     int updated_slots_count; /* Used by updateClusterSlotsConfiguration */
     int replicas_count;
-    sds *migrating;      /* An array of sds where even strings are slots and odd
-                          * strings are the destination node IDs. */
-    sds *importing;      /* An array of sds where even strings are slots and odd
-                          * strings are the source node IDs. */
-    int migrating_count; /* Length of the migrating array (migrating slots*2) */
-    int importing_count; /* Length of the importing array (importing slots*2) */
     struct serverConfig *redis_config;
 } clusterNode;
 
@@ -1020,10 +1014,6 @@ static clusterNode *createClusterNode(char *ip, int port) {
     node->slots_count = 0;
     node->updated_slots = NULL;
     node->updated_slots_count = 0;
-    node->migrating = NULL;
-    node->importing = NULL;
-    node->migrating_count = 0;
-    node->importing_count = 0;
     node->redis_config = NULL;
     return node;
 }
@@ -1032,14 +1022,6 @@ static void freeClusterNode(clusterNode *node) {
     int i;
     if (node->name) sdsfree(node->name);
     if (node->replicate) sdsfree(node->replicate);
-    if (node->migrating != NULL) {
-        for (i = 0; i < node->migrating_count; i++) sdsfree(node->migrating[i]);
-        zfree(node->migrating);
-    }
-    if (node->importing != NULL) {
-        for (i = 0; i < node->importing_count; i++) sdsfree(node->importing[i]);
-        zfree(node->importing);
-    }
     /* If the node is not the reference node, that uses the address from
      * config.conn_info.hostip and config.conn_info.hostport, then the node ip has been
      * allocated by fetchClusterConfiguration, so it must be freed. */
