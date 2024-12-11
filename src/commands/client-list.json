@@ -91,6 +91,55 @@
                 "optional": true,
                 "multiple": true,
                 "since": "6.2.0"
+            },
+            {
+                "token": "USER",
+                "name": "username",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "ADDR",
+                "name": "addr",
+                "display": "ip:port",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "LADDR",
+                "name": "laddr",
+                "display": "ip:port",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "SKIPME",
+                "name": "skipme",
+                "type": "oneof",
+                "optional": true,
+                "since": "8.1.0",
+                "arguments": [
+                    {
+                        "name": "yes",
+                        "type": "pure-token",
+                        "token": "YES"
+                    },
+                    {
+                        "name": "no",
+                        "type": "pure-token",
+                        "token": "NO"
+                    }
+                ]
+            },
+            {
+                "token": "MAXAGE",
+                "name": "maxage",
+                "type": "integer",
+                "optional": true,
+                "since": "8.1.0"
             }
         ]
     }
