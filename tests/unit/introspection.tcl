@@ -82,9 +82,9 @@ start_server {tags {"introspection"}} {
     }
 
     test {CLIENT LIST with illegal arguments} {
-        assert_error "ERR syntax error*" {r client list id 10 wrong_arg}
+        assert_error "ERR syntax error" {r client list id 10 wrong_arg}
 
-        assert_error "ERR *greater than 0*" {r client list id str}
+        assert_error "ERR syntax error" {r client list id str}
         assert_error "ERR *greater than 0*" {r client list id -1}
         assert_error "ERR *greater than 0*" {r client list id 0}
 
@@ -188,7 +188,7 @@ start_server {tags {"introspection"}} {
         assert_error "ERR wrong number of arguments for 'client|kill' command" {r client kill}
         assert_error "ERR syntax error*" {r client kill id 10 wrong_arg}
 
-        assert_error "ERR *greater than 0*" {r client kill id str}
+        assert_error "ERR syntax error*" {r client kill id str}
         assert_error "ERR *greater than 0*" {r client kill id -1}
         assert_error "ERR *greater than 0*" {r client kill id 0}
 
