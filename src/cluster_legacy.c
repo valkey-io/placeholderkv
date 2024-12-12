@@ -3952,9 +3952,10 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
 /* Send a PING or PONG packet to the specified node, making sure to add enough
  * gossip information. */
 void clusterSendPing(clusterLink *link, int type) {
-    serverLog(LL_DEBUG, "Sending %s packet to node %.40s (%s)",
+    serverLog(LL_DEBUG, "Sending %s packet to node %.40s (%s) on %s link",
               clusterGetMessageTypeString(type),
               link->node ? link->node->name : "<unknown>",
+              link->node ? link->node->human_nodename : "<unknown>",
               link->inbound ? "inbound" : "outbound");
 
     static unsigned long long cluster_pings_sent = 0;
