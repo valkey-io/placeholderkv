@@ -34,6 +34,7 @@
  */
 
 #include "server.h"
+#include "script.h"
 #include <stddef.h>
 
 #ifdef HAVE_DEFRAG
@@ -1050,6 +1051,9 @@ static doneStatus defragLuaScripts(monotime endtime, void *target, void *privdat
     UNUSED(target);
     UNUSED(privdata);
     if (endtime == 0) return DEFRAG_NOT_DONE; // required initialization
+    /* In case we are in the process of eval some script we do not want to replace the script being run
+     * so we just bail out without really defragging here. */
+    if (scriptIsRunning()) return DEFRAG_DONE;
     activeDefragSdsDict(evalScriptsDict(), DEFRAG_SDS_DICT_VAL_LUA_SCRIPT);
     return DEFRAG_DONE;
 }
