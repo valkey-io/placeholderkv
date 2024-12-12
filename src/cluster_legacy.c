@@ -1336,6 +1336,10 @@ clusterLink *createClusterLink(clusterNode *node) {
  * with this link will have the 'link' field set to NULL. */
 void freeClusterLink(clusterLink *link) {
     serverAssert(link != NULL);
+    serverLog(LL_DEBUG, "Freeing cluster link for node: %.40s:%s",
+              link->node ? link->node->name : "<unknown>",
+              link->inbound ? "inbound" : "outbound");
+
     if (link->conn) {
         connClose(link->conn);
         link->conn = NULL;
@@ -1351,6 +1355,7 @@ void freeClusterLink(clusterLink *link) {
         } else if (link->node->inbound_link == link) {
             serverAssert(link->inbound);
             link->node->inbound_link = NULL;
+            link->node->inbound_link_freed_time = mstime();
         }
     }
     zfree(link);
@@ -1490,6 +1495,7 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     node->fail_time = 0;
     node->link = NULL;
     node->inbound_link = NULL;
+    node->inbound_link_freed_time = node->ctime;
     memset(node->ip, 0, sizeof(node->ip));
     node->announce_client_ipv4 = sdsempty();
     node->announce_client_ipv6 = sdsempty();
@@ -1696,6 +1702,9 @@ void clusterAddNode(clusterNode *node) {
  *    it is a replica node.
  */
 void clusterDelNode(clusterNode *delnode) {
+    serverAssert(delnode != NULL);
+    serverLog(LL_DEBUG, "Deleting node %.40s from cluster view", delnode->name);
+
     int j;
     dictIterator *di;
     dictEntry *de;
@@ -2078,7 +2087,7 @@ void clearNodeFailureIfNeeded(clusterNode *node) {
 /* Return 1 if we already have a node in HANDSHAKE state matching the
  * specified ip address and port number. This function is used in order to
  * avoid adding a new handshake node for the same address multiple times. */
-int clusterHandshakeInProgress(char *ip, int port, int cport) {
+static int clusterHandshakeInProgress(char *ip, int port, int cport) {
     dictIterator *di;
     dictEntry *de;
 
@@ -2100,7 +2109,7 @@ int clusterHandshakeInProgress(char *ip, int port, int cport) {
  *
  * EAGAIN - There is already a handshake in progress for this address.
  * EINVAL - IP or port are not valid. */
-int clusterStartHandshake(char *ip, int port, int cport) {
+static int clusterStartHandshake(char *ip, int port, int cport) {
     clusterNode *n;
     char norm_ip[NET_IP_STR_LEN];
     struct sockaddr_storage sa;
@@ -3207,32 +3216,47 @@ int clusterProcessPacket(clusterLink *link) {
             }
         }
 
-        /* Add this node if it is new for us and the msg type is MEET.
-         * In this stage we don't try to add the node with the right
-         * flags, replicaof pointer, and so forth, as this details will be
-         * resolved when we'll receive PONGs from the node. The exception
-         * to this is the flag that indicates extensions are supported, as
-         * we want to send extensions right away in the return PONG in order
-         * to reduce the amount of time needed to stabilize the shard ID. */
-        if (!sender && type == CLUSTERMSG_TYPE_MEET) {
-            clusterNode *node;
+        if (type == CLUSTERMSG_TYPE_MEET) {
+            if (!sender) {
+                /* Add this node if it is new for us and the msg type is MEET.
+                 * In this stage we don't try to add the node with the right
+                 * flags, replicaof pointer, and so forth, as this details will be
+                 * resolved when we'll receive PONGs from the node. The exception
+                 * to this is the flag that indicates extensions are supported, as
+                 * we want to send extensions right away in the return PONG in order
+                 * to reduce the amount of time needed to stabilize the shard ID. */
+                clusterNode *node;
 
-            node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
-            serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
-            getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
-            node->cport = ntohs(hdr->cport);
-            if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
-                node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
+                serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
+                getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
+                node->cport = ntohs(hdr->cport);
+                if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
+                    node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                }
+                setClusterNodeToInboundClusterLink(node, link);
+                clusterAddNode(node);
+                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
+
+                /* If this is a MEET packet from an unknown node, we still process
+                 * the gossip section here since we have to trust the sender because
+                 * of the message type. */
+                clusterProcessGossipSection(hdr, link);
+            } else if (sender->link && now - sender->ctime > server.cluster_node_timeout) {
+                /* The MEET packet is from a known node, after the handshake timeout, so the sender thinks that I do not
+                 * know it.
+                 * Freeing my outbound link to that node, to force a reconnect and sending a PING.
+                 * Once that node receives our PING, it should recognize the new connection as an inbound link from me.
+                 * We should only free the outbound link if the node is known for more time than the handshake timeout,
+                 * since during this time, the other side might still be trying to complete the handshake. */
+
+                /* We should always receive a MEET packet on an inbound link. */
+                serverAssert(link != sender->link);
+                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s after receiving a MEET packet from this known node",
+                          sender->name);
+                freeClusterLink(sender->link);
             }
-            setClusterNodeToInboundClusterLink(node, link);
-            clusterAddNode(node);
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
         }
-
-        /* If this is a MEET packet from an unknown node, we still process
-         * the gossip section here since we have to trust the sender because
-         * of the message type. */
-        if (!sender && type == CLUSTERMSG_TYPE_MEET) clusterProcessGossipSection(hdr, link);
 
         /* Anyway reply with a PONG */
         clusterSendPing(link, CLUSTERMSG_TYPE_PONG);
@@ -3243,7 +3267,7 @@ int clusterProcessPacket(clusterLink *link) {
         serverLog(LL_DEBUG, "%s packet received: %.40s", clusterGetMessageTypeString(type),
                   link->node ? link->node->name : "NULL");
 
-        if (sender && (sender->flags & CLUSTER_NODE_MEET)) {
+        if (sender && nodeInMeetState(sender)) {
             /* Once we get a response for MEET from the sender, we can stop sending more MEET. */
             sender->flags &= ~CLUSTER_NODE_MEET;
             serverLog(LL_NOTICE, "Successfully completed handshake with %.40s (%s)", sender->name,
@@ -3668,7 +3692,7 @@ void clusterLinkConnectHandler(connection *conn) {
      * of a PING one, to force the receiver to add us in its node
      * table. */
     mstime_t old_ping_sent = node->ping_sent;
-    clusterSendPing(link, node->flags & CLUSTER_NODE_MEET ? CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
+    clusterSendPing(link, nodeInMeetState(node) ? CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
     if (old_ping_sent) {
         /* If there was an active ping before the link was
          * disconnected, we want to restore the ping time, otherwise
@@ -3747,7 +3771,9 @@ void clusterReadHandler(connection *conn) {
 
         if (nread <= 0) {
             /* I/O error... */
-            serverLog(LL_DEBUG, "I/O error reading from node link: %s",
+            serverLog(LL_DEBUG, "I/O error reading from node link (%.40s:%s): %s",
+                      link->node ? link->node->name : "<unknown>",
+                      link->inbound ? "inbound" : "outbound",
                       (nread == 0) ? "connection closed" : connGetLastError(conn));
             handleLinkIOError(link);
             return;
@@ -3928,6 +3954,12 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
 /* Send a PING or PONG packet to the specified node, making sure to add enough
  * gossip information. */
 void clusterSendPing(clusterLink *link, int type) {
+    serverLog(LL_DEBUG, "Sending %s packet to node %.40s (%s) on %s link",
+              clusterGetMessageTypeString(type),
+              link->node ? link->node->name : "<unknown>",
+              link->node ? link->node->human_nodename : "<unknown>",
+              link->inbound ? "inbound" : "outbound");
+
     static unsigned long long cluster_pings_sent = 0;
     cluster_pings_sent++;
     int gossipcount = 0; /* Number of gossip sections added so far. */
@@ -4942,6 +4974,15 @@ static int clusterNodeCronHandleReconnect(clusterNode *node, mstime_t handshake_
                   node->cport, handshake_timeout);
         clusterDelNode(node);
         return 1;
+    }
+    if (node->link != NULL && node->inbound_link == NULL && nodeInNormalState(node) &&
+        now - node->inbound_link_freed_time > handshake_timeout) {
+        /* Node has an outbound link, but no inbound link for more than the handshake timeout.
+         * This probably means this node does not know us yet, whereas we know it.
+         * So we send it a MEET packet to do a handshake with it and correct the inconsistent cluster view. */
+        node->flags |= CLUSTER_NODE_MEET;
+        serverLog(LL_NOTICE, "Sending MEET packet to node %.40s because there is no inbound link for it", node->name);
+        clusterSendPing(node->link, CLUSTERMSG_TYPE_MEET);
     }
 
     if (node->link == NULL) {
