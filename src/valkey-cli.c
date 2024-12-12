@@ -218,6 +218,10 @@ static struct config {
     int shutdown;
     int monitor_mode;
     int pubsub_mode;
+    int pubsub_channel_count;
+    int pubsub_pattern_count;
+    int pubsub_shard_count;
+    int pubsub_total_count;
     int blocking_state_aborted; /* used to abort monitor_mode and pubsub_mode. */
     int latency_mode;
     int latency_dist_mode;
@@ -2224,6 +2228,31 @@ static int cliReadReply(int output_raw_strings) {
         fflush(stdout);
         sdsfree(out);
     }
+
+    /* Handle pubsub mode */
+    if (config.pubsub_mode) {
+        if (isPubsubPush(reply)) {
+            if (reply->elements >= 3) {
+                char *cmd = reply->element[0]->str;
+                int count = reply->element[2]->integer;
+
+                if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "unsubscribe") == 0) {
+                    config.pubsub_channel_count = count;
+                } else if (strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+                    config.pubsub_pattern_count = count;
+                } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+                    config.pubsub_shard_count = count;
+                }
+                config.pubsub_total_count = config.pubsub_channel_count + config.pubsub_pattern_count + config.pubsub_shard_count;
+
+                if (config.pubsub_total_count == 0) {
+                    config.pubsub_mode = 0;
+                    cliRefreshPrompt();
+                }
+            }
+        }
+    }
+
     return REDIS_OK;
 }
 
@@ -9493,6 +9522,10 @@ int main(int argc, char **argv) {
     config.shutdown = 0;
     config.monitor_mode = 0;
     config.pubsub_mode = 0;
+    config.pubsub_channel_count = 0;
+    config.pubsub_pattern_count = 0;
+    config.pubsub_shard_count = 0;
+    config.pubsub_total_count = 0;
     config.blocking_state_aborted = 0;
     config.latency_mode = 0;
     config.latency_dist_mode = 0;

@@ -514,4 +514,79 @@ start_server {tags {"pubsub network"}} {
         assert_equal [r read] {message foo vaz}
     } {} {resp3}
 
+    test "SUBSCRIBE and UNSUBSCRIBE with multiple channels" {
+        # Note: this is testing whether the client exits pubsub mode when subscribed to 0 channels.
+        set rd1 [valkey_deferring_client]
+        
+        assert_equal {1 2 3} [subscribe $rd1 {chan1 chan2 chan3}]
+        assert_equal {chan1 1 chan2 1 chan3 1} [r pubsub numsub chan1 chan2 chan3]
+        assert_equal {2} [unsubscribe $rd1 {chan2}]
+        assert_equal {chan1 1 chan2 0 chan3 1} [r pubsub numsub chan1 chan2 chan3]
+        unsubscribe $rd1
+
+        set unsub1 [$rd1 read]
+        set unsub2 [$rd1 read]
+        
+        assert {[lindex $unsub1 0] eq "unsubscribe" && [lindex $unsub2 0] eq "unsubscribe"}
+        assert {([lindex $unsub1 1] eq "chan1" && [lindex $unsub2 1] eq "chan3") || 
+                ([lindex $unsub1 1] eq "chan3" && [lindex $unsub2 1] eq "chan1")}
+        assert {[lindex $unsub1 2] == 1 && [lindex $unsub2 2] == 0}
+        assert_equal {chan1 0 chan2 0 chan3 0} [r pubsub numsub chan1 chan2 chan3]
+        
+        $rd1 ping
+        assert_equal {PONG} [$rd1 read]
+        
+        $rd1 close
+    }
+
+    test "PSUBSCRIBE and PUNSUBSCRIBE with multiple patterns" {
+        # Note: this is testing whether the client exits pubsub mode when subscribed to 0 channels.
+        set rd1 [valkey_deferring_client]
+        
+        assert_equal {1 2 3} [psubscribe $rd1 {chan1.* chan2.* chan3.*}]
+        assert_equal 3 [r pubsub numpat]
+        assert_equal {2} [punsubscribe $rd1 {chan2.*}]
+        assert_equal 2 [r pubsub numpat]
+        punsubscribe $rd1
+
+        set unsub1 [$rd1 read]
+        set unsub2 [$rd1 read]
+
+        assert {[lindex $unsub1 0] eq "punsubscribe" && [lindex $unsub2 0] eq "punsubscribe"}
+        assert {([lindex $unsub1 1] eq "chan1.*" && [lindex $unsub2 1] eq "chan3.*") || 
+                ([lindex $unsub1 1] eq "chan3.*" && [lindex $unsub2 1] eq "chan1.*")}
+        assert {[lindex $unsub1 2] == 1 && [lindex $unsub2 2] == 0}
+        assert_equal 0 [r pubsub numpat]
+
+        $rd1 ping
+        assert_equal {PONG} [$rd1 read]
+        
+        $rd1 close
+    }
+
+    test "SSUBSCRIBE and SUNSUBSCRIBE with multiple shard channels" {
+        # Note: this is testing whether the client exits pubsub mode when subscribed to 0 channels.
+        set rd1 [valkey_deferring_client]
+        
+        assert_equal {1 2 3} [ssubscribe $rd1 {schan1 schan2 schan3}]
+        assert_equal {schan1 1 schan2 1 schan3 1} [r pubsub shardnumsub schan1 schan2 schan3]
+        assert_equal {2} [sunsubscribe $rd1 {schan2}]
+        assert_equal {schan1 1 schan2 0 schan3 1} [r pubsub shardnumsub schan1 schan2 schan3]
+        sunsubscribe $rd1
+     
+        set unsub1 [$rd1 read]
+        set unsub2 [$rd1 read]
+       
+        assert {[lindex $unsub1 0] eq "sunsubscribe" && [lindex $unsub2 0] eq "sunsubscribe"}
+        assert {([lindex $unsub1 1] eq "schan1" && [lindex $unsub2 1] eq "schan3") || 
+                ([lindex $unsub1 1] eq "schan3" && [lindex $unsub2 1] eq "schan1")}
+        assert {[lindex $unsub1 2] == 1 && [lindex $unsub2 2] == 0}
+       
+        assert_equal {schan1 0 schan2 0 schan3 0} [r pubsub shardnumsub schan1 schan2 schan3]
+       
+        $rd1 ping
+        assert_equal {PONG} [$rd1 read]
+        
+        $rd1 close
+    }
 }
