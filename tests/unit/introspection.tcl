@@ -334,6 +334,8 @@ start_server {tags {"introspection"}} {
         assert_equal "OK" [$rd1 read]
         assert_match {monitor*"set"*"foo"*"bar"*} [$rd1 read]
 
+        # Because we need to verify exact RESP3 response correctness,
+        # we need to instruct valkey client to return raw, unprased response.
         $rd1 readraw 1 ;
 
         $rd1 get foo
