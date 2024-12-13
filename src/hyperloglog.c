@@ -41,7 +41,7 @@
  * which get flagged as deprecated. We don't use these functions so
  * we'll suppress the warning. */
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 #include <immintrin.h>
 #if defined(__GNUC__) && __GNUC__ >= 12
