@@ -582,6 +582,56 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
       set err1
     } {*WRONGTYPE*}
 
+    test "SET with IFEQ conditional" {
+        r del foo
+
+        r set foo "initial_value"
+
+        assert_equal {OK} [r set foo "new_value" ifeq "initial_value"]
+        assert_equal "new_value" [r get foo]
+
+        assert_equal {} [r set foo "should_not_set" ifeq "wrong_value"]
+        assert_equal "new_value" [r get foo]
+    }
+
+    test "SET with IFEQ conditional - non-string current value" {
+        r del foo
+
+        r sadd foo "some_set_value"
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "some_set_value"}
+    }
+
+
+    test "SET with IFEQ conditional - with get" {
+        r del foo
+
+        assert_equal {} [r set foo "new_value" ifeq "initial_value" get]
+        assert_equal {} [r get foo]
+
+        r set foo "initial_value"
+
+        assert_equal "initial_value" [r set foo "new_value" ifeq "initial_value" get]
+        assert_equal "new_value" [r get foo]
+    }
+
+    test "SET with IFEQ conditional - non string current value with get" {
+        r del foo
+
+        r sadd foo "some_set_value"
+
+        assert_error {WRONGTYPE Operation against a key holding the wrong kind of value} {r set foo "new_value" ifeq "initial_value" get}
+    }
+
+    test "SET with IFEQ conditional - with xx" {
+        r del foo
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" xx}
+    }
+
+    test "SET with IFEQ conditional - with nx" {
+        r del foo
+        assert_error {ERR syntax error} {r set foo "new_value" ifeq "initial_value" nx}
+    }
+
     test {Extended SET EX option} {
         r del foo
         r set foo bar ex 10

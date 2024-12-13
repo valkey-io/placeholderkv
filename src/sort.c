@@ -579,7 +579,10 @@ void sortCommandGeneric(client *c, int readonly) {
         }
         if (outputlen) {
             listTypeTryConversion(sobj, LIST_CONV_AUTO, NULL, NULL);
-            setKey(c, c->db, storekey, sobj, 0);
+            setKey(c, c->db, storekey, &sobj, 0);
+            /* Ownership of sobj transferred to the db. Set to NULL to prevent
+             * freeing it below. */
+            sobj = NULL;
             notifyKeyspaceEvent(NOTIFY_LIST, "sortstore", storekey, c->db->id);
             server.dirty += outputlen;
         } else if (dbDelete(c->db, storekey)) {
@@ -587,7 +590,7 @@ void sortCommandGeneric(client *c, int readonly) {
             notifyKeyspaceEvent(NOTIFY_GENERIC, "del", storekey, c->db->id);
             server.dirty++;
         }
-        decrRefCount(sobj);
+        if (sobj != NULL) decrRefCount(sobj);
         addReplyLongLong(c, outputlen);
     }
 

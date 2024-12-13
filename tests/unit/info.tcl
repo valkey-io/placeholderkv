@@ -515,23 +515,43 @@ start_server {tags {"info" "external:skip"}} {
         set info_mem [r info memory]
         set mem_stats [r memory stats]
         assert_equal [getInfoProperty $info_mem mem_overhead_db_hashtable_rehashing] {0}
-        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 64
+        # overhead.db.hashtable.lut = memory overhead of hashset including hashset struct and tables
+        set hashset_overhead [dict get $mem_stats overhead.db.hashtable.lut]
+        if {$hashset_overhead < 140} {
+            # 32-bit version (hashset struct + 1 bucket of 64 bytes)
+            set bits 32
+        } else {
+            set bits 64
+        }
+        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 256
         assert_equal [dict get $mem_stats overhead.db.hashtable.rehashing] {0}
         assert_equal [dict get $mem_stats db.dict.rehashing.count] {0}
-        # set 4 more keys to trigger rehashing
+        # set 7 more keys to trigger rehashing
         # get the info within a transaction to make sure the rehashing is not completed
-        r multi 
+        r multi
         r set b c
         r set c d
         r set d e
         r set e f
+        r set f g
+        r set g h
+        r set h i
+        if {$bits == 32} {
+            # In 32-bit mode, we have 12 elements per bucket. Insert five more
+            # to trigger rehashing.
+            r set aa aa
+            r set bb bb
+            r set cc cc
+            r set dd dd
+            r set ee ee
+        }
         r info memory
         r memory stats
         set res [r exec]
-        set info_mem [lindex $res 4]
-        set mem_stats [lindex $res 5]
+        set info_mem [lindex $res end-1]
+        set mem_stats [lindex $res end]
         assert_range [getInfoProperty $info_mem mem_overhead_db_hashtable_rehashing] 1 64
-        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 192
+        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 300
         assert_range [dict get $mem_stats overhead.db.hashtable.rehashing] 1 64
         assert_equal [dict get $mem_stats db.dict.rehashing.count] {1}
     }

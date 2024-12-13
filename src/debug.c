@@ -283,7 +283,7 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
  * a different digest. */
 void computeDatasetDigest(unsigned char *final) {
     unsigned char digest[20];
-    dictEntry *de;
+    robj *o;
     int j;
     uint32_t aux;
 
@@ -299,17 +299,16 @@ void computeDatasetDigest(unsigned char *final) {
         mixDigest(final, &aux, sizeof(aux));
 
         /* Iterate this DB writing every entry */
-        while ((de = kvstoreIteratorNext(kvs_it)) != NULL) {
+        while (kvstoreIteratorNext(kvs_it, (void **)&o)) {
             sds key;
-            robj *keyobj, *o;
+            robj *keyobj;
 
             memset(digest, 0, 20); /* This key-val digest */
-            key = dictGetKey(de);
+            key = objectGetKey(o);
             keyobj = createStringObject(key, sdslen(key));
 
             mixDigest(digest, key, sdslen(key));
 
-            o = dictGetVal(de);
             xorObjectDigest(db, keyobj, digest, o);
 
             /* We can finally xor the key-val digest to the final digest */
@@ -615,18 +614,16 @@ void debugCommand(client *c) {
         server.debug_cluster_disable_random_ping = atoi(c->argv[2]->ptr);
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "object") && (c->argc == 3 || c->argc == 4)) {
-        dictEntry *de;
         robj *val;
         char *strenc;
 
         int fast = 0;
         if (c->argc == 4 && !strcasecmp(c->argv[3]->ptr, "fast")) fast = 1;
 
-        if ((de = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
+        if ((val = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
             addReplyErrorObject(c, shared.nokeyerr);
             return;
         }
-        val = dictGetVal(de);
         strenc = strEncoding(val->encoding);
 
         char extra[138] = {0};
@@ -674,16 +671,14 @@ void debugCommand(client *c) {
         addReplyStatusLength(c, s, sdslen(s));
         sdsfree(s);
     } else if (!strcasecmp(c->argv[1]->ptr, "sdslen") && c->argc == 3) {
-        dictEntry *de;
         robj *val;
         sds key;
 
-        if ((de = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
+        if ((val = dbFind(c->db, c->argv[2]->ptr)) == NULL) {
             addReplyErrorObject(c, shared.nokeyerr);
             return;
         }
-        val = dictGetVal(de);
-        key = dictGetKey(de);
+        key = objectGetKey(val);
 
         if (val->type != OBJ_STRING || !sdsEncodedObject(val)) {
             addReplyError(c, "Not an sds encoded string.");
@@ -753,7 +748,7 @@ void debugCommand(client *c) {
                 val = createStringObject(NULL, valsize);
                 memcpy(val->ptr, buf, valsize <= buflen ? valsize : buflen);
             }
-            dbAdd(c->db, key, val);
+            dbAdd(c->db, key, &val);
             signalModifiedKey(c, c->db, key);
             decrRefCount(key);
         }
@@ -776,8 +771,7 @@ void debugCommand(client *c) {
 
             /* We don't use lookupKey because a debug command should
              * work on logically expired keys */
-            dictEntry *de;
-            robj *o = ((de = dbFind(c->db, c->argv[j]->ptr)) == NULL) ? NULL : dictGetVal(de);
+            robj *o = dbFind(c->db, c->argv[j]->ptr);
             if (o) xorObjectDigest(c->db, c->argv[j], digest, o);
 
             sds d = sdsempty();
@@ -1049,6 +1043,14 @@ __attribute__((noinline, weak)) void _serverAssert(const char *estr, const char 
     bugReportEnd(0, 0);
 }
 
+/* Returns the argv argument in binary representation, limited to length 128. */
+sds getArgvReprString(robj *argv) {
+    robj *decoded = getDecodedObject(argv);
+    sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
+    decrRefCount(decoded);
+    return repr;
+}
+
 /* Checks if the argument at the given index should be redacted from logs. */
 int shouldRedactArg(const client *c, int idx) {
     serverAssert(idx < c->argc);
@@ -1073,16 +1075,12 @@ void _serverAssertPrintClientInfo(const client *c) {
             serverLog(LL_WARNING, "client->argv[%d]: %zu bytes", j, sdslen((sds)c->argv[j]->ptr));
             continue;
         }
-        char buf[128];
-        char *arg;
-
-        if (c->argv[j]->type == OBJ_STRING && sdsEncodedObject(c->argv[j])) {
-            arg = (char *)c->argv[j]->ptr;
-        } else {
-            snprintf(buf, sizeof(buf), "Object type: %u, encoding: %u", c->argv[j]->type, c->argv[j]->encoding);
-            arg = buf;
+        sds repr = getArgvReprString(c->argv[j]);
+        serverLog(LL_WARNING, "client->argv[%d] = %s (refcount: %d)", j, repr, c->argv[j]->refcount);
+        sdsfree(repr);
+        if (!strcasecmp(c->argv[j]->ptr, "auth") || !strcasecmp(c->argv[j]->ptr, "auth2")) {
+            break;
         }
-        serverLog(LL_WARNING, "client->argv[%d] = \"%s\" (refcount: %d)", j, arg, c->argv[j]->refcount);
     }
 }
 
@@ -1890,34 +1888,27 @@ void logCurrentClient(client *cc, const char *title) {
     client = catClientInfoString(sdsempty(), cc, server.hide_user_data_from_log);
     serverLog(LL_WARNING | LL_RAW, "%s\n", client);
     sdsfree(client);
-    serverLog(LL_WARNING | LL_RAW, "argc: '%d'\n", cc->argc);
+    serverLog(LL_WARNING | LL_RAW, "argc: %d\n", cc->argc);
     for (j = 0; j < cc->argc; j++) {
         if (shouldRedactArg(cc, j)) {
             serverLog(LL_WARNING | LL_RAW, "argv[%d]: %zu bytes\n", j, sdslen((sds)cc->argv[j]->ptr));
             continue;
         }
-        robj *decoded;
-        decoded = getDecodedObject(cc->argv[j]);
-        sds repr = sdscatrepr(sdsempty(), decoded->ptr, min(sdslen(decoded->ptr), 128));
-        serverLog(LL_WARNING | LL_RAW, "argv[%d]: '%s'\n", j, (char *)repr);
-        if (!strcasecmp(decoded->ptr, "auth") || !strcasecmp(decoded->ptr, "auth2")) {
-            sdsfree(repr);
-            decrRefCount(decoded);
+        sds repr = getArgvReprString(cc->argv[j]);
+        serverLog(LL_WARNING | LL_RAW, "argv[%d]: %s\n", j, repr);
+        sdsfree(repr);
+        if (!strcasecmp(cc->argv[j]->ptr, "auth") || !strcasecmp(cc->argv[j]->ptr, "auth2")) {
             break;
         }
-        sdsfree(repr);
-        decrRefCount(decoded);
     }
     /* Check if the first argument, usually a key, is found inside the
      * selected DB, and if so print info about the associated object. */
     if (cc->argc > 1) {
         robj *val, *key;
-        dictEntry *de;
 
         key = getDecodedObject(cc->argv[1]);
-        de = dbFind(cc->db, key->ptr);
-        if (de) {
-            val = dictGetVal(de);
+        val = dbFind(cc->db, key->ptr);
+        if (val) {
             serverLog(LL_WARNING, "key '%s' found in DB containing the following object:", (char *)key->ptr);
             serverLogObjectDebugInfo(val);
         }

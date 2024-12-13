@@ -1,8 +1,8 @@
-#include <stdatomic.h>
-
 #include "../networking.c"
 #include "../server.c"
 #include "test_help.h"
+
+#include <stdatomic.h>
 
 int test_backupAndUpdateClientArgv(int argc, char **argv, int flags) {
     UNUSED(argc);

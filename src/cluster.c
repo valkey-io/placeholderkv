@@ -276,9 +276,9 @@ void restoreCommand(client *c) {
     }
 
     /* Create the key and set the TTL if any */
-    dbAdd(c->db, key, obj);
+    dbAdd(c->db, key, &obj);
     if (ttl) {
-        setExpire(c, c->db, key, ttl);
+        obj = setExpire(c, c->db, key, ttl);
         if (!absttl) {
             /* Propagate TTL as absolute timestamp */
             robj *ttl_obj = createStringObjectFromLongLong(ttl);
@@ -811,7 +811,7 @@ static int shouldReturnTlsInfo(void) {
 }
 
 unsigned int countKeysInSlot(unsigned int slot) {
-    return kvstoreDictSize(server.db->keys, slot);
+    return kvstoreHashtableSize(server.db->keys, slot);
 }
 
 void clusterCommandHelp(client *c) {
@@ -908,16 +908,16 @@ void clusterCommand(client *c) {
         unsigned int keys_in_slot = countKeysInSlot(slot);
         unsigned int numkeys = maxkeys > keys_in_slot ? keys_in_slot : maxkeys;
         addReplyArrayLen(c, numkeys);
-        kvstoreDictIterator *kvs_di = NULL;
-        dictEntry *de = NULL;
-        kvs_di = kvstoreGetDictIterator(server.db->keys, slot);
+        kvstoreHashtableIterator *kvs_di = NULL;
+        kvs_di = kvstoreGetHashtableIterator(server.db->keys, slot);
         for (unsigned int i = 0; i < numkeys; i++) {
-            de = kvstoreDictIteratorNext(kvs_di);
-            serverAssert(de != NULL);
-            sds sdskey = dictGetKey(de);
+            void *next;
+            serverAssert(kvstoreHashtableIteratorNext(kvs_di, &next));
+            robj *valkey = next;
+            sds sdskey = objectGetKey(valkey);
             addReplyBulkCBuffer(c, sdskey, sdslen(sdskey));
         }
-        kvstoreReleaseDictIterator(kvs_di);
+        kvstoreReleaseHashtableIterator(kvs_di);
     } else if ((!strcasecmp(c->argv[1]->ptr, "slaves") || !strcasecmp(c->argv[1]->ptr, "replicas")) && c->argc == 3) {
         /* CLUSTER REPLICAS <NODE ID> */
         clusterNode *n = clusterLookupNode(c->argv[2]->ptr, sdslen(c->argv[2]->ptr));
