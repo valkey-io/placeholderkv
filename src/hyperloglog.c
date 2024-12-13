@@ -36,6 +36,7 @@
 #include <math.h>
 
 #ifdef HAVE_AVX2
+#define __MM_MALLOC_H
 #include <immintrin.h>
 #endif
 
