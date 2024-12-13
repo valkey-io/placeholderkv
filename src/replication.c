@@ -706,11 +706,11 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
         client *monitor = ln->value;
         if (monitor->resp > 2) {
             monitor->flag.pushing = 1;
-            addReplyPushLen(monitor,2);
-            addReply(monitor,shared.monitorbulk);
-            addReply(monitor,cmdobj);
+            addReplyPushLen(monitor, 2);
+            addReply(monitor, shared.monitorbulk);
+            addReply(monitor, cmdobj);
         } else {
-            addReply(monitor,cmdobj);
+            addReply(monitor, cmdobj);
         }
         updateClientMemUsageAndBucket(monitor);
     }
