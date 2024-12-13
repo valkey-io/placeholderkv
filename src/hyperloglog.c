@@ -36,7 +36,13 @@
 #include <math.h>
 
 #ifdef HAVE_AVX2
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+/* Some of the functions in <immintrin.h> can include calls to malloc,
+ * which get flagged as deprecated. We don't use these functions so
+ * we'll suppress the warning. */
 #include <immintrin.h>
+#pragma GCC diagnostic pop
 #endif
 
 /* The HyperLogLog implementation is based on the following ideas:
