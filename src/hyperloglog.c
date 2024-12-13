@@ -36,13 +36,17 @@
 #include <math.h>
 
 #ifdef HAVE_AVX2
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#if defined(__GNUC__) && __GNUC__ >= 7
 /* Some of the functions in <immintrin.h> can include calls to malloc,
  * which get flagged as deprecated. We don't use these functions so
  * we'll suppress the warning. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 #include <immintrin.h>
+#if defined(__GNUC__) && __GNUC__ >= 12
 #pragma GCC diagnostic pop
+#endif
 #endif
 
 /* The HyperLogLog implementation is based on the following ideas:
