@@ -4044,8 +4044,10 @@ void clusterSendPing(clusterLink *link, int type) {
     clusterMsg *hdr = &msgblock->msg;
 
     if (!link->inbound) {
-        if (type == CLUSTERMSG_TYPE_PING)       link->node->ping_sent = mstime();
-        else if (type == CLUSTERMSG_TYPE_MEET)  link->node->meet_sent = mstime();
+        if (type == CLUSTERMSG_TYPE_PING)
+            link->node->ping_sent = mstime();
+        else if (type == CLUSTERMSG_TYPE_MEET)
+            link->node->meet_sent = mstime();
     }
 
     /* Populate the gossip fields */
