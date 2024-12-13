@@ -47,7 +47,7 @@ static size_t engine_cache_memory = 0;
 static void engineFunctionDispose(void *obj);
 static void engineStatsDispose(void *obj);
 static void engineLibraryDispose(void *obj);
-static int functionsVerifyName(const char *name);
+static int functionsVerifyName(const char *name, size_t len);
 
 typedef struct functionsLibEngineStats {
     size_t n_lib;
@@ -255,19 +255,21 @@ void functionsAddEngineStats(engineInfo *ei) {
  *       and return an error if its not.
  */
 static int functionLibCreateFunction(char *name,
+                                     size_t name_len,
                                      void *function,
                                      functionLibInfo *li,
                                      char *desc,
+                                     size_t desc_len,
                                      uint64_t f_flags,
                                      char **err) {
-    if (functionsVerifyName(name) != C_OK) {
+    if (functionsVerifyName(name, name_len) != C_OK) {
         *err = valkey_asprintf("Function names can only contain letters, numbers,"
                                " or underscores(_) and must be at least one "
                                "character long");
         return C_ERR;
     }
 
-    sds name_sds = sdsnew(name);
+    sds name_sds = sdsnewlen(name, name_len);
     if (dictFetchValue(li->functions, name_sds)) {
         *err = valkey_asprintf("Function already exists in the library");
         sdsfree(name_sds);
@@ -279,7 +281,7 @@ static int functionLibCreateFunction(char *name,
         .name = name_sds,
         .function = function,
         .li = li,
-        .desc = sdsnew(desc),
+        .desc = sdsnewlen(desc, desc_len),
         .f_flags = f_flags,
     };
 
@@ -448,8 +450,8 @@ int functionsRegisterEngine(const char *engine_name,
         return C_ERR;
     }
 
-    engine *engine = zmalloc(sizeof(struct engine));
-    *engine = (struct engine){
+    engine *eng = zmalloc(sizeof(engine));
+    *eng = (engine){
         .engine_ctx = engine_ctx,
         .create = engine_methods->create_functions_library,
         .call = engine_methods->call_function,
@@ -468,7 +470,7 @@ int functionsRegisterEngine(const char *engine_name,
         .name = engine_name_sds,
         .engineModule = engine_module,
         .module_ctx = engine_module ? moduleAllocateContext() : NULL,
-        .engine = engine,
+        .engine = eng,
         .c = c,
     };
 
@@ -476,8 +478,9 @@ int functionsRegisterEngine(const char *engine_name,
 
     functionsAddEngineStats(ei);
 
-    engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) + zmalloc_size(engine) +
-                           engine->get_engine_memory_overhead(engine->engine_ctx);
+    engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) +
+                           zmalloc_size(eng) +
+                           eng->get_engine_memory_overhead(eng->engine_ctx);
 
     return C_OK;
 }
@@ -974,11 +977,11 @@ void functionHelpCommand(client *c) {
 }
 
 /* Verify that the function name is of the format: [a-zA-Z0-9_][a-zA-Z0-9_]? */
-static int functionsVerifyName(const char *name) {
-    if (strlen(name) == 0) {
+static int functionsVerifyName(const char *name, size_t len) {
+    if (len == 0) {
         return C_ERR;
     }
-    for (size_t i = 0; i < strlen(name); ++i) {
+    for (size_t i = 0; i < len; ++i) {
         char curr_char = name[i];
         if ((curr_char >= 'a' && curr_char <= 'z') || (curr_char >= 'A' && curr_char <= 'Z') ||
             (curr_char >= '0' && curr_char <= '9') || (curr_char == '_')) {
@@ -1084,7 +1087,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
         return NULL;
     }
 
-    if (functionsVerifyName(md.name)) {
+    if (functionsVerifyName(md.name, sdslen(md.name))) {
         *err = valkey_asprintf("Library names can only contain letters, numbers,"
                                " or underscores(_) and must be at least one "
                                "character long");
@@ -1125,9 +1128,11 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     for (size_t i = 0; i < num_compiled_functions; i++) {
         compiledFunction *func = compiled_functions[i];
         int ret = functionLibCreateFunction(func->name,
+                                            func->name_len,
                                             func->function,
                                             new_li,
                                             func->desc,
+                                            func->desc_len,
                                             func->f_flags,
                                             err);
         if (ret == C_ERR) {

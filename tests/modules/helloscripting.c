@@ -299,8 +299,10 @@ static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(
             ValkeyModule_Alloc(sizeof(ValkeyModuleScriptingEngineCompiledFunction));
         *cfunc = (ValkeyModuleScriptingEngineCompiledFunction) {
             .name = ValkeyModule_Strdup(func->name),
+            .name_len = strlen(func->name),
             .function = func,
             .desc = NULL,
+            .desc_len = 0,
             .f_flags = 0,
         };
 

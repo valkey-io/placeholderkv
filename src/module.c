@@ -13060,7 +13060,11 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
  * - `engine_ctx`: engine specific context pointer.
  *
  * - `engine_methods`: the struct with the scripting engine callback functions
- * pointers.
+ *   pointers.
+ *
+ * Returns VALKEYMODULE_OK if the engine is successfully registered, and
+ * VALKEYMODULE_ERR in case some failure occurs. In case of a failure, an error
+ * message is logged.
  */
 int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
                                const char *engine_name,
@@ -13069,8 +13073,9 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
     serverLog(LL_DEBUG, "Registering a new scripting engine: %s", engine_name);
 
     if (engine_methods->version > VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION) {
-        serverLog(LL_WARNING, "The engine implementation version is greater than what this server supports."
-                              "Server ABI Version: %lu, Engine ABI version: %lu",
+        serverLog(LL_WARNING, "The engine implementation version is greater "
+                              "than what this server supports. Server ABI "
+                              "Version: %lu, Engine ABI version: %lu",
                   VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
                   (unsigned long)engine_methods->version);
         return VALKEYMODULE_ERR;
@@ -13089,6 +13094,8 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
 /* Removes the scripting engine from the server.
  *
  * `engine_name` is the name of the scripting engine.
+ *
+ * Returns VALKEYMODULE_OK.
  *
  */
 int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {

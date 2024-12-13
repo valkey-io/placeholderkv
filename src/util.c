@@ -1382,12 +1382,10 @@ int snprintf_async_signal_safe(char *to, size_t n, const char *fmt, ...) {
     return result;
 }
 
-/*
- * This function is similar to asprintf function, but it uses zmalloc for
- * allocating the string buffer.
+/* A printf-like function that returns a freshly allocated string.
  *
- * IMPORTANT: don't forget to free the buffer when no longer needed.
- */
+ * This function is similar to asprintf function, but it uses zmalloc for
+ * allocating the string buffer. */
 char *valkey_asprintf(char const *fmt, ...) {
     va_list args;
 

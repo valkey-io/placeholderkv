@@ -1269,35 +1269,21 @@ sds luaGetStringSds(lua_State *lua, int index) {
     return str_sds;
 }
 
-char *luaGetStringCStr(lua_State *lua, int index) {
+/* Returns a newly allocated C string with the copy of the string value located
+ * on the stack at a given index.
+ * The length of the string is returned using the out parameter `length`.
+ */
+char *luaGetStringCStr(lua_State *lua, int index, size_t *length) {
+    serverAssert(length != NULL);
+
     if (!lua_isstring(lua, index)) {
         return NULL;
     }
 
-    size_t len;
-    const char *str = lua_tolstring(lua, index, &len);
-
-    size_t n = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (str[i] == '\0') {
-            n++;
-        }
-    }
-
-    char *ret_str = zcalloc(len + n + 1);
-
-    n = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (str[i] != '\0') {
-            ret_str[n] = str[i];
-        } else {
-            ret_str[n++] = '\\';
-            ret_str[n] = '0';
-        }
-        n++;
-    }
-
-    return ret_str;
+    const char *str = lua_tolstring(lua, index, length);
+    char *ret = zmalloc(sizeof(char) * (*length) + 1);
+    memcpy(ret, str, (*length) + 1);
+    return ret;
 }
 
 static int luaProtectedTableError(lua_State *lua) {

@@ -811,9 +811,11 @@ typedef void ValkeyModuleScriptingEngineFunctionCtx;
  */
 typedef struct ValkeyModuleScriptingEngineCompiledFunction {
     char *name;       /* Function name */
+    size_t name_len;  /* The length of the function name string */
     void *function;   /* Opaque object representing a function, usually it'
                          the function compiled code. */
     char *desc;       /* Function description */
+    size_t desc_len;  /* The length of the description string */
     uint64_t f_flags; /* Function flags */
 } ValkeyModuleScriptingEngineCompiledFunction;
 

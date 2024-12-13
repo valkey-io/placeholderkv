@@ -100,18 +100,21 @@ static void freeCompiledFunc(luaEngineCtx *lua_engine_ctx, void *compiled_func) 
 }
 
 /*
- * Compile a given blob and save it on the registry.
- * Return a function ctx with Lua ref that allows to later retrieve the
- * function from the registry.
+ * Compile a given script code by generating a set of compiled functions. These
+ * functions are also saved into the the registry of the Lua environment.
+ *
+ * Returns an array of compiled functions. The `compileFunction` struct stores a
+ * Lua ref that allows to later retrieve the function from the registry.
+ * In the `out_num_compiled_functions` parameter is returned the size of the
+ * array.
  *
  * Return NULL on compilation error and set the error to the err variable
  */
-static compiledFunction **luaEngineCreate(
-    engineCtx *engine_ctx,
-    const char *blob,
-    size_t timeout,
-    size_t *out_num_compiled_functions,
-    char **err) {
+static compiledFunction **luaEngineCreate(engineCtx *engine_ctx,
+                                          const char *code,
+                                          size_t timeout,
+                                          size_t *out_num_compiled_functions,
+                                          char **err) {
     compiledFunction **compiled_functions = NULL;
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     lua_State *lua = lua_engine_ctx->lua;
@@ -125,7 +128,7 @@ static compiledFunction **luaEngineCreate(
     lua_pop(lua, 1);                                   /* pop the metatable */
 
     /* compile the code */
-    if (luaL_loadbuffer(lua, blob, strlen(blob), "@user_function")) {
+    if (luaL_loadbuffer(lua, code, strlen(code), "@user_function")) {
         *err = valkey_asprintf("Error compiling function: %s", lua_tostring(lua, -1));
         lua_pop(lua, 1); /* pops the error */
         goto done;
@@ -239,12 +242,16 @@ static void luaEngineFreeFunction(engineCtx *engine_ctx,
 
 static void luaRegisterFunctionArgsInitialize(compiledFunction *func,
                                               char *name,
+                                              size_t name_len,
                                               char *desc,
+                                              size_t desc_len,
                                               luaFunctionCtx *lua_f_ctx,
                                               uint64_t flags) {
     *func = (compiledFunction){
         .name = name,
+        .name_len = name_len,
         .desc = desc,
+        .desc_len = desc_len,
         .function = lua_f_ctx,
         .f_flags = flags,
     };
@@ -298,7 +305,9 @@ static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
                                             compiledFunction *func) {
     char *err = NULL;
     char *name = NULL;
+    size_t name_len = 0;
     char *desc = NULL;
+    size_t desc_len = 0;
     luaFunctionCtx *lua_f_ctx = NULL;
     uint64_t flags = 0;
     if (!lua_istable(lua, 1)) {
@@ -315,14 +324,15 @@ static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
             err = "named argument key given to server.register_function is not a string";
             goto error;
         }
+
         const char *key = lua_tostring(lua, -2);
         if (!strcasecmp(key, "function_name")) {
-            if (!(name = luaGetStringCStr(lua, -1))) {
+            if (!(name = luaGetStringCStr(lua, -1, &name_len))) {
                 err = "function_name argument given to server.register_function must be a string";
                 goto error;
             }
         } else if (!strcasecmp(key, "description")) {
-            if (!(desc = luaGetStringCStr(lua, -1))) {
+            if (!(desc = luaGetStringCStr(lua, -1, &desc_len))) {
                 err = "description argument given to server.register_function must be a string";
                 goto error;
             }
@@ -363,7 +373,13 @@ static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
         goto error;
     }
 
-    luaRegisterFunctionArgsInitialize(func, name, desc, lua_f_ctx, flags);
+    luaRegisterFunctionArgsInitialize(func,
+                                      name,
+                                      name_len,
+                                      desc,
+                                      desc_len,
+                                      lua_f_ctx,
+                                      flags);
 
     return C_OK;
 
@@ -382,8 +398,9 @@ static int luaRegisterFunctionReadPositionalArgs(lua_State *lua,
                                                  compiledFunction *func) {
     char *err = NULL;
     char *name = NULL;
+    size_t name_len = 0;
     luaFunctionCtx *lua_f_ctx = NULL;
-    if (!(name = luaGetStringCStr(lua, 1))) {
+    if (!(name = luaGetStringCStr(lua, 1, &name_len))) {
         err = "first argument to server.register_function must be a string";
         goto error;
     }
@@ -398,7 +415,7 @@ static int luaRegisterFunctionReadPositionalArgs(lua_State *lua,
     lua_f_ctx = zmalloc(sizeof(*lua_f_ctx));
     lua_f_ctx->lua_function_ref = lua_function_ref;
 
-    luaRegisterFunctionArgsInitialize(func, name, NULL, lua_f_ctx, 0);
+    luaRegisterFunctionArgsInitialize(func, name, name_len, NULL, 0, lua_f_ctx, 0);
 
     return C_OK;
 

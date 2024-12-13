@@ -84,12 +84,12 @@ typedef struct engine {
      * replication mode
      */
     void (*call)(ValkeyModuleCtx *module_ctx,
-                 void *engine_ctx,
-                 void *func_ctx,
+                 engineCtx *engine_ctx,
+                 functionCtx *func_ctx,
                  void *compiled_function,
-                 ValkeyModuleString **keys,
+                 robj **keys,
                  size_t nkeys,
-                 ValkeyModuleString **args,
+                 robj **args,
                  size_t nargs);
 
     /* get current used memory by the engine */
