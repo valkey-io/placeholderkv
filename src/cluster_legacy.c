@@ -3004,7 +3004,8 @@ int clusterIsValidPacket(clusterLink *link) {
     }
 
     if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
-        serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
+        serverLog(LL_WARNING, "Dropping packet of type %s that matches debug drop filter",
+                  clusterGetMessageTypeString(type));
         return 0;
     }
 
@@ -3095,7 +3096,7 @@ int clusterProcessPacket(clusterLink *link) {
         if (server.debug_cluster_close_link_on_packet_drop &&
             (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
-            serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
+            serverLog(LL_WARNING, "Closing link for matching packet type %s", clusterGetMessageTypeString(type));
             return 0;
         }
         return 1;
@@ -3111,13 +3112,25 @@ int clusterProcessPacket(clusterLink *link) {
             freeClusterLink(link);
             serverLog(
                 LL_NOTICE,
-                "Closing link for node that sent a lightweight message of type %hu as its first message on the link",
-                type);
+                "Closing link for node that sent a lightweight message of type %s as its first message on the link",
+                clusterGetMessageTypeString(type));
             return 0;
         }
         clusterNode *sender = link->node;
         sender->data_received = now;
         clusterProcessLightPacket(link, type);
+        return 1;
+    }
+
+    if (type == CLUSTERMSG_TYPE_MEET && link->node && nodeInHandshake(link->node)) {
+        /* If the link is bound to a node and the node is in the handshake state, and we receive
+         * a MEET packet, it may be that the sender sent multiple MEET packets when reconnecting,
+         * and in here we are dropping the MEET. Note that in getNodeFromLinkAndMsg, the node in
+         * the handshake state has a random name and not truly "known", so we don't know the sender.
+         * Dropping the MEET packet can prevent us from creating a random node, avoid incorrect
+         * link binding, and avoid duplicate MEET packet eliminate the handshake state. */
+        serverLog(LL_NOTICE, "Dropping MEET packet from node %.40s because the node is already in handshake state",
+                  link->node->name);
         return 1;
     }
 
