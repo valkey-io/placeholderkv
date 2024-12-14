@@ -179,23 +179,23 @@ foreach type {single multiple single_multiple} {
 
     test "Set encoding after DEBUG RELOAD" {
         r del myintset
-        r del myhashtable
+        r del myhashset
         r del mylargeintset
         r del mysmallset
         for {set i 0} {$i <  100} {incr i} { r sadd myintset $i }
         for {set i 0} {$i < 1280} {incr i} { r sadd mylargeintset $i }
         for {set i 0} {$i <   50} {incr i} { r sadd mysmallset [format "i%03d" $i] }
-        for {set i 0} {$i <  256} {incr i} { r sadd myhashtable [format "i%03d" $i] }
+        for {set i 0} {$i <  256} {incr i} { r sadd myhashset [format "i%03d" $i] }
         assert_encoding intset myintset
         assert_encoding hashtable mylargeintset
         assert_encoding listpack mysmallset
-        assert_encoding hashtable myhashtable
+        assert_encoding hashtable myhashset
 
         r debug reload
         assert_encoding intset myintset
         assert_encoding hashtable mylargeintset
         assert_encoding listpack mysmallset
-        assert_encoding hashtable myhashtable
+        assert_encoding hashtable myhashset
     } {} {needs:debug}
 
     foreach type {listpack hashtable} {
