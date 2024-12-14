@@ -47,6 +47,8 @@ run_solo {defrag} {
             r config set active-defrag-ignore-bytes 2mb
             r config set maxmemory 100mb
             r config set maxmemory-policy allkeys-lru
+            r config set lazyfree-lazy-user-del no
+            r config set lazyfree-lazy-user-flush no
 
             populate 700000 asdf1 150
             populate 100 asdf1 150 0 false 1000
