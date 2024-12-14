@@ -515,10 +515,10 @@ start_server {tags {"info" "external:skip"}} {
         set info_mem [r info memory]
         set mem_stats [r memory stats]
         assert_equal [getInfoProperty $info_mem mem_overhead_db_hashtable_rehashing] {0}
-        # overhead.db.hashtable.lut = memory overhead of hashset including hashset struct and tables
-        set hashset_overhead [dict get $mem_stats overhead.db.hashtable.lut]
-        if {$hashset_overhead < 140} {
-            # 32-bit version (hashset struct + 1 bucket of 64 bytes)
+        # overhead.db.hashtable.lut = memory overhead of hashtable including hashtable struct and tables
+        set hashtable_overhead [dict get $mem_stats overhead.db.hashtable.lut]
+        if {$hashtable_overhead < 140} {
+            # 32-bit version (hashtable struct + 1 bucket of 64 bytes)
             set bits 32
         } else {
             set bits 64

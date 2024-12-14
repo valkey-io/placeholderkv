@@ -139,7 +139,7 @@ size_t zmalloc_get_smap_bytes_by_field(char *field, long pid);
 size_t zmalloc_get_memory_size(void);
 void zlibc_free(void *ptr);
 void zlibc_trim(void);
-void zmadvise_dontneed(void *ptr);
+void zmadvise_dontneed(void *ptr, size_t size_hint);
 
 #ifndef HAVE_MALLOC_SIZE
 size_t zmalloc_size(void *ptr);

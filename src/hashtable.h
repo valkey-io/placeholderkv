@@ -108,7 +108,7 @@ void hashtableRelease(hashtable *ht);
 void hashtableEmpty(hashtable *ht, void(callback)(hashtable *));
 hashtableType *hashtableGetType(hashtable *ht);
 void *hashtableMetadata(hashtable *ht);
-size_t hashtableSize(hashtable *ht);
+size_t hashtableSize(const hashtable *ht);
 size_t hashtableBuckets(hashtable *ht);
 size_t hashtableChainedBuckets(hashtable *ht, int table);
 size_t hashtableMemUsage(hashtable *ht);
@@ -123,6 +123,7 @@ int hashtableTryExpand(hashtable *ht, size_t size);
 int hashtableExpandIfNeeded(hashtable *ht);
 int hashtableShrinkIfNeeded(hashtable *ht);
 hashtable *hashtableDefragTables(hashtable *ht, void *(*defragfn)(void *));
+void dismissHashtable(hashtable *ht);
 
 /* Entries */
 int hashtableFind(hashtable *ht, const void *key, void **found);

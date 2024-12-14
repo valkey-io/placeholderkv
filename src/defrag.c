@@ -34,6 +34,7 @@
  */
 
 #include "server.h"
+#include "hashtable.h"
 #include "script.h"
 #include <stddef.h>
 
@@ -379,6 +380,20 @@ static void activeDefragSdsDict(dict *d, int val_type) {
     } while (cursor != 0);
 }
 
+void activeDefragSdsHashtableCallback(void *privdata, void *entry_ref) {
+    UNUSED(privdata);
+    sds *sds_ref = (sds *)entry_ref;
+    sds new_sds = activeDefragSds(*sds_ref);
+    if (new_sds != NULL) *sds_ref = new_sds;
+}
+
+void activeDefragSdsHashtable(hashtable *ht) {
+    unsigned long cursor = 0;
+    do {
+        cursor = hashtableScanDefrag(ht, cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
+    } while (cursor != 0);
+}
+
 /* Defrag a list of ptr, sds or robj string values */
 static void activeDefragQuickListNode(quicklist *ql, quicklistNode **node_ref) {
     quicklistNode *newnode, *node = *node_ref;
@@ -497,11 +512,9 @@ static void scanCallbackCountScanned(void *privdata, const dictEntry *de) {
 }
 
 static void scanLaterSet(robj *ob, unsigned long *cursor) {
-    if (ob->type != OBJ_SET || ob->encoding != OBJ_ENCODING_HT) return;
-    dict *d = ob->ptr;
-    dictDefragFunctions defragfns = {.defragAlloc = activeDefragAlloc,
-                                     .defragKey = (dictDefragAllocFunction *)activeDefragSds};
-    *cursor = dictScanDefrag(d, *cursor, scanCallbackCountScanned, &defragfns, NULL);
+    if (ob->type != OBJ_SET || ob->encoding != OBJ_ENCODING_HASHTABLE) return;
+    hashtable *ht = ob->ptr;
+    *cursor = hashtableScanDefrag(ht, *cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
 }
 
 static void scanLaterHash(robj *ob, unsigned long *cursor) {
@@ -560,15 +573,16 @@ static void defragHash(robj *ob) {
 }
 
 static void defragSet(robj *ob) {
-    dict *d, *newd;
-    serverAssert(ob->type == OBJ_SET && ob->encoding == OBJ_ENCODING_HT);
-    d = ob->ptr;
-    if (dictSize(d) > server.active_defrag_max_scan_fields)
+    serverAssert(ob->type == OBJ_SET && ob->encoding == OBJ_ENCODING_HASHTABLE);
+    hashtable *ht = ob->ptr;
+    if (hashtableSize(ht) > server.active_defrag_max_scan_fields) {
         defragLater(ob);
-    else
-        activeDefragSdsDict(d, DEFRAG_SDS_DICT_NO_VAL);
-    /* defrag the dict struct and tables */
-    if ((newd = dictDefragTables(ob->ptr))) ob->ptr = newd;
+    } else {
+        activeDefragSdsHashtable(ht);
+    }
+    /* defrag the hashtable struct and tables */
+    hashtable *newHashtable = hashtableDefragTables(ht, activeDefragAlloc);
+    if (newHashtable) ob->ptr = newHashtable;
 }
 
 /* Defrag callback for radix tree iterator, called for each node,
@@ -766,7 +780,7 @@ static void defragKey(defragKeysCtx *ctx, robj **elemref) {
             serverPanic("Unknown list encoding");
         }
     } else if (ob->type == OBJ_SET) {
-        if (ob->encoding == OBJ_ENCODING_HT) {
+        if (ob->encoding == OBJ_ENCODING_HASHTABLE) {
             defragSet(ob);
         } else if (ob->encoding == OBJ_ENCODING_INTSET || ob->encoding == OBJ_ENCODING_LISTPACK) {
             void *newptr, *ptr = ob->ptr;

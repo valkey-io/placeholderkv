@@ -916,30 +916,35 @@ void debugCommand(client *c) {
         addReplyVerbatim(c, stats, sdslen(stats), "txt");
         sdsfree(stats);
     } else if (!strcasecmp(c->argv[1]->ptr, "htstats-key") && c->argc >= 3) {
-        robj *o;
-        dict *ht = NULL;
         int full = 0;
-
         if (c->argc >= 4 && !strcasecmp(c->argv[3]->ptr, "full")) full = 1;
 
-        if ((o = objectCommandLookupOrReply(c, c->argv[2], shared.nokeyerr)) == NULL) return;
+        robj *o = objectCommandLookupOrReply(c, c->argv[2], shared.nokeyerr);
+        if (o == NULL) return;
 
-        /* Get the hash table reference from the object, if possible. */
+        /* Get the dict reference from the object, if possible. */
+        dict *d = NULL;
+        hashtable *ht = NULL;
         switch (o->encoding) {
         case OBJ_ENCODING_SKIPLIST: {
             zset *zs = o->ptr;
-            ht = zs->dict;
+            d = zs->dict;
         } break;
-        case OBJ_ENCODING_HT: ht = o->ptr; break;
+        case OBJ_ENCODING_HT: d = o->ptr; break;
+        case OBJ_ENCODING_HASHTABLE: ht = o->ptr; break;
         }
 
-        if (ht == NULL) {
+        if (d != NULL) {
+            char buf[4096];
+            dictGetStats(buf, sizeof(buf), d, full);
+            addReplyVerbatim(c, buf, strlen(buf), "txt");
+        } else if (ht != NULL) {
+            char buf[4096];
+            hashtableGetStats(buf, sizeof(buf), ht, full);
+            addReplyVerbatim(c, buf, strlen(buf), "txt");
+        } else {
             addReplyError(c, "The value stored at the specified key is not "
                              "represented using an hash table");
-        } else {
-            char buf[4096];
-            dictGetStats(buf, sizeof(buf), ht, full);
-            addReplyVerbatim(c, buf, strlen(buf), "txt");
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "change-repl-id") && c->argc == 2) {
         serverLog(LL_NOTICE, "Changing replication IDs after receiving DEBUG change-repl-id");
