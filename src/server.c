@@ -4259,10 +4259,10 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Prevent a replica (but not a monitor client) from sending commands that access the keyspace.
+    /* Prevent a replica from sending commands that access the keyspace.
      * The main objective here is to prevent abuse of client pause check
      * from which replicas are exempt. */
-    if ((c->flag.replica && !c->flag.monitor) && (is_may_replicate_command || is_write_command || is_read_command)) {
+    if (c->flag.replica && (is_may_replicate_command || is_write_command || is_read_command)) {
         rejectCommandFormat(c, "Replica can't interact with the keyspace");
         return C_OK;
     }
@@ -6182,8 +6182,11 @@ void monitorCommand(client *c) {
         return;
     }
 
-    /* ignore MONITOR if already replica or in monitor mode */
-    if (c->flag.replica) return;
+    /* Gently notify the client that the monitor command has already been issued. */
+    if (c->flag.replica) {
+        addReplyError(c, "The connection is already in monitoring mode.");
+        return;
+    }
 
     c->flag.replica = 1;
     c->flag.monitor = 1;

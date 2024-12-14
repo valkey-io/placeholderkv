@@ -317,52 +317,20 @@ start_server {tags {"introspection"}} {
         $rd close
     }
 
-    test {MONITOR and CLIENT TRACKING should work on the same connection with RESP3} {
-        set rd1 [valkey_deferring_client]
-        set rd2 [valkey_deferring_client]
+    test {multiple MONITOR commands should result in ERR} {
+        set rd [valkey_deferring_client]
+        $rd HELLO 3
+        $rd read ; # Consume the HELLO reply
 
-        $rd1 HELLO 3
-        $rd1 read ; # Consume the HELLO reply
+        $rd readraw 1 ;
 
-        $rd1 client tracking on
-        $rd1 read ; # Consume the TRACKING reply
+        $rd monitor
+        assert_equal "+OK" [$rd read]
 
-        $rd1 monitor
-        $rd1 read ; # Consume the MONITOR reply
-
-        $rd1 set foo bar
-        assert_equal "OK" [$rd1 read]
-        assert_match {monitor*"set"*"foo"*"bar"*} [$rd1 read]
-
-        # Because we need to verify exact RESP3 response correctness,
-        # we need to instruct valkey client to return raw, unparsed response.
-        $rd1 readraw 1 ;
-
-        $rd1 get foo
-        assert_equal "\$3" [$rd1 read]
-        assert_equal "bar" [$rd1 read]
-
-        assert_equal ">2" [$rd1 read]
-        assert_equal "\$7" [$rd1 read]
-        assert_equal "monitor" [$rd1 read]
-        assert_match {*"get"*"foo"*} [$rd1 read]
-
-        $rd2 set foo baz
-
-        assert_equal ">2" [$rd1 read]
-        assert_equal "\$10" [$rd1 read]
-        assert_equal "invalidate" [$rd1 read]
-        assert_equal "*1" [$rd1 read]
-        assert_equal "\$3" [$rd1 read]
-        assert_equal "foo" [$rd1 read]
-
-        assert_equal ">2" [$rd1 read]
-        assert_equal "\$7" [$rd1 read]
-        assert_equal "monitor" [$rd1 read]
-        assert_match {*"set"*"foo"*"baz"*} [$rd1 read]
-
-        $rd1 close
-        $rd2 close
+        $rd monitor
+        assert_equal "-ERR The connection is already in monitoring mode." [$rd read]
+        
+        $rd close
     }
 
     test {MONITOR can log commands issued by the scripting engine} {
