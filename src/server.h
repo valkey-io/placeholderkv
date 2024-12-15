@@ -1155,29 +1155,34 @@ typedef struct ClientModuleData {
 } ClientModuleData;
 
 typedef struct client {
+    /* Basic client information and connection. */
     uint64_t id; /* Client incremental unique ID. */
     connection *conn;
-    sds querybuf;                        /* Buffer we use to accumulate client queries. */
-    size_t qb_pos;                       /* The position we have read in querybuf. */
-    robj **argv;                         /* Arguments of current command. */
-    int argc;                            /* Num of arguments of current command. */
-    int argv_len;                        /* Size of argv array (may be more than argc) */
-    size_t argv_len_sum;                 /* Sum of lengths of objects in argv list. */
-    int reqtype;                         /* Request protocol type: PROTO_REQ_* */
-    int multibulklen;                    /* Number of multi bulk arguments left to read. */
-    long bulklen;                        /* Length of bulk argument in multi bulk request. */
-    long long woff;                      /* Last write global replication offset. */
+    /* Input buffer and command parsing fields */
+    sds querybuf;        /* Buffer we use to accumulate client queries. */
+    size_t qb_pos;       /* The position we have read in querybuf. */
+    robj **argv;         /* Arguments of current command. */
+    int argc;            /* Num of arguments of current command. */
+    int argv_len;        /* Size of argv array (may be more than argc) */
+    size_t argv_len_sum; /* Sum of lengths of objects in argv list. */
+    int reqtype;         /* Request protocol type: PROTO_REQ_* */
+    int multibulklen;    /* Number of multi bulk arguments left to read. */
+    long bulklen;        /* Length of bulk argument in multi bulk request. */
+    long long woff;      /* Last write global replication offset. */
+    /* Command execution state and command information */
     struct serverCommand *cmd;           /* Current command. */
     struct serverCommand *lastcmd;       /* Last command executed. */
     struct serverCommand *realcmd;       /* The original command that was executed by the client */
     struct serverCommand *io_parsed_cmd; /* The command that was parsed by the IO thread. */
     time_t last_interaction;             /* Time of the last interaction, used for timeout */
     serverDb *db;                        /* Pointer to currently SELECTed DB. */
-    ClientPubSubData *pubsub_data;       /* Required for: pubsub commands and tracking. lazily initialized when first needed */
-    ClientReplicationData *repl_data;    /* Required for Replication operations. lazily initialized when first needed */
-    ClientModuleData *module_data;       /* Required for Module operations. lazily initialized when first needed */
-    multiState *mstate;                  /* MULTI/EXEC state, lazily initialized when first needed */
-    blockingState *bstate;               /* Blocking state, lazily initialized when first needed */
+    /* Client state structs. */
+    ClientPubSubData *pubsub_data;    /* Required for: pubsub commands and tracking. lazily initialized when first needed */
+    ClientReplicationData *repl_data; /* Required for Replication operations. lazily initialized when first needed */
+    ClientModuleData *module_data;    /* Required for Module operations. lazily initialized when first needed */
+    multiState *mstate;               /* MULTI/EXEC state, lazily initialized when first needed */
+    blockingState *bstate;            /* Blocking state, lazily initialized when first needed */
+    /* Output buffer and reply handling */
     long duration;                       /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
     char *buf;                           /* Output buffer */
     size_t buf_usable_size;              /* Usable size of buffer. */
@@ -1190,6 +1195,7 @@ typedef struct client {
     int bufpos;
     int original_argc;    /* Num of arguments of original command if arguments were rewritten. */
     robj **original_argv; /* Arguments of original command if arguments were rewritten. */
+    /* Client flags and state indicators */
     union {
         uint64_t raw_flag;
         struct ClientFlags flag;
@@ -1205,8 +1211,9 @@ typedef struct client {
      * client, and in which category the client was, in order to remove it
      * before adding it the new value. */
     uint8_t last_memory_type;
-    uint8_t capa;                                 /* Client capabilities: CLIENT_CAPA* macros. */
-    listNode pending_read_list_node;              /* IO thread only ?*/
+    uint8_t capa;                    /* Client capabilities: CLIENT_CAPA* macros. */
+    listNode pending_read_list_node; /* IO thread only ?*/
+    /* Statistics and metrics */
     unsigned long long net_input_bytes;           /* Total network input bytes read from this client. */
     unsigned long long net_input_bytes_curr_cmd;  /* Total network input bytes read for the* execution of this client's current command. */
     unsigned long long net_output_bytes;          /* Total network output bytes sent to this client. */
@@ -1225,6 +1232,7 @@ typedef struct client {
      * client, and in which category the client was, in order to remove it
      * before adding it the new value. */
     size_t last_memory_usage;
+    /* Fields after this point are less frequently used */
     listNode *client_list_node;        /* list node in client list */
     mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
     size_t querybuf_peak;              /* Recent (100ms or more) peak of querybuf size. */

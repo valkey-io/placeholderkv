@@ -244,7 +244,7 @@ void execCommand(client *c) {
             serverAssert(c->flag.blocked == 0);
         }
 
-        /* Commands may alter argc/argv, restore mstate-> */
+        /* Commands may alter argc/argv, restore mstate. */
         c->mstate->commands[j].argc = c->argc;
         c->mstate->commands[j].argv = c->argv;
         c->mstate->commands[j].argv_len = c->argv_len;

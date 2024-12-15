@@ -651,14 +651,14 @@ void *VM_PoolAlloc(ValkeyModuleCtx *ctx, size_t bytes) {
  * Helpers for modules API implementation
  * -------------------------------------------------------------------------- */
 
-void initClientModuleData(client *c) {
+static void initClientModuleData(client *c) {
     if (c->module_data) return;
     c->module_data = zcalloc(sizeof(ClientModuleData));
 }
 
 void freeClientModuleData(client *c) {
     if (!c->module_data) return;
-    /* Free the RedisModuleBlockedClient held onto for reprocessing if not already freed. */
+    /* Free the ValkeyModuleBlockedClient held onto for reprocessing if not already freed. */
     zfree(c->module_data->module_blocked_client);
     zfree(c->module_data);
     c->module_data = NULL;
