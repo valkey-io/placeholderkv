@@ -1482,9 +1482,7 @@ void readonlyCommand(client *c) {
 /* The READWRITE command just clears the READONLY command state. */
 void readwriteCommand(client *c) {
     if (server.cluster_enabled == 0 && !(c->capa & CLIENT_CAPA_REDIRECT)) {
-        addReplyError(c, "This instance has cluster support disabled,"
-                         " you need to execute the CLIENT CAPA REDIRECT command,"
-                         " before you can use the READWRITE command in standalone mode.");
+        addReplyError(c, "Redirects are not enabled");
         return;
     }
     c->flag.readonly = 0;
