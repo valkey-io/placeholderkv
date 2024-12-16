@@ -692,7 +692,7 @@ int rdbSaveObjectType(rio *rdb, robj *o) {
     case OBJ_SET:
         if (o->encoding == OBJ_ENCODING_INTSET)
             return rdbSaveType(rdb, RDB_TYPE_SET_INTSET);
-        else if (o->encoding == OBJ_ENCODING_HT)
+        else if (o->encoding == OBJ_ENCODING_HASHTABLE)
             return rdbSaveType(rdb, RDB_TYPE_SET);
         else if (o->encoding == OBJ_ENCODING_LISTPACK)
             return rdbSaveType(rdb, RDB_TYPE_SET_LISTPACK);
@@ -876,26 +876,26 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
         }
     } else if (o->type == OBJ_SET) {
         /* Save a set value */
-        if (o->encoding == OBJ_ENCODING_HT) {
-            dict *set = o->ptr;
-            dictIterator *di = dictGetIterator(set);
-            dictEntry *de;
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+            hashtable *set = o->ptr;
 
-            if ((n = rdbSaveLen(rdb, dictSize(set))) == -1) {
-                dictReleaseIterator(di);
+            if ((n = rdbSaveLen(rdb, hashtableSize(set))) == -1) {
                 return -1;
             }
             nwritten += n;
 
-            while ((de = dictNext(di)) != NULL) {
-                sds ele = dictGetKey(de);
+            hashtableIterator iterator;
+            hashtableInitIterator(&iterator, set);
+            void *next;
+            while (hashtableNext(&iterator, &next)) {
+                sds ele = next;
                 if ((n = rdbSaveRawString(rdb, (unsigned char *)ele, sdslen(ele))) == -1) {
-                    dictReleaseIterator(di);
+                    hashtableResetIterator(&iterator);
                     return -1;
                 }
                 nwritten += n;
             }
-            dictReleaseIterator(di);
+            hashtableResetIterator(&iterator);
         } else if (o->encoding == OBJ_ENCODING_INTSET) {
             size_t l = intsetBlobLen((intset *)o->ptr);
 
@@ -1909,8 +1909,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             o = createSetObject();
             /* It's faster to expand the dict to the right size asap in order
              * to avoid rehashing */
-            if (len > DICT_HT_INITIAL_SIZE && dictTryExpand(o->ptr, len) != DICT_OK) {
-                rdbReportCorruptRDB("OOM in dictTryExpand %llu", (unsigned long long)len);
+            if (!hashtableTryExpand(o->ptr, len)) {
+                rdbReportCorruptRDB("OOM in hashtableTryExpand %llu", (unsigned long long)len);
                 decrRefCount(o);
                 return NULL;
             }
@@ -1949,8 +1949,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                      * of many small ones. It's OK since lpSafeToAdd doesn't
                      * care about individual elements, only the total size. */
                     setTypeConvert(o, OBJ_ENCODING_LISTPACK);
-                } else if (setTypeConvertAndExpand(o, OBJ_ENCODING_HT, len, 0) != C_OK) {
-                    rdbReportCorruptRDB("OOM in dictTryExpand %llu", (unsigned long long)len);
+                } else if (setTypeConvertAndExpand(o, OBJ_ENCODING_HASHTABLE, len, 0) != C_OK) {
+                    rdbReportCorruptRDB("OOM in hashtableTryExpand %llu", (unsigned long long)len);
                     sdsfree(sdsele);
                     decrRefCount(o);
                     return NULL;
@@ -1970,8 +1970,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                         return NULL;
                     }
                     o->ptr = lpAppend(o->ptr, (unsigned char *)sdsele, elelen);
-                } else if (setTypeConvertAndExpand(o, OBJ_ENCODING_HT, len, 0) != C_OK) {
-                    rdbReportCorruptRDB("OOM in dictTryExpand %llu", (unsigned long long)len);
+                } else if (setTypeConvertAndExpand(o, OBJ_ENCODING_HASHTABLE, len, 0) != C_OK) {
+                    rdbReportCorruptRDB("OOM in hashtableTryExpand %llu", (unsigned long long)len);
                     sdsfree(sdsele);
                     decrRefCount(o);
                     return NULL;
@@ -1980,8 +1980,8 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
 
             /* This will also be called when the set was just converted
              * to a regular hash table encoded set. */
-            if (o->encoding == OBJ_ENCODING_HT) {
-                if (dictAdd((dict *)o->ptr, sdsele, NULL) != DICT_OK) {
+            if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+                if (!hashtableAdd((hashtable *)o->ptr, sdsele)) {
                     rdbReportCorruptRDB("Duplicate set members detected");
                     decrRefCount(o);
                     sdsfree(sdsele);
@@ -2356,7 +2356,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
             o->type = OBJ_SET;
             o->encoding = OBJ_ENCODING_INTSET;
-            if (intsetLen(o->ptr) > server.set_max_intset_entries) setTypeConvert(o, OBJ_ENCODING_HT);
+            if (intsetLen(o->ptr) > server.set_max_intset_entries) setTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             break;
         case RDB_TYPE_SET_LISTPACK:
             if (deep_integrity_validation) server.stat_dump_payload_sanitizations++;
@@ -2376,7 +2376,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                 decrRefCount(o);
                 goto emptykey;
             }
-            if (setTypeSize(o) > server.set_max_listpack_entries) setTypeConvert(o, OBJ_ENCODING_HT);
+            if (setTypeSize(o) > server.set_max_listpack_entries) setTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             break;
         case RDB_TYPE_ZSET_ZIPLIST: {
             unsigned char *lp = lpNew(encoded_len);
