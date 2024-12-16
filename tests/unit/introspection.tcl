@@ -342,9 +342,9 @@ start_server {tags {"introspection"}} {
         $rd read ; # Consume the MONITOR reply
         $rd readraw 1;
 
-        r ping
+        $rd ping
 
-        assert_equal "+pong" [$rd read]
+        assert_equal "+PONG" [$rd read]
         assert_equal ">2" [$rd read]
         assert_equal "\$7" [$rd read]
         assert_equal "monitor" [$rd read]
