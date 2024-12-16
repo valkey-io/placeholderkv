@@ -1472,9 +1472,7 @@ void askingCommand(client *c) {
  * with read-only commands to keys that are served by the replica's primary. */
 void readonlyCommand(client *c) {
     if (server.cluster_enabled == 0 && !(c->capa & CLIENT_CAPA_REDIRECT)) {
-        addReplyError(c, "This instance has cluster support disabled,"
-                         " you need to execute the CLIENT CAPA REDIRECT command,"
-                         " before you can use the READONLY command in standalone mode.");
+        addReplyError(c, "Redirects are not enabled");
         return;
     }
     c->flag.readonly = 1;
