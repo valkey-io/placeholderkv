@@ -240,7 +240,9 @@ void putClientInPendingWriteQueue(client *c) {
      * if not already done and, for replicas, if the replica can actually receive
      * writes at this stage. */
     if (!c->flag.pending_write &&
-        (!c->repl_data || c->repl_data->repl_state == REPL_STATE_NONE || (isReplicaReadyForReplData(c) && !c->repl_data->repl_start_cmd_stream_on_ack))) {
+        (!c->repl_data ||
+         c->repl_data->repl_state == REPL_STATE_NONE ||
+         (isReplicaReadyForReplData(c) && !c->repl_data->repl_start_cmd_stream_on_ack))) {
         /* Here instead of installing the write handler, we just flag the
          * client and put it into a list of clients that have something
          * to write to the socket. This way before re-entering the event
