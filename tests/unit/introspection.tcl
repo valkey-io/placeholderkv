@@ -306,7 +306,7 @@ start_server {tags {"introspection"}} {
 
         $rd monitor
         $rd read ; # Consume the MONITOR reply
-        $rd readraw 1 ;
+        $rd readraw 1;
 
         r set foo bar
         assert_equal ">2" [$rd read]
@@ -322,7 +322,7 @@ start_server {tags {"introspection"}} {
         $rd HELLO 3
         $rd read ; # Consume the HELLO reply
 
-        $rd readraw 1 ;
+        $rd readraw 1;
 
         $rd monitor
         assert_equal "+OK" [$rd read]
