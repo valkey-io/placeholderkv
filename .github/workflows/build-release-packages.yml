@@ -59,8 +59,10 @@ jobs:
         id: check-if-testing
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "This is a test workflow -> We will upload to the Test S3 Bucket"
             echo "IS_TEST=true" >> $GITHUB_OUTPUT
           else
+            echo "This is a Release workflow -> We will upload to the Release S3 Bucket"
             echo "IS_TEST=false" >> $GITHUB_OUTPUT
           fi
         shell: bash
@@ -92,7 +94,7 @@ jobs:
       build_matrix: ${{ needs.generate-build-matrix.outputs.x86_64-build-matrix }}
       region: us-west-2
     secrets:
-      bucket_name: ${{ needs.release-build-get-meta.outputs.is_test == 'true' && secrets.AWS_TEST_BUCKET || secrets.AWS_S3_BUCKET }}
+      bucket_name: ${{ needs.release-build-get-meta.outputs.is_test == 'true' && secrets.AWS_S3_TEST_BUCKET || secrets.AWS_S3_BUCKET }}
       role_to_assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
 
   release-build-linux-arm-packages:
@@ -106,5 +108,5 @@ jobs:
       build_matrix: ${{ needs.generate-build-matrix.outputs.arm64-build-matrix }}
       region: us-west-2
     secrets:
-      bucket_name: ${{ needs.release-build-get-meta.outputs.is_test == 'true' && secrets.AWS_TEST_BUCKET || secrets.AWS_S3_BUCKET }}
+      bucket_name: ${{ needs.release-build-get-meta.outputs.is_test == 'true' && secrets.AWS_S3_TEST_BUCKET || secrets.AWS_S3_BUCKET }}
       role_to_assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
