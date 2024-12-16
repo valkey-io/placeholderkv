@@ -333,6 +333,26 @@ start_server {tags {"introspection"}} {
         $rd close
     }
 
+    test {MONITOR should came after PONG reply} {
+        set rd [valkey_deferring_client]
+        $rd HELLO 3
+        $rd read ; # Consume the HELLO reply
+
+        $rd monitor
+        $rd read ; # Consume the MONITOR reply
+        $rd readraw 1;
+
+        r ping
+
+        assert_equal "+pong" [$rd read]
+        assert_equal ">2" [$rd read]
+        assert_equal "\$7" [$rd read]
+        assert_equal "monitor" [$rd read]
+        assert_match {*"ping"*} [$rd read]
+
+        $rd close
+    }
+
     test {MONITOR can log commands issued by the scripting engine} {
         set rd [valkey_deferring_client]
         $rd monitor
