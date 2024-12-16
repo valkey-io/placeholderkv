@@ -3003,7 +3003,8 @@ int clusterIsValidPacket(clusterLink *link) {
     }
 
     if (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2) {
-        serverLog(LL_WARNING, "Dropping packet that matches debug drop filter");
+        serverLog(LL_WARNING, "Dropping packet of type %s that matches debug drop filter",
+                  clusterGetMessageTypeString(type));
         return 0;
     }
 
@@ -3094,7 +3095,7 @@ int clusterProcessPacket(clusterLink *link) {
         if (server.debug_cluster_close_link_on_packet_drop &&
             (type == server.cluster_drop_packet_filter || server.cluster_drop_packet_filter == -2)) {
             freeClusterLink(link);
-            serverLog(LL_WARNING, "Closing link for matching packet type %hu", type);
+            serverLog(LL_WARNING, "Closing link for matching packet type %s", clusterGetMessageTypeString(type));
             return 0;
         }
         return 1;
@@ -3110,13 +3111,34 @@ int clusterProcessPacket(clusterLink *link) {
             freeClusterLink(link);
             serverLog(
                 LL_NOTICE,
-                "Closing link for node that sent a lightweight message of type %hu as its first message on the link",
-                type);
+                "Closing link for node that sent a lightweight message of type %s as its first message on the link",
+                clusterGetMessageTypeString(type));
             return 0;
         }
         clusterNode *sender = link->node;
         sender->data_received = now;
         clusterProcessLightPacket(link, type);
+        return 1;
+    }
+
+    if (type == CLUSTERMSG_TYPE_MEET && link->node && nodeInHandshake(link->node)) {
+        /* If the link is bound to a node and the node is in the handshake state, and we receive
+         * a MEET packet, it may be that the sender sent multiple MEET packets so in here we are
+         * dropping the MEET to avoid the assert in setClusterNodeToInboundClusterLink. The assert
+         * will happen if the other sends a MEET packet because it detects that there is no inbound
+         * link, this node creates a new node in HANDSHAKE state (with a random node name), and
+         * respond with a PONG. The other node receives the PONG and removes the CLUSTER_NODE_MEET
+         * flag. This node is supposed to open an outbound connection to the other node in the next
+         * cron cycle, but before this happens, the other node re-sends a MEET on the same link
+         * because it still detects no inbound connection. We improved the re-send logic of MEET in
+         * #1441, now we will only re-send MEET packet once every handshake timeout period.
+         *
+         * Note that in getNodeFromLinkAndMsg, the node in the handshake state has a random name
+         * and not truly "known", so we don't know the sender. Dropping the MEET packet can prevent
+         * us from creating a random node, avoid incorrect link binding, and avoid duplicate MEET
+         * packet eliminate the handshake state. */
+        serverLog(LL_NOTICE, "Dropping MEET packet from node %.40s because the node is already in handshake state",
+                  link->node->name);
         return 1;
     }
 
