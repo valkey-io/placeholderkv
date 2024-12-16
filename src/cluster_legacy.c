@@ -3124,11 +3124,20 @@ int clusterProcessPacket(clusterLink *link) {
 
     if (type == CLUSTERMSG_TYPE_MEET && link->node && nodeInHandshake(link->node)) {
         /* If the link is bound to a node and the node is in the handshake state, and we receive
-         * a MEET packet, it may be that the sender sent multiple MEET packets when reconnecting,
-         * and in here we are dropping the MEET. Note that in getNodeFromLinkAndMsg, the node in
-         * the handshake state has a random name and not truly "known", so we don't know the sender.
-         * Dropping the MEET packet can prevent us from creating a random node, avoid incorrect
-         * link binding, and avoid duplicate MEET packet eliminate the handshake state. */
+         * a MEET packet, it may be that the sender sent multiple MEET packets so in here we are
+         * dropping the MEET to avoid the assert in setClusterNodeToInboundClusterLink. The assert
+         * will happen if the other sends a MEET packet because it detects that there is no inbound
+         * link, this node creates a new node in HANDSHAKE state (with a random node name), and
+         * respond with a PONG. The other node receives the PONG and removes the CLUSTER_NODE_MEET
+         * flag. This node is supposed to open an outbound connection to the other node in the next
+         * cron cycle, but before this happens, the other node re-sends a MEET on the same link
+         * because it still detects no inbound connection. We improved the re-send logic of MEET in
+         * #1441, now we will only re-send MEET packet once every handshake timeout period.
+         *
+         * Note that in getNodeFromLinkAndMsg, the node in the handshake state has a random name
+         * and not truly "known", so we don't know the sender. Dropping the MEET packet can prevent
+         * us from creating a random node, avoid incorrect link binding, and avoid duplicate MEET
+         * packet eliminate the handshake state. */
         serverLog(LL_NOTICE, "Dropping MEET packet from node %.40s because the node is already in handshake state",
                   link->node->name);
         return 1;
