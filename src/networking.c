@@ -66,6 +66,25 @@ typedef struct {
     int skipme;
 } clientFilter;
 
+void clientCommandHelp(client *c);
+void clientCommandID(client *c);
+void clientCommandInfo(client *c);
+void clientCommandList(client *c);
+void clientCommandReply(client *c);
+void clientCommandNoEvict(client *c);
+void clientCommandKill(client *c);
+void clientCommandUnblock(client *c);
+void clientCommandSetName(client *c);
+void clientCommandGetName(client *c);
+void clientCommandUnpause(client *c);
+void clientCommandPause(client *c);
+void clientCommandTracking(client *c);
+void clientCommandCaching(client *c);
+void clientCommandGetredir(client *c);
+void clientCommandTrackingInfo(client *c);
+void clientCommandNoTouch(client *c);
+void clientCommandCapa(client *c);
+void clientCommandImportSource(client *c);
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
@@ -3605,146 +3624,150 @@ int clientMatchesFilter(client *client, clientFilter client_filter) {
     return 1;
 }
 
-void clientCommand(client *c) {
-    listNode *ln;
-    listIter li;
+void clientCommandHelp(client *c) {
+    const char *help[] = {
+        "CACHING (YES|NO)",
+        "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
+        "CAPA <option> [options...]",
+        "    The client claims its some capability options. Options are:",
+        "    * REDIRECT",
+        "      The client can handle redirection during primary and replica failover in standalone mode.",
+        "GETREDIR",
+        "    Return the client ID we are redirecting to when tracking is enabled.",
+        "GETNAME",
+        "    Return the name of the current connection.",
+        "ID",
+        "    Return the ID of the current connection.",
+        "INFO",
+        "    Return information about the current client connection.",
+        "KILL <ip:port>",
+        "    Kill connection made from <ip:port>.",
+        "KILL <option> <value> [<option> <value> [...]]",
+        "    Kill connections. Options are:",
+        "    * ADDR (<ip:port>|<unixsocket>:0)",
+        "      Kill connections made from the specified address",
+        "    * LADDR (<ip:port>|<unixsocket>:0)",
+        "      Kill connections made to specified local address",
+        "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
+        "      Kill connections by type.",
+        "    * USER <username>",
+        "      Kill connections authenticated by <username>.",
+        "    * SKIPME (YES|NO)",
+        "      Skip killing current connection (default: yes).",
+        "    * ID <client-id>",
+        "      Kill connections by client id.",
+        "    * MAXAGE <maxage>",
+        "      Kill connections older than the specified age.",
+        "LIST [options ...]",
+        "    Return information about client connections. Options:",
+        "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
+        "      Return clients of specified type.",
+        "UNPAUSE",
+        "    Stop the current client pause, resuming traffic.",
+        "PAUSE <timeout> [WRITE|ALL]",
+        "    Suspend all, or just write, clients for <timeout> milliseconds.",
+        "REPLY (ON|OFF|SKIP)",
+        "    Control the replies sent to the current connection.",
+        "SETNAME <name>",
+        "    Assign the name <name> to the current connection.",
+        "SETINFO <option> <value>",
+        "    Set client meta attr. Options are:",
+        "    * LIB-NAME: the client lib name.",
+        "    * LIB-VER: the client lib version.",
+        "UNBLOCK <clientid> [TIMEOUT|ERROR]",
+        "    Unblock the specified blocked client.",
+        "TRACKING (ON|OFF) [REDIRECT <id>] [BCAST] [PREFIX <prefix> [...]]",
+        "         [OPTIN] [OPTOUT] [NOLOOP]",
+        "    Control server assisted client side caching.",
+        "TRACKINGINFO",
+        "    Report tracking status for the current connection.",
+        "NO-EVICT (ON|OFF)",
+        "    Protect current client connection from eviction.",
+        "NO-TOUCH (ON|OFF)",
+        "    Will not touch LRU/LFU stats when this mode is on.",
+        "IMPORT-SOURCE (ON|OFF)",
+        "    Mark this connection as an import source if import-mode is enabled.",
+        "    Sync tools can set their connections into 'import-source' state to visit",
+        "    expired keys.",
+        NULL
+    };
+    addReplyHelp(c, help);
+}
 
-    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
-        const char *help[] = {
-            "CACHING (YES|NO)",
-            "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
-            "CAPA <option> [options...]",
-            "    The client claims its some capability options. Options are:",
-            "    * REDIRECT",
-            "      The client can handle redirection during primary and replica failover in standalone mode.",
-            "GETREDIR",
-            "    Return the client ID we are redirecting to when tracking is enabled.",
-            "GETNAME",
-            "    Return the name of the current connection.",
-            "ID",
-            "    Return the ID of the current connection.",
-            "INFO",
-            "    Return information about the current client connection.",
-            "KILL <ip:port>",
-            "    Kill connection made from <ip:port>.",
-            "KILL <option> <value> [<option> <value> [...]]",
-            "    Kill connections. Options are:",
-            "    * ADDR (<ip:port>|<unixsocket>:0)",
-            "      Kill connections made from the specified address",
-            "    * LADDR (<ip:port>|<unixsocket>:0)",
-            "      Kill connections made to specified local address",
-            "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
-            "      Kill connections by type.",
-            "    * USER <username>",
-            "      Kill connections authenticated by <username>.",
-            "    * SKIPME (YES|NO)",
-            "      Skip killing current connection (default: yes).",
-            "    * ID <client-id>",
-            "      Kill connections by client id.",
-            "    * MAXAGE <maxage>",
-            "      Kill connections older than the specified age.",
-            "LIST [options ...]",
-            "    Return information about client connections. Options:",
-            "    * TYPE (NORMAL|PRIMARY|REPLICA|PUBSUB)",
-            "      Return clients of specified type.",
-            "UNPAUSE",
-            "    Stop the current client pause, resuming traffic.",
-            "PAUSE <timeout> [WRITE|ALL]",
-            "    Suspend all, or just write, clients for <timeout> milliseconds.",
-            "REPLY (ON|OFF|SKIP)",
-            "    Control the replies sent to the current connection.",
-            "SETNAME <name>",
-            "    Assign the name <name> to the current connection.",
-            "SETINFO <option> <value>",
-            "    Set client meta attr. Options are:",
-            "    * LIB-NAME: the client lib name.",
-            "    * LIB-VER: the client lib version.",
-            "UNBLOCK <clientid> [TIMEOUT|ERROR]",
-            "    Unblock the specified blocked client.",
-            "TRACKING (ON|OFF) [REDIRECT <id>] [BCAST] [PREFIX <prefix> [...]]",
-            "         [OPTIN] [OPTOUT] [NOLOOP]",
-            "    Control server assisted client side caching.",
-            "TRACKINGINFO",
-            "    Report tracking status for the current connection.",
-            "NO-EVICT (ON|OFF)",
-            "    Protect current client connection from eviction.",
-            "NO-TOUCH (ON|OFF)",
-            "    Will not touch LRU/LFU stats when this mode is on.",
-            "IMPORT-SOURCE (ON|OFF)",
-            "    Mark this connection as an import source if import-mode is enabled.",
-            "    Sync tools can set their connections into 'import-source' state to visit",
-            "    expired keys.",
-            NULL};
-        addReplyHelp(c, help);
-    } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
-        /* CLIENT ID */
-        addReplyLongLong(c, c->id);
-    } else if (!strcasecmp(c->argv[1]->ptr, "info") && c->argc == 2) {
-        /* CLIENT INFO */
-        sds o = catClientInfoString(sdsempty(), c, 0);
-        o = sdscatlen(o, "\n", 1);
-        addReplyVerbatim(c, o, sdslen(o), "txt");
-        sdsfree(o);
-    } else if (!strcasecmp(c->argv[1]->ptr, "list")) {
-        /* CLIENT LIST */
-        int type = -1;
-        sds o = NULL;
-        if (c->argc > 3) {
-            clientFilter client_filter = {.ids = NULL,
-                                          .max_age = 0,
-                                          .addr = NULL,
-                                          .laddr = NULL,
-                                          .user = NULL,
-                                          .type = -1,
-                                          .skipme = 0};
+void clientCommandID(client *c) {
+    addReplyLongLong(c, c->id);
+}
 
-            int i = 2;
+void clientCommandInfo(client *c) {
+    sds info = catClientInfoString(sdsempty(), c, 0);
+    info = sdscatlen(info, "\n", 1);
+    addReplyVerbatim(c, info, sdslen(info), "txt");
+    sdsfree(info);
+}
 
-            if (parseClientFilters(c, i, &client_filter) != C_OK) {
-                zfree(client_filter.ids);
-                return;
-            }
-            o = getAllFilteredClientsInfoString(&client_filter, 0);
-            zfree(client_filter.ids);
-        } else if (c->argc != 2) {
-            addReplyErrorObject(c, shared.syntaxerr);
+void clientCommandList(client *c) {
+    int type = -1;
+    sds response = NULL;
+
+    if (c->argc > 3) {
+        clientFilter filter = {.ids = NULL, .max_age = 0, .addr = NULL, .laddr = NULL, .user = NULL, .type = -1, .skipme = 0};
+        int i = 2;
+
+        if (parseClientFilters(c, i, &filter) != C_OK) {
+            zfree(filter.ids);
             return;
         }
+        response = getAllFilteredClientsInfoString(&filter, 0);
+        zfree(filter.ids);
+    } else if (c->argc != 2) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
 
-        if (!o) o = getAllClientsInfoString(type, 0);
-        addReplyVerbatim(c, o, sdslen(o), "txt");
-        sdsfree(o);
-    } else if (!strcasecmp(c->argv[1]->ptr, "reply") && c->argc == 3) {
-        /* CLIENT REPLY ON|OFF|SKIP */
-        if (!strcasecmp(c->argv[2]->ptr, "on")) {
-            c->flag.reply_skip = 0;
-            c->flag.reply_off = 0;
-            addReply(c, shared.ok);
-        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
-            c->flag.reply_off = 1;
-        } else if (!strcasecmp(c->argv[2]->ptr, "skip")) {
-            if (!c->flag.reply_off) c->flag.reply_skip_next = 1;
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
-            return;
-        }
-    } else if (!strcasecmp(c->argv[1]->ptr, "no-evict") && c->argc == 3) {
-        /* CLIENT NO-EVICT ON|OFF */
-        if (!strcasecmp(c->argv[2]->ptr, "on")) {
-            c->flag.no_evict = 1;
-            removeClientFromMemUsageBucket(c, 0);
-            addReply(c, shared.ok);
-        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
-            c->flag.no_evict = 0;
-            updateClientMemUsageAndBucket(c);
-            addReply(c, shared.ok);
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
-            return;
-        }
-    } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
-        /* CLIENT KILL <ip:port>
+    if (!response) response = getAllClientsInfoString(type, 0);
+    addReplyVerbatim(c, response, sdslen(response), "txt");
+    sdsfree(response);
+}
+
+void clientCommandReply(client *c) {
+    /* CLIENT REPLY ON|OFF|SKIP */
+    if (!strcasecmp(c->argv[2]->ptr, "on")) {
+        c->flag.reply_skip = 0;
+        c->flag.reply_off = 0;
+        addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+        c->flag.reply_off = 1;
+    } else if (!strcasecmp(c->argv[2]->ptr, "skip")) {
+        if (!c->flag.reply_off) c->flag.reply_skip_next = 1;
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+}
+
+void clientCommandNoEvict(client *c) {
+    /* CLIENT NO-EVICT ON|OFF */
+    if (!strcasecmp(c->argv[2]->ptr, "on")) {
+        c->flag.no_evict = 1;
+        removeClientFromMemUsageBucket(c, 0);
+        addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+        c->flag.no_evict = 0;
+        updateClientMemUsageAndBucket(c);
+        addReply(c, shared.ok);
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+}
+
+void clientCommandKill(client *c) {
+     /* CLIENT KILL <ip:port>
          * CLIENT KILL <option> [value] ... <option> [value] */
+
+        listNode *ln;
+        listIter li;
+
         clientFilter client_filter = {.ids = NULL,
                                       .max_age = 0,
                                       .addr = NULL,
@@ -3803,68 +3826,82 @@ void clientCommand(client *c) {
         if (close_this_client) c->flag.close_after_reply = 1;
     client_kill_done:
         zfree(client_filter.ids);
-    } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
-        /* CLIENT UNBLOCK <id> [timeout|error] */
-        long long id;
-        int unblock_error = 0;
+}
 
-        if (c->argc == 4) {
-            if (!strcasecmp(c->argv[3]->ptr, "timeout")) {
-                unblock_error = 0;
-            } else if (!strcasecmp(c->argv[3]->ptr, "error")) {
-                unblock_error = 1;
-            } else {
-                addReplyError(c, "CLIENT UNBLOCK reason should be TIMEOUT or ERROR");
-                return;
-            }
-        }
-        if (getLongLongFromObjectOrReply(c, c->argv[2], &id, NULL) != C_OK) return;
-        struct client *target = lookupClientByID(id);
-        /* Note that we never try to unblock a client blocked on a module command, which
-         * doesn't have a timeout callback (even in the case of UNBLOCK ERROR).
-         * The reason is that we assume that if a command doesn't expect to be timedout,
-         * it also doesn't expect to be unblocked by CLIENT UNBLOCK */
-        if (target && target->flag.blocked && moduleBlockedClientMayTimeout(target)) {
-            if (unblock_error)
-                unblockClientOnError(target, "-UNBLOCKED client unblocked via CLIENT UNBLOCK");
-            else
-                unblockClientOnTimeout(target);
 
-            addReply(c, shared.cone);
+void clientCommandUnblock(client *c) {
+    /* CLIENT UNBLOCK <id> [timeout|error] */
+    long long id;
+    int unblock_error = 0;
+
+    if (c->argc == 4) {
+        if (!strcasecmp(c->argv[3]->ptr, "timeout")) {
+            unblock_error = 0;
+        } else if (!strcasecmp(c->argv[3]->ptr, "error")) {
+            unblock_error = 1;
         } else {
-            addReply(c, shared.czero);
+            addReplyError(c, "CLIENT UNBLOCK reason should be TIMEOUT or ERROR");
+            return;
         }
-    } else if (!strcasecmp(c->argv[1]->ptr, "setname") && c->argc == 3) {
-        /* CLIENT SETNAME */
-        if (clientSetNameOrReply(c, c->argv[2]) == C_OK) addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "getname") && c->argc == 2) {
-        /* CLIENT GETNAME */
-        if (c->name)
-            addReplyBulk(c, c->name);
+    }
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &id, NULL) != C_OK) return;
+    struct client *target = lookupClientByID(id);
+    /* Note that we never try to unblock a client blocked on a module command, which
+     * doesn't have a timeout callback (even in the case of UNBLOCK ERROR).
+     * The reason is that we assume that if a command doesn't expect to be timedout,
+     * it also doesn't expect to be unblocked by CLIENT UNBLOCK */
+    if (target && target->flag.blocked && moduleBlockedClientMayTimeout(target)) {
+        if (unblock_error)
+            unblockClientOnError(target, "-UNBLOCKED client unblocked via CLIENT UNBLOCK");
         else
-            addReplyNull(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "unpause") && c->argc == 2) {
-        /* CLIENT UNPAUSE */
-        unpauseActions(PAUSE_BY_CLIENT_COMMAND);
-        addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "pause") && (c->argc == 3 || c->argc == 4)) {
-        /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
-        mstime_t end;
-        int isPauseClientAll = 1;
-        if (c->argc == 4) {
-            if (!strcasecmp(c->argv[3]->ptr, "write")) {
-                isPauseClientAll = 0;
-            } else if (strcasecmp(c->argv[3]->ptr, "all")) {
-                addReplyError(c, "CLIENT PAUSE mode must be WRITE or ALL");
-                return;
-            }
-        }
+            unblockClientOnTimeout(target);
 
-        if (getTimeoutFromObjectOrReply(c, c->argv[2], &end, UNIT_MILLISECONDS) != C_OK) return;
-        pauseClientsByClient(end, isPauseClientAll);
+        addReply(c, shared.cone);
+    } else {
+        addReply(c, shared.czero);
+    }
+}
+
+void clientCommandSetName(client *c) {
+    /* CLIENT SETNAME */
+    if (clientSetNameOrReply(c, c->argv[2]) == C_OK)
         addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "tracking") && c->argc >= 3) {
-        /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
+}
+
+void clientCommandGetName(client *c) {
+    /* CLIENT GETNAME */
+    if (c->name)
+        addReplyBulk(c, c->name);
+    else
+        addReplyNull(c);
+}
+
+void clientCommandUnpause(client *c) {
+    /* CLIENT UNPAUSE */
+    unpauseActions(PAUSE_BY_CLIENT_COMMAND);
+    addReply(c, shared.ok);
+}
+
+void clientCommandPause(client *c) {
+    /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
+    mstime_t end;
+    int isPauseClientAll = 1;
+    if (c->argc == 4) {
+        if (!strcasecmp(c->argv[3]->ptr, "write")) {
+            isPauseClientAll = 0;
+        } else if (strcasecmp(c->argv[3]->ptr, "all")) {
+            addReplyError(c, "CLIENT PAUSE mode must be WRITE or ALL");
+            return;
+        }
+    }
+
+    if (getTimeoutFromObjectOrReply(c, c->argv[2], &end, UNIT_MILLISECONDS) != C_OK) return;
+    pauseClientsByClient(end, isPauseClientAll);
+    addReply(c, shared.ok);
+}
+
+void clientCommandTracking(client *c) {
+            /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
          *                          [PREFIX second] [OPTIN] [OPTOUT] [NOLOOP]... */
         long long redir = 0;
         struct ClientFlags options = {0};
@@ -3977,138 +4014,192 @@ void clientCommand(client *c) {
         }
         zfree(prefix);
         addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "caching") && c->argc >= 3) {
-        if (!c->flag.tracking) {
-            addReplyError(c, "CLIENT CACHING can be called only when the "
-                             "client is in tracking mode with OPTIN or "
-                             "OPTOUT mode enabled");
-            return;
-        }
+}
 
-        char *opt = c->argv[2]->ptr;
-        if (!strcasecmp(opt, "yes")) {
-            if (c->flag.tracking_optin) {
-                c->flag.tracking_caching = 1;
-            } else {
-                addReplyError(c, "CLIENT CACHING YES is only valid when tracking is enabled in OPTIN mode.");
-                return;
-            }
-        } else if (!strcasecmp(opt, "no")) {
-            if (c->flag.tracking_optout) {
-                c->flag.tracking_caching = 1;
-            } else {
-                addReplyError(c, "CLIENT CACHING NO is only valid when tracking is enabled in OPTOUT mode.");
-                return;
-            }
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
-            return;
-        }
+void clientCommandCaching(client *c) {
+    if (!c->flag.tracking) {
+        addReplyError(c, "CLIENT CACHING can be called only when the "
+                         "client is in tracking mode with OPTIN or "
+                         "OPTOUT mode enabled");
+        return;
+    }
 
-        /* Common reply for when we succeeded. */
-        addReply(c, shared.ok);
-    } else if (!strcasecmp(c->argv[1]->ptr, "getredir") && c->argc == 2) {
-        /* CLIENT GETREDIR */
-        if (c->flag.tracking) {
-            addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
-        } else {
-            addReplyLongLong(c, -1);
-        }
-    } else if (!strcasecmp(c->argv[1]->ptr, "trackinginfo") && c->argc == 2) {
-        addReplyMapLen(c, 3);
-
-        /* Flags */
-        addReplyBulkCString(c, "flags");
-        void *arraylen_ptr = addReplyDeferredLen(c);
-        int numflags = 0;
-        addReplyBulkCString(c, c->flag.tracking ? "on" : "off");
-        numflags++;
-        if (c->flag.tracking_bcast) {
-            addReplyBulkCString(c, "bcast");
-            numflags++;
-        }
+    char *opt = c->argv[2]->ptr;
+    if (!strcasecmp(opt, "yes")) {
         if (c->flag.tracking_optin) {
-            addReplyBulkCString(c, "optin");
-            numflags++;
-            if (c->flag.tracking_caching) {
-                addReplyBulkCString(c, "caching-yes");
-                numflags++;
-            }
+            c->flag.tracking_caching = 1;
+        } else {
+            addReplyError(c, "CLIENT CACHING YES is only valid when tracking is enabled in OPTIN mode.");
+            return;
         }
+    } else if (!strcasecmp(opt, "no")) {
         if (c->flag.tracking_optout) {
-            addReplyBulkCString(c, "optout");
-            numflags++;
-            if (c->flag.tracking_caching) {
-                addReplyBulkCString(c, "caching-no");
-                numflags++;
-            }
+            c->flag.tracking_caching = 1;
+        } else {
+            addReplyError(c, "CLIENT CACHING NO is only valid when tracking is enabled in OPTOUT mode.");
+            return;
         }
-        if (c->flag.tracking_noloop) {
-            addReplyBulkCString(c, "noloop");
-            numflags++;
-        }
-        if (c->flag.tracking_broken_redir) {
-            addReplyBulkCString(c, "broken_redirect");
-            numflags++;
-        }
-        setDeferredSetLen(c, arraylen_ptr, numflags);
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
 
-        /* Redirect */
-        addReplyBulkCString(c, "redirect");
-        if (c->flag.tracking) {
-            addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
-        } else {
-            addReplyLongLong(c, -1);
-        }
+    /* Common reply for when we succeeded. */
+    addReply(c, shared.ok);
+}
 
-        /* Prefixes */
-        addReplyBulkCString(c, "prefixes");
-        if (c->pubsub_data->client_tracking_prefixes) {
-            addReplyArrayLen(c, raxSize(c->pubsub_data->client_tracking_prefixes));
-            raxIterator ri;
-            raxStart(&ri, c->pubsub_data->client_tracking_prefixes);
-            raxSeek(&ri, "^", NULL, 0);
-            while (raxNext(&ri)) {
-                addReplyBulkCBuffer(c, ri.key, ri.key_len);
-            }
-            raxStop(&ri);
-        } else {
-            addReplyArrayLen(c, 0);
+void clientCommandGetredir(client *c) {
+    /* CLIENT GETREDIR */
+    if (c->flag.tracking) {
+        addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
+    } else {
+        addReplyLongLong(c, -1);
+    }
+}
+
+void clientCommandTrackingInfo(client *c) {
+    addReplyMapLen(c, 3);
+
+    /* Flags */
+    addReplyBulkCString(c, "flags");
+    void *arraylen_ptr = addReplyDeferredLen(c);
+    int numflags = 0;
+    addReplyBulkCString(c, c->flag.tracking ? "on" : "off");
+    numflags++;
+    if (c->flag.tracking_bcast) {
+        addReplyBulkCString(c, "bcast");
+        numflags++;
+    }
+    if (c->flag.tracking_optin) {
+        addReplyBulkCString(c, "optin");
+        numflags++;
+        if (c->flag.tracking_caching) {
+            addReplyBulkCString(c, "caching-yes");
+            numflags++;
         }
-    } else if (!strcasecmp(c->argv[1]->ptr, "no-touch")) {
-        /* CLIENT NO-TOUCH ON|OFF */
-        if (!strcasecmp(c->argv[2]->ptr, "on")) {
-            c->flag.no_touch = 1;
-            addReply(c, shared.ok);
-        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
-            c->flag.no_touch = 0;
-            addReply(c, shared.ok);
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
+    }
+    if (c->flag.tracking_optout) {
+        addReplyBulkCString(c, "optout");
+        numflags++;
+        if (c->flag.tracking_caching) {
+            addReplyBulkCString(c, "caching-no");
+            numflags++;
         }
-    } else if (!strcasecmp(c->argv[1]->ptr, "capa") && c->argc >= 3) {
-        for (int i = 2; i < c->argc; i++) {
-            if (!strcasecmp(c->argv[i]->ptr, "redirect")) {
-                c->capa |= CLIENT_CAPA_REDIRECT;
-            }
+    }
+    if (c->flag.tracking_noloop) {
+        addReplyBulkCString(c, "noloop");
+        numflags++;
+    }
+    if (c->flag.tracking_broken_redir) {
+        addReplyBulkCString(c, "broken_redirect");
+        numflags++;
+    }
+    setDeferredSetLen(c, arraylen_ptr, numflags);
+
+    /* Redirect */
+    addReplyBulkCString(c, "redirect");
+    if (c->flag.tracking) {
+        addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
+    } else {
+        addReplyLongLong(c, -1);
+    }
+
+    /* Prefixes */
+    addReplyBulkCString(c, "prefixes");
+    if (c->pubsub_data->client_tracking_prefixes) {
+        addReplyArrayLen(c, raxSize(c->pubsub_data->client_tracking_prefixes));
+        raxIterator ri;
+        raxStart(&ri, c->pubsub_data->client_tracking_prefixes);
+        raxSeek(&ri, "^", NULL, 0);
+        while (raxNext(&ri)) {
+            addReplyBulkCBuffer(c, ri.key, ri.key_len);
         }
+        raxStop(&ri);
+    } else {
+        addReplyArrayLen(c, 0);
+    }
+}
+
+void clientCommandNoTouch(client *c) {
+    /* CLIENT NO-TOUCH ON|OFF */
+    if (!strcasecmp(c->argv[2]->ptr, "on")) {
+        c->flag.no_touch = 1;
         addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+        c->flag.no_touch = 0;
+        addReply(c, shared.ok);
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+    }
+}
+
+void clientCommandCapa(client *c) {
+    for (int i = 2; i < c->argc; i++) {
+        if (!strcasecmp(c->argv[i]->ptr, "redirect")) {
+            c->capa |= CLIENT_CAPA_REDIRECT;
+        }
+    }
+    addReply(c, shared.ok);
+}
+
+void clientCommandImportSource(client* c) {
+    /* CLIENT IMPORT-SOURCE ON|OFF */
+    if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
+        addReplyError(c, "Server is not in import mode");
+        return;
+    }
+    if (!strcasecmp(c->argv[2]->ptr, "on")) {
+        c->flag.import_source = 1;
+        addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+        c->flag.import_source = 0;
+        addReply(c, shared.ok);
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+}
+
+void clientCommand(client *c) {
+
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
+        clientCommandHelp(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
+        clientCommandID(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "info") && c->argc == 2) {
+        clientCommandInfo(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "list")) {
+        clientCommandList(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "reply") && c->argc == 3) {
+        clientCommandReply(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "no-evict") && c->argc == 3) {
+        clientCommandNoEvict(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
+       clientCommandKill(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
+        clientCommandUnblock(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "setname") && c->argc == 3) {
+        clientCommandSetName(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "getname") && c->argc == 2) {
+        clientCommandGetName(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "unpause") && c->argc == 2) {
+        clientCommandUnpause(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "pause") && (c->argc == 3 || c->argc == 4)) {
+        clientCommandPause(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "tracking") && c->argc >= 3) {
+        clientCommandTracking(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "caching") && c->argc >= 3) {
+        clientCommandCaching(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "getredir") && c->argc == 2) {
+        clientCommandGetredir(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "trackinginfo") && c->argc == 2) {
+       clientCommandTrackingInfo(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "no-touch")) {
+        clientCommandNoTouch(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "capa") && c->argc >= 3) {
+        clientCommandCapa(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
-        /* CLIENT IMPORT-SOURCE ON|OFF */
-        if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
-            addReplyError(c, "Server is not in import mode");
-            return;
-        }
-        if (!strcasecmp(c->argv[2]->ptr, "on")) {
-            c->flag.import_source = 1;
-            addReply(c, shared.ok);
-        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
-            c->flag.import_source = 0;
-            addReply(c, shared.ok);
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
-            return;
-        }
+        clientCommandImportSource(c);
     } else {
         addReplySubcommandSyntaxError(c);
     }
