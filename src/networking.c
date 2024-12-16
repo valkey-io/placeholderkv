@@ -65,31 +65,31 @@ typedef struct {
     int skipme;
 } clientFilter;
 
-void clientCommandHelp(client *c);
-void clientCommandID(client *c);
-void clientCommandInfo(client *c);
-void clientCommandList(client *c);
-void clientCommandReply(client *c);
-void clientCommandNoEvict(client *c);
-void clientCommandKill(client *c);
-void clientCommandUnblock(client *c);
-void clientCommandSetName(client *c);
-void clientCommandGetName(client *c);
-void clientCommandUnpause(client *c);
-void clientCommandPause(client *c);
-void clientCommandTracking(client *c);
-void clientCommandCaching(client *c);
-void clientCommandGetredir(client *c);
-void clientCommandTrackingInfo(client *c);
-void clientCommandNoTouch(client *c);
-void clientCommandCapa(client *c);
-void clientCommandImportSource(client *c);
+static void clientCommandHelp(client *c);
+static void clientCommandID(client *c);
+static void clientCommandInfo(client *c);
+static void clientCommandList(client *c);
+static void clientCommandReply(client *c);
+static void clientCommandNoEvict(client *c);
+static void clientCommandKill(client *c);
+static void clientCommandUnblock(client *c);
+static void clientCommandSetName(client *c);
+static void clientCommandGetName(client *c);
+static void clientCommandUnpause(client *c);
+static void clientCommandPause(client *c);
+static void clientCommandTracking(client *c);
+static void clientCommandCaching(client *c);
+static void clientCommandGetredir(client *c);
+static void clientCommandTrackingInfo(client *c);
+static void clientCommandNoTouch(client *c);
+static void clientCommandCapa(client *c);
+static void clientCommandImportSource(client *c);
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
-int parseClientFilters(client *c, int i, clientFilter *filter);
-int clientMatchesFilter(client *client, clientFilter client_filter);
+static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter);
+static int clientMatchesFilter(client *client, clientFilter client_filter);
 sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
@@ -3620,7 +3620,7 @@ void quitCommand(client *c) {
     c->flag.close_after_reply = 1;
 }
 
-int parseClientFilters(client *c, int i, clientFilter *filter) {
+static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter) {
     while (i < c->argc) {
         int moreargs = c->argc > i + 1;
 
@@ -3696,7 +3696,7 @@ int parseClientFilters(client *c, int i, clientFilter *filter) {
     return C_OK;
 }
 
-int clientMatchesFilter(client *client, clientFilter client_filter) {
+static int clientMatchesFilter(client *client, clientFilter client_filter) {
     // Check each filter condition and return false if the client does not match.
     if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) return 0;
     if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) return 0;
@@ -3710,7 +3710,7 @@ int clientMatchesFilter(client *client, clientFilter client_filter) {
     return 1;
 }
 
-void clientCommandHelp(client *c) {
+static void clientCommandHelp(client *c) {
     const char *help[] = {
         "CACHING (YES|NO)",
         "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
@@ -3775,23 +3775,22 @@ void clientCommandHelp(client *c) {
         "    Mark this connection as an import source if import-mode is enabled.",
         "    Sync tools can set their connections into 'import-source' state to visit",
         "    expired keys.",
-        NULL
-    };
+        NULL};
     addReplyHelp(c, help);
 }
 
-void clientCommandID(client *c) {
+static void clientCommandID(client *c) {
     addReplyLongLong(c, c->id);
 }
 
-void clientCommandInfo(client *c) {
+static void clientCommandInfo(client *c) {
     sds info = catClientInfoString(sdsempty(), c, 0);
     info = sdscatlen(info, "\n", 1);
     addReplyVerbatim(c, info, sdslen(info), "txt");
     sdsfree(info);
 }
 
-void clientCommandList(client *c) {
+static void clientCommandList(client *c) {
     int type = -1;
     sds response = NULL;
 
@@ -3799,7 +3798,7 @@ void clientCommandList(client *c) {
         clientFilter filter = {.ids = NULL, .max_age = 0, .addr = NULL, .laddr = NULL, .user = NULL, .type = -1, .skipme = 0};
         int i = 2;
 
-        if (parseClientFilters(c, i, &filter) != C_OK) {
+        if (parseClientFiltersOrReply(c, i, &filter) != C_OK) {
             zfree(filter.ids);
             return;
         }
@@ -3815,7 +3814,7 @@ void clientCommandList(client *c) {
     sdsfree(response);
 }
 
-void clientCommandReply(client *c) {
+static void clientCommandReply(client *c) {
     /* CLIENT REPLY ON|OFF|SKIP */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.reply_skip = 0;
@@ -3831,7 +3830,7 @@ void clientCommandReply(client *c) {
     }
 }
 
-void clientCommandNoEvict(client *c) {
+static void clientCommandNoEvict(client *c) {
     /* CLIENT NO-EVICT ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_evict = 1;
@@ -3847,75 +3846,75 @@ void clientCommandNoEvict(client *c) {
     }
 }
 
-void clientCommandKill(client *c) {
-     /* CLIENT KILL <ip:port>
-         * CLIENT KILL <option> [value] ... <option> [value] */
+static void clientCommandKill(client *c) {
+    /* CLIENT KILL <ip:port>
+     * CLIENT KILL <option> [value] ... <option> [value] */
 
-        listNode *ln;
-        listIter li;
+    listNode *ln;
+    listIter li;
 
-        clientFilter client_filter = {.ids = NULL,
-                                      .max_age = 0,
-                                      .addr = NULL,
-                                      .laddr = NULL,
-                                      .user = NULL,
-                                      .type = -1,
-                                      .skipme = 1};
+    clientFilter client_filter = {.ids = NULL,
+                                  .max_age = 0,
+                                  .addr = NULL,
+                                  .laddr = NULL,
+                                  .user = NULL,
+                                  .type = -1,
+                                  .skipme = 1};
 
-        int killed = 0, close_this_client = 0;
+    int killed = 0, close_this_client = 0;
 
-        if (c->argc == 3) {
-            /* Old style syntax: CLIENT KILL <addr> */
-            client_filter.addr = c->argv[2]->ptr;
-            client_filter.skipme = 0; /* With the old form, you can kill yourself. */
-        } else if (c->argc > 3) {
-            int i = 2; /* Next option index. */
+    if (c->argc == 3) {
+        /* Old style syntax: CLIENT KILL <addr> */
+        client_filter.addr = c->argv[2]->ptr;
+        client_filter.skipme = 0; /* With the old form, you can kill yourself. */
+    } else if (c->argc > 3) {
+        int i = 2; /* Next option index. */
 
-            /* New style syntax: parse options. */
-            if (parseClientFilters(c, i, &client_filter) != C_OK) {
-                goto client_kill_done; // Free the intset on error
-                return;
-            }
-        } else {
-            addReplyErrorObject(c, shared.syntaxerr);
+        /* New style syntax: parse options. */
+        if (parseClientFiltersOrReply(c, i, &client_filter) != C_OK) {
             goto client_kill_done; // Free the intset on error
             return;
         }
+    } else {
+        addReplyErrorObject(c, shared.syntaxerr);
+        goto client_kill_done; // Free the intset on error
+        return;
+    }
 
-        /* Iterate clients killing all the matching clients. */
-        listRewind(server.clients, &li);
-        while ((ln = listNext(&li)) != NULL) {
-            client *client = listNodeValue(ln);
-            if (!clientMatchesFilter(client, client_filter)) continue;
+    /* Iterate clients killing all the matching clients. */
+    listRewind(server.clients, &li);
+    while ((ln = listNext(&li)) != NULL) {
+        client *client = listNodeValue(ln);
+        if (!clientMatchesFilter(client, client_filter)) continue;
 
-            /* Kill it. */
-            if (c == client) {
-                close_this_client = 1;
-            } else {
-                freeClient(client);
-            }
-            killed++;
-        }
-
-        /* Reply according to old/new format. */
-        if (c->argc == 3) {
-            if (killed == 0)
-                addReplyError(c, "No such client");
-            else
-                addReply(c, shared.ok);
+        /* Kill it. */
+        if (c == client) {
+            close_this_client = 1;
         } else {
-            addReplyLongLong(c, killed);
+            freeClient(client);
         }
+        killed++;
+    }
 
-        /* If this client has to be closed, flag it as CLOSE_AFTER_REPLY
-         * only after we queued the reply to its output buffers. */
-        if (close_this_client) c->flag.close_after_reply = 1;
-    client_kill_done:
-        zfree(client_filter.ids);
+    /* Reply according to old/new format. */
+    if (c->argc == 3) {
+        if (killed == 0)
+            addReplyError(c, "No such client");
+        else
+            addReply(c, shared.ok);
+    } else {
+        addReplyLongLong(c, killed);
+    }
+
+    /* If this client has to be closed, flag it as CLOSE_AFTER_REPLY
+     * only after we queued the reply to its output buffers. */
+    if (close_this_client) c->flag.close_after_reply = 1;
+client_kill_done:
+    zfree(client_filter.ids);
 }
 
 
-void clientCommandUnblock(client *c) {
+static void clientCommandUnblock(client *c) {
     /* CLIENT UNBLOCK <id> [timeout|error] */
     long long id;
     int unblock_error = 0;
@@ -3948,13 +3947,13 @@ void clientCommandUnblock(client *c) {
     }
 }
 
-void clientCommandSetName(client *c) {
+static void clientCommandSetName(client *c) {
     /* CLIENT SETNAME */
     if (clientSetNameOrReply(c, c->argv[2]) == C_OK)
         addReply(c, shared.ok);
 }
 
-void clientCommandGetName(client *c) {
+static void clientCommandGetName(client *c) {
     /* CLIENT GETNAME */
     if (c->name)
         addReplyBulk(c, c->name);
@@ -3962,13 +3961,13 @@ void clientCommandGetName(client *c) {
         addReplyNull(c);
 }
 
-void clientCommandUnpause(client *c) {
+static void clientCommandUnpause(client *c) {
     /* CLIENT UNPAUSE */
     unpauseActions(PAUSE_BY_CLIENT_COMMAND);
     addReply(c, shared.ok);
 }
 
-void clientCommandPause(client *c) {
+static void clientCommandPause(client *c) {
     /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
     mstime_t end;
     int isPauseClientAll = 1;
@@ -3986,122 +3985,122 @@ void clientCommandPause(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandTracking(client *c) {
-            /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
-         *                          [PREFIX second] [OPTIN] [OPTOUT] [NOLOOP]... */
-        long long redir = 0;
-        struct ClientFlags options = {0};
-        robj **prefix = NULL;
-        size_t numprefix = 0;
+static void clientCommandTracking(client *c) {
+    /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
+     *                          [PREFIX second] [OPTIN] [OPTOUT] [NOLOOP]... */
+    long long redir = 0;
+    struct ClientFlags options = {0};
+    robj **prefix = NULL;
+    size_t numprefix = 0;
 
-        /* Parse the options. */
-        for (int j = 3; j < c->argc; j++) {
-            int moreargs = (c->argc - 1) - j;
+    /* Parse the options. */
+    for (int j = 3; j < c->argc; j++) {
+        int moreargs = (c->argc - 1) - j;
 
-            if (!strcasecmp(c->argv[j]->ptr, "redirect") && moreargs) {
-                j++;
-                if (redir != 0) {
-                    addReplyError(c, "A client can only redirect to a single "
-                                     "other client");
-                    zfree(prefix);
-                    return;
-                }
-
-                if (getLongLongFromObjectOrReply(c, c->argv[j], &redir, NULL) != C_OK) {
-                    zfree(prefix);
-                    return;
-                }
-                /* We will require the client with the specified ID to exist
-                 * right now, even if it is possible that it gets disconnected
-                 * later. Still a valid sanity check. */
-                if (lookupClientByID(redir) == NULL) {
-                    addReplyError(c, "The client ID you want redirect to "
-                                     "does not exist");
-                    zfree(prefix);
-                    return;
-                }
-            } else if (!strcasecmp(c->argv[j]->ptr, "bcast")) {
-                options.tracking_bcast = 1;
-            } else if (!strcasecmp(c->argv[j]->ptr, "optin")) {
-                options.tracking_optin = 1;
-            } else if (!strcasecmp(c->argv[j]->ptr, "optout")) {
-                options.tracking_optout = 1;
-            } else if (!strcasecmp(c->argv[j]->ptr, "noloop")) {
-                options.tracking_noloop = 1;
-            } else if (!strcasecmp(c->argv[j]->ptr, "prefix") && moreargs) {
-                j++;
-                prefix = zrealloc(prefix, sizeof(robj *) * (numprefix + 1));
-                prefix[numprefix++] = c->argv[j];
-            } else {
-                zfree(prefix);
-                addReplyErrorObject(c, shared.syntaxerr);
-                return;
-            }
-        }
-
-        /* Options are ok: enable or disable the tracking for this client. */
-        if (!strcasecmp(c->argv[2]->ptr, "on")) {
-            /* Before enabling tracking, make sure options are compatible
-             * among each other and with the current state of the client. */
-            if (!(options.tracking_bcast) && numprefix) {
-                addReplyError(c, "PREFIX option requires BCAST mode to be enabled");
+        if (!strcasecmp(c->argv[j]->ptr, "redirect") && moreargs) {
+            j++;
+            if (redir != 0) {
+                addReplyError(c, "A client can only redirect to a single "
+                                 "other client");
                 zfree(prefix);
                 return;
             }
 
-            if (c->flag.tracking) {
-                int oldbcast = !!c->flag.tracking_bcast;
-                int newbcast = !!(options.tracking_bcast);
-                if (oldbcast != newbcast) {
-                    addReplyError(c, "You can't switch BCAST mode on/off before disabling "
-                                     "tracking for this client, and then re-enabling it with "
-                                     "a different mode.");
-                    zfree(prefix);
-                    return;
-                }
-            }
-
-            if (options.tracking_bcast && (options.tracking_optin || options.tracking_optout)) {
-                addReplyError(c, "OPTIN and OPTOUT are not compatible with BCAST");
+            if (getLongLongFromObjectOrReply(c, c->argv[j], &redir, NULL) != C_OK) {
                 zfree(prefix);
                 return;
             }
-
-            if (options.tracking_optin && options.tracking_optout) {
-                addReplyError(c, "You can't specify both OPTIN mode and OPTOUT mode");
+            /* We will require the client with the specified ID to exist
+             * right now, even if it is possible that it gets disconnected
+             * later. Still a valid sanity check. */
+            if (lookupClientByID(redir) == NULL) {
+                addReplyError(c, "The client ID you want redirect to "
+                                 "does not exist");
                 zfree(prefix);
                 return;
             }
-
-            if ((options.tracking_optin && c->flag.tracking_optout) ||
-                (options.tracking_optout && c->flag.tracking_optin)) {
-                addReplyError(c, "You can't switch OPTIN/OPTOUT mode before disabling "
-                                 "tracking for this client, and then re-enabling it with "
-                                 "a different mode.");
-                zfree(prefix);
-                return;
-            }
-
-            if (options.tracking_bcast) {
-                if (!checkPrefixCollisionsOrReply(c, prefix, numprefix)) {
-                    zfree(prefix);
-                    return;
-                }
-            }
-
-            enableTracking(c, redir, options, prefix, numprefix);
-        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
-            disableTracking(c);
+        } else if (!strcasecmp(c->argv[j]->ptr, "bcast")) {
+            options.tracking_bcast = 1;
+        } else if (!strcasecmp(c->argv[j]->ptr, "optin")) {
+            options.tracking_optin = 1;
+        } else if (!strcasecmp(c->argv[j]->ptr, "optout")) {
+            options.tracking_optout = 1;
+        } else if (!strcasecmp(c->argv[j]->ptr, "noloop")) {
+            options.tracking_noloop = 1;
+        } else if (!strcasecmp(c->argv[j]->ptr, "prefix") && moreargs) {
+            j++;
+            prefix = zrealloc(prefix, sizeof(robj *) * (numprefix + 1));
+            prefix[numprefix++] = c->argv[j];
         } else {
             zfree(prefix);
             addReplyErrorObject(c, shared.syntaxerr);
             return;
         }
+    }
+
+    /* Options are ok: enable or disable the tracking for this client. */
+    if (!strcasecmp(c->argv[2]->ptr, "on")) {
+        /* Before enabling tracking, make sure options are compatible
+         * among each other and with the current state of the client. */
+        if (!(options.tracking_bcast) && numprefix) {
+            addReplyError(c, "PREFIX option requires BCAST mode to be enabled");
+            zfree(prefix);
+            return;
+        }
+
+        if (c->flag.tracking) {
+            int oldbcast = !!c->flag.tracking_bcast;
+            int newbcast = !!(options.tracking_bcast);
+            if (oldbcast != newbcast) {
+                addReplyError(c, "You can't switch BCAST mode on/off before disabling "
+                                 "tracking for this client, and then re-enabling it with "
+                                 "a different mode.");
+                zfree(prefix);
+                return;
+            }
+        }
+
+        if (options.tracking_bcast && (options.tracking_optin || options.tracking_optout)) {
+            addReplyError(c, "OPTIN and OPTOUT are not compatible with BCAST");
+            zfree(prefix);
+            return;
+        }
+
+        if (options.tracking_optin && options.tracking_optout) {
+            addReplyError(c, "You can't specify both OPTIN mode and OPTOUT mode");
+            zfree(prefix);
+            return;
+        }
+
+        if ((options.tracking_optin && c->flag.tracking_optout) ||
+            (options.tracking_optout && c->flag.tracking_optin)) {
+            addReplyError(c, "You can't switch OPTIN/OPTOUT mode before disabling "
+                             "tracking for this client, and then re-enabling it with "
+                             "a different mode.");
+            zfree(prefix);
+            return;
+        }
+
+        if (options.tracking_bcast) {
+            if (!checkPrefixCollisionsOrReply(c, prefix, numprefix)) {
+                zfree(prefix);
+                return;
+            }
+        }
+
+        enableTracking(c, redir, options, prefix, numprefix);
+    } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+        disableTracking(c);
+    } else {
         zfree(prefix);
-        addReply(c, shared.ok);
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+    zfree(prefix);
+    addReply(c, shared.ok);
 }
 
-void clientCommandCaching(client *c) {
+static void clientCommandCaching(client *c) {
     if (!c->flag.tracking) {
         addReplyError(c, "CLIENT CACHING can be called only when the "
                          "client is in tracking mode with OPTIN or "
@@ -4133,7 +4132,7 @@ void clientCommandCaching(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandGetredir(client *c) {
+static void clientCommandGetredir(client *c) {
     /* CLIENT GETREDIR */
     if (c->flag.tracking) {
         addReplyLongLong(c, c->client_tracking_redirection);
@@ -4142,7 +4141,7 @@ void clientCommandGetredir(client *c) {
     }
 }
 
-void clientCommandTrackingInfo(client *c) {
+static void clientCommandTrackingInfo(client *c) {
     addReplyMapLen(c, 3);
 
     /* Flags */
@@ -4205,7 +4204,7 @@ void clientCommandTrackingInfo(client *c) {
     }
 }
 
-void clientCommandNoTouch(client *c) {
+static void clientCommandNoTouch(client *c) {
     /* CLIENT NO-TOUCH ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_touch = 1;
@@ -4218,7 +4217,7 @@ void clientCommandNoTouch(client *c) {
     }
 }
 
-void clientCommandCapa(client *c) {
+static void clientCommandCapa(client *c) {
     for (int i = 2; i < c->argc; i++) {
         if (!strcasecmp(c->argv[i]->ptr, "redirect")) {
             c->capa |= CLIENT_CAPA_REDIRECT;
@@ -4227,7 +4226,7 @@ void clientCommandCapa(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandImportSource(client* c) {
+static void clientCommandImportSource(client *c) {
     /* CLIENT IMPORT-SOURCE ON|OFF */
     if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
         addReplyError(c, "Server is not in import mode");
@@ -4246,7 +4245,6 @@ void clientCommandImportSource(client* c) {
 }
 
 void clientCommand(client *c) {
-
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
         clientCommandHelp(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
@@ -4260,7 +4258,7 @@ void clientCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "no-evict") && c->argc == 3) {
         clientCommandNoEvict(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
-       clientCommandKill(c);
+        clientCommandKill(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
         clientCommandUnblock(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "setname") && c->argc == 3) {
@@ -4278,7 +4276,7 @@ void clientCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "getredir") && c->argc == 2) {
         clientCommandGetredir(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "trackinginfo") && c->argc == 2) {
-       clientCommandTrackingInfo(c);
+        clientCommandTrackingInfo(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "no-touch")) {
         clientCommandNoTouch(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "capa") && c->argc >= 3) {
