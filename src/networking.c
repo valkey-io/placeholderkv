@@ -1612,10 +1612,7 @@ void clearClientConnectionState(client *c) {
     clientSetDefaultAuth(c);
     moduleNotifyUserChanged(c);
     discardTransaction(c);
-
-    if (c->pubsub_data) {
-        freeClientPubSubData(c);
-    }
+    freeClientPubSubData(c);
 
     if (c->name) {
         decrRefCount(c->name);
@@ -1654,10 +1651,7 @@ void freeClient(client *c) {
 
     /* Notify module system that this client auth status changed. */
     moduleNotifyUserChanged(c);
-
-    if (c->module_data) {
-        freeClientModuleData(c);
-    }
+    freeClientModuleData(c);
 
     /* If this client was scheduled for async freeing we need to remove it
      * from the queue. Note that we need to do this here, because later
@@ -1705,9 +1699,8 @@ void freeClient(client *c) {
     c->duration = 0;
     if (c->flag.blocked) unblockClient(c, 1);
 
-    if (c->bstate) freeClientBlockingState(c);
-
-    if (c->pubsub_data) freeClientPubSubData(c);
+    freeClientBlockingState(c);
+    freeClientPubSubData(c);
 
     /* Free data structures. */
     listRelease(c->reply);
@@ -1732,7 +1725,7 @@ void freeClient(client *c) {
      * places where active clients may be referenced. */
     unlinkClient(c);
 
-    if (c->repl_data) freeClientReplicationData(c);
+    freeClientReplicationData(c);
 
     /* Remove client from memory usage buckets */
     if (c->mem_usage_bucket) {
@@ -1745,7 +1738,7 @@ void freeClient(client *c) {
     if (c->name) decrRefCount(c->name);
     if (c->lib_name) decrRefCount(c->lib_name);
     if (c->lib_ver) decrRefCount(c->lib_ver);
-    if (c->mstate) freeClientMultiState(c);
+    freeClientMultiState(c);
     sdsfree(c->peerid);
     sdsfree(c->sockname);
     zfree(c);
