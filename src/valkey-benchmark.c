@@ -857,7 +857,7 @@ static void showLatencyReport(void) {
         if (config.cluster_mode) {
             const char *node_prefix = NULL;
             if (config.read_from_replica == FROM_ALL) {
-                node_prefix = "all";
+                node_prefix = "primaries and replicas";
             } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
                 node_prefix = "replica";
             } else {
@@ -1097,15 +1097,18 @@ static int fetchClusterConfiguration(void) {
         assert(r->elements >= 3);
         int from = r->element[0]->integer;
         int to = r->element[1]->integer;
+        sds primary = NULL;
         for (j = 2; j < r->elements; j++) {
-            int is_primary = (j == 2);
-            int is_cluster_option_only = (config.read_from_replica == FROM_PRIMARY_ONLY);
-            if ((config.read_from_replica == FROM_REPLICA_ONLY && is_primary) || (is_cluster_option_only && !is_primary)) continue;
-
             redisReply *nr = r->element[j];
             assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
             assert(nr->element[0]->str != NULL);
             assert(nr->element[2]->str != NULL);
+
+            int is_primary = (j == 2);
+            if (is_primary) primary = sdsnew(nr->element[2]->str);
+            int is_cluster_option_only = (config.read_from_replica == FROM_PRIMARY_ONLY);
+            if ((config.read_from_replica == FROM_REPLICA_ONLY && is_primary) || (is_cluster_option_only && !is_primary)) continue;
+
             sds ip = sdsnew(nr->element[0]->str);
             sds name = sdsnew(nr->element[2]->str);
             int port = nr->element[1]->integer;
@@ -1119,8 +1122,10 @@ static int fetchClusterConfiguration(void) {
                 if (node == NULL) {
                     success = 0;
                     goto cleanup;
+                } else {
+                    node->name = name;
+                    if (!is_primary) node->replicate = sdsdup(primary);
                 }
-                if (name != NULL) node->name = name;
             } else {
                 node = dictGetVal(entry);
             }
@@ -1144,6 +1149,7 @@ static int fetchClusterConfiguration(void) {
                 }
             }
         }
+        sdsfree(primary);
     }
 cleanup:
     if (ctx) redisFree(ctx);
@@ -1409,8 +1415,16 @@ int parseOptions(int argc, char **argv) {
             config.cluster_mode = 1;
         } else if (!strcmp(argv[i], "--rfr")) {
             config.read_from_replica = FROM_REPLICA_ONLY;
-            if (argv[i + 1] && atoi(argv[++i]) == 2) {
-                config.read_from_replica = FROM_ALL;
+            if (argv[i+1]) {
+                if (!strcmp(argv[i+1], "all")) {
+                    config.read_from_replica = FROM_ALL;
+                    i++;
+                } else if (!strcmp(argv[i+1], "replicas")) {
+                    config.read_from_replica = FROM_REPLICA_ONLY;
+                    i++;
+                } else if (strlen(argv[i+1]) > 0 && argv[i+1][0] != '-') {
+                    goto invalid;
+                }
             }
         } else if (!strcmp(argv[i], "--enable-tracking")) {
             config.enable_tracking = 1;
@@ -1513,7 +1527,12 @@ usage:
         "                    This command must be used with the --cluster option.\n"
         "                    When using this option, it is recommended to use only \n"
         "                    the commands for read requests.\n"
-        "                    default=read from replica only\n"
+        "                    There are two mode for reading from replicas.\n"
+        "                    If nothing is entered or 'replicas' is entered, this\n"
+        "                    sends read requests to replicas only (default) \n"
+        "                    If 'all' is entered, this sends read requests to all nodes,\n"
+        "                    including primaries and replicas. \n"
+        "                    If you only want to request the primaries, use --cluster option only.\n"
         "                    2=read from all nodes(primary and replica)\n"
         " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
         " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
@@ -1703,7 +1722,7 @@ int main(int argc, char **argv) {
         }
         const char *node_prefix = NULL;
         if (config.read_from_replica == FROM_ALL) {
-            node_prefix = "all";
+            node_prefix = "primaries and replicas";
         } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
             node_prefix = "replica";
         } else {
@@ -1717,7 +1736,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid cluster node #%d\n", i);
                 exit(1);
             }
-            printf("%s %d: ", node_prefix, i);
+            const char* node_type = (node->replicate == NULL ? "Primary" : "Replica");
+            printf("%s %d: ", node_type, i);
             if (node->name) printf("%s ", node->name);
             printf("%s:%d\n", node->ip, node->port);
             node->redis_config = getServerConfig(node->ip, node->port, NULL);
