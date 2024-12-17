@@ -4954,7 +4954,9 @@ void ioThreadReadQueryFromClient(void *data) {
     }
 
 done:
-    trimClientQueryBuffer(c);
+    if (!(c->read_flags & READ_FLAGS_PRIMARY)) {
+        trimClientQueryBuffer(c);
+    }
     atomic_thread_fence(memory_order_release);
     c->io_read_state = CLIENT_COMPLETED_IO;
 }

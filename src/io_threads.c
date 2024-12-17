@@ -322,7 +322,7 @@ int trySendReadToIOThreads(client *c) {
     /* If IO thread is already reading, return C_OK to make sure the main thread will not handle it. */
     if (c->io_read_state != CLIENT_IDLE) return C_OK;
     /* Currently, replica/master writes are not offloaded and are processed synchronously. */
-    if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
+    if (getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
     /* With Lua debug client we may call connWrite directly in the main thread */
     if (c->flag.lua_debug) return C_ERR;
     /* For simplicity let the main-thread handle the blocked clients */
@@ -345,6 +345,7 @@ int trySendReadToIOThreads(client *c) {
     c->cur_tid = tid;
     c->read_flags = canParseCommand(c) ? 0 : READ_FLAGS_DONT_PARSE;
     c->read_flags |= authRequired(c) ? READ_FLAGS_AUTH_REQUIRED : 0;
+    c->read_flags |= c->flag.primary ? READ_FLAGS_PRIMARY : 0;
 
     c->io_read_state = CLIENT_PENDING_IO;
     connSetPostponeUpdateState(c->conn, 1);
@@ -364,7 +365,7 @@ int trySendWriteToIOThreads(client *c) {
     /* Nothing to write */
     if (!clientHasPendingReplies(c)) return C_ERR;
     /* Currently, replica/master writes are not offloaded and are processed synchronously. */
-    if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
+    if (getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
     /* We can't offload debugged clients as the main-thread may read at the same time  */
     if (c->flag.lua_debug) return C_ERR;
 
