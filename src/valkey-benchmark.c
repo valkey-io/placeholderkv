@@ -855,15 +855,15 @@ static void showLatencyReport(void) {
         printf("  %d bytes payload\n", config.datasize);
         printf("  keep alive: %d\n", config.keepalive);
         if (config.cluster_mode) {
-            const char *node_prefix = NULL;
+            const char *node_roles = NULL;
             if (config.read_from_replica == FROM_ALL) {
-                node_prefix = "primaries and replicas";
+                node_roles = "cluster";
             } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
-                node_prefix = "replica";
+                node_roles = "replica";
             } else {
-                node_prefix = "primary";
+                node_roles = "primary";
             }
-            printf("  cluster mode: yes (%d %s)\n", config.cluster_node_count, node_prefix);
+            printf("  cluster mode: yes (%d %s)\n", config.cluster_node_count, node_roles);
             int m;
             for (m = 0; m < config.cluster_node_count; m++) {
                 clusterNode *node = config.cluster_nodes[m];
@@ -1720,15 +1720,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid cluster: %d node(s).\n", config.cluster_node_count);
             exit(1);
         }
-        const char *node_prefix = NULL;
+        const char *node_roles = NULL;
         if (config.read_from_replica == FROM_ALL) {
-            node_prefix = "(primaries and replicas)";
+            node_roles = "cluster";
         } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
-            node_prefix = "replica";
+            node_roles = "replica";
         } else {
-            node_prefix = "primary";
+            node_roles = "primary";
         }
-        printf("Cluster has %d %s nodes:\n\n", config.cluster_node_count, node_prefix);
+        printf("Cluster has %d %s nodes:\n\n", config.cluster_node_count, node_roles);
         int i = 0;
         for (; i < config.cluster_node_count; i++) {
             clusterNode *node = config.cluster_nodes[i];
