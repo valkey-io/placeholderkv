@@ -77,10 +77,10 @@ void listRelease(list *list) {
     zfree(list);
 }
 
-/* Just like listRelease, but takes in a into a generic free 
+/* Just like listRelease, but takes in a into a generic free
  * function that expects (void *). */
 void listReleaseVoid(void *l) {
-    listRelease((list *) l);
+    listRelease((list *)l);
 }
 
 /* Add a new node to the list, to head, containing the specified 'value'

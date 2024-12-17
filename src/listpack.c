@@ -253,7 +253,7 @@ void lpFree(unsigned char *lp) {
 /* Same as lpFree, but useful for when you are passing the listpack
  * into a generic free function that expects (void *) */
 void lpFreeVoid(void *lp) {
-    lp_free((unsigned char *) lp);
+    lp_free((unsigned char *)lp);
 }
 
 /* Shrink the memory to fit. */

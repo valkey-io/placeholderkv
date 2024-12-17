@@ -2457,7 +2457,7 @@ void streamFreeConsumer(streamConsumer *sc) {
 
 /* Used for generic free functions. */
 static void streamFreeConsumerVoid(void *sc) {
-    streamFreeConsumer((streamConsumer *) sc);
+    streamFreeConsumer((streamConsumer *)sc);
 }
 
 /* Create a new consumer group in the context of the stream 's', having the
@@ -2486,7 +2486,7 @@ void streamFreeCG(streamCG *cg) {
 
 /* Used for generic free functions. */
 void streamFreeCGVoid(void *cg) {
-    streamFreeCG((streamCG *) cg);
+    streamFreeCG((streamCG *)cg);
 }
 
 /* Lookup the consumer group in the specified stream and returns its
