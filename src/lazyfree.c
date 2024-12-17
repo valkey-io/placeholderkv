@@ -7,12 +7,11 @@
 
 static _Atomic size_t lazyfree_objects = 0;
 static _Atomic size_t lazyfreed_objects = 0;
-#include <unistd.h>
+
 /* Release objects from the lazyfree thread. It's just decrRefCount()
  * updating the count of objects to release. */
 void lazyfreeFreeObject(void *args[]) {
     robj *o = (robj *)args[0];
-    usleep(5000000);
     decrRefCount(o);
     atomic_fetch_sub_explicit(&lazyfree_objects, 1, memory_order_relaxed);
     atomic_fetch_add_explicit(&lazyfreed_objects, 1, memory_order_relaxed);
@@ -166,8 +165,6 @@ size_t lazyfreeGetFreeEffort(robj *key, robj *obj, int dbid) {
  * composed of a few allocations, to free in a lazy way is actually just
  * slower... So under a certain limit we just free the object synchronously. */
 #define LAZYFREE_THRESHOLD 64
-
-#include <unistd.h>
 
 /* Free an object, if the object is huge enough, free it in async way. */
 void freeObjAsync(robj *key, robj *obj, int dbid) {

@@ -556,7 +556,7 @@ void afterErrorReply(client *c, const char *s, size_t len, int flags) {
     if (c->flag.module) {
         if (!c->deferred_reply_errors) {
             c->deferred_reply_errors = listCreate();
-            listSetFreeMethod(c->deferred_reply_errors, sdsfreeFromVoid);
+            listSetFreeMethod(c->deferred_reply_errors, sdsfreeVoid);
         }
         listAddNodeTail(c->deferred_reply_errors, sdsnewlen(s, len));
         return;

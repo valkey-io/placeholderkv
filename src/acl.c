@@ -369,7 +369,7 @@ aclSelector *ACLCreateSelector(int flags) {
     listSetFreeMethod(selector->patterns, ACLListFreeKeyPattern);
     listSetDupMethod(selector->patterns, ACLListDupKeyPattern);
     listSetMatchMethod(selector->channels, ACLListMatchSds);
-    listSetFreeMethod(selector->channels, sdsfreeFromVoid);
+    listSetFreeMethod(selector->channels, sdsfreeVoid);
     listSetDupMethod(selector->channels, ACLListDupSds);
     memset(selector->allowed_commands, 0, sizeof(selector->allowed_commands));
 
@@ -440,7 +440,7 @@ user *ACLCreateUser(const char *name, size_t namelen) {
     u->passwords = listCreate();
     u->acl_string = NULL;
     listSetMatchMethod(u->passwords, ACLListMatchSds);
-    listSetFreeMethod(u->passwords, sdsfreeFromVoid);
+    listSetFreeMethod(u->passwords, sdsfreeVoid);
     listSetDupMethod(u->passwords, ACLListDupSds);
 
     u->selectors = listCreate();
@@ -484,7 +484,8 @@ void ACLFreeUser(user *u) {
     zfree(u);
 }
 
-void ACLFreeUserFromVoid(void *u) {
+/* Used for generic free functions. */
+static void ACLFreeUserVoid(void *u) {
     ACLFreeUser(u);
 }
 
@@ -2444,12 +2445,12 @@ sds ACLLoadFromFile(const char *filename) {
             c->user = new_user;
         }
 
-        if (user_channels) raxFreeWithCallback(user_channels, listReleaseFromVoid);
-        raxFreeWithCallback(old_users, ACLFreeUserFromVoid);
+        if (user_channels) raxFreeWithCallback(user_channels, listReleaseVoid);
+        raxFreeWithCallback(old_users, ACLFreeUserVoid);
         sdsfree(errors);
         return NULL;
     } else {
-        raxFreeWithCallback(Users, ACLFreeUserFromVoid);
+        raxFreeWithCallback(Users, ACLFreeUserVoid);
         Users = old_users;
         errors =
             sdscat(errors, "WARNING: ACL errors detected, no change to the previously active ACL rules was performed");

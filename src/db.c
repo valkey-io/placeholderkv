@@ -1189,24 +1189,11 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
     }
 
     list *keys = listCreate();
-<<<<<<< HEAD
-    /* Set a free callback for the contents of the collected keys list.
-     * For the main keyspace dict, and when we scan a key that's dict encoded
-     * (we have 'ht'), we don't need to define free method because the strings
-     * in the list are just a shallow copy from the pointer in the dictEntry.
-     * When scanning a key with other encodings (e.g. listpack), we need to
-     * free the temporary strings we add to that list.
-     * The exception to the above is ZSET, where we do allocate temporary
-     * strings even when scanning a dict. */
-    if (o && (!ht || o->type == OBJ_ZSET)) {
-        listSetFreeMethod(keys, sdsfreeFromVoid);
-=======
     /* Set a free callback for the contents of the collected keys list if they
      * are deep copied temporary strings. We must not free them if they are just
      * a shallow copy - a pointer to the actual data in the data structure */
     if (!shallow_copied_list_items) {
-        listSetFreeMethod(keys, (void (*)(void *))sdsfree);
->>>>>>> unstable
+        listSetFreeMethod(keys, sdsfreeVoid);
     }
 
     /* For main hash table scan or scannable data structure. */

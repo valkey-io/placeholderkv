@@ -54,7 +54,7 @@
 #define STREAM_LISTPACK_MAX_SIZE (1 << 30)
 
 void streamFreeCG(streamCG *cg);
-void streamFreeCGFromVoid(void *cg);
+void streamFreeCGVoid(void *cg);
 void streamFreeNACK(streamNACK *na);
 size_t streamReplyWithRangeFromConsumerPEL(client *c,
                                            stream *s,
@@ -87,8 +87,8 @@ stream *streamNew(void) {
 
 /* Free a stream, including the listpacks stored inside the radix tree. */
 void freeStream(stream *s) {
-    raxFreeWithCallback(s->rax, lpFreeFromVoid);
-    if (s->cgroups) raxFreeWithCallback(s->cgroups, streamFreeCGFromVoid);
+    raxFreeWithCallback(s->rax, lpFreeVoid);
+    if (s->cgroups) raxFreeWithCallback(s->cgroups, streamFreeCGVoid);
     zfree(s);
 }
 
@@ -2455,7 +2455,8 @@ void streamFreeConsumer(streamConsumer *sc) {
     zfree(sc);
 }
 
-void streamFreeConsumerFromVoid(void *sc) {
+/* Used for generic free functions. */
+static void streamFreeConsumerVoid(void *sc) {
     streamFreeConsumer((streamConsumer *) sc);
 }
 
@@ -2479,11 +2480,12 @@ streamCG *streamCreateCG(stream *s, char *name, size_t namelen, streamID *id, lo
 /* Free a consumer group and all its associated data. */
 void streamFreeCG(streamCG *cg) {
     raxFreeWithCallback(cg->pel, zfree);
-    raxFreeWithCallback(cg->consumers, streamFreeConsumerFromVoid);
+    raxFreeWithCallback(cg->consumers, streamFreeConsumerVoid);
     zfree(cg);
 }
 
-void streamFreeCGFromVoid(void *cg) {
+/* Used for generic free functions. */
+void streamFreeCGVoid(void *cg) {
     streamFreeCG((streamCG *) cg);
 }
 

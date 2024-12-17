@@ -79,7 +79,7 @@ void listRelease(list *list) {
 
 /* Just like listRelease, but takes in a into a generic free 
  * function that expects (void *). */
-void listReleaseFromVoid(void *l) {
+void listReleaseVoid(void *l) {
     listRelease((list *) l);
 }
 
