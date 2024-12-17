@@ -1722,7 +1722,7 @@ int main(int argc, char **argv) {
         }
         const char *node_prefix = NULL;
         if (config.read_from_replica == FROM_ALL) {
-            node_prefix = "primaries and replicas";
+            node_prefix = "(primaries and replicas)";
         } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
             node_prefix = "replica";
         } else {
@@ -1737,7 +1737,7 @@ int main(int argc, char **argv) {
                 exit(1);
             }
             const char* node_type = (node->replicate == NULL ? "Primary" : "Replica");
-            printf("%s %d: ", node_type, i);
+            printf("Node %d(%s): ", i, node_type);
             if (node->name) printf("%s ", node->name);
             printf("%s:%d\n", node->ip, node->port);
             node->redis_config = getServerConfig(node->ip, node->port, NULL);
