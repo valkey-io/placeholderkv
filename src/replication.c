@@ -704,7 +704,16 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
     listRewind(monitors, &li);
     while ((ln = listNext(&li))) {
         client *monitor = ln->value;
-        addReply(monitor, cmdobj);
+        if (monitor->resp > 2) {
+            struct ClientFlags old_flags = monitor->flag;
+            monitor->flag.pushing = 1;
+            addReplyPushLen(monitor, 2);
+            addReply(monitor, shared.monitorbulk);
+            addReply(monitor, cmdobj);
+            if (!old_flags.pushing) monitor->flag.pushing = 0;
+        } else {
+            addReply(monitor, cmdobj);
+        }
         updateClientMemUsageAndBucket(monitor);
     }
     decrRefCount(cmdobj);

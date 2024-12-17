@@ -299,6 +299,60 @@ start_server {tags {"introspection"}} {
         set _ $res
     } {*"set" "foo"*"get" "foo"*}
 
+    test {MONITOR should support RESP3 protocol} {
+        set rd [valkey_deferring_client]
+        $rd HELLO 3
+        $rd read ; # Consume the HELLO reply
+
+        $rd monitor
+        $rd read ; # Consume the MONITOR reply
+        $rd readraw 1;
+
+        r set foo bar
+        assert_equal ">2" [$rd read]
+        assert_equal "\$7" [$rd read]
+        assert_equal "monitor" [$rd read]
+        assert_match {*"set"*"foo"*"bar"*} [$rd read]
+        
+        $rd close
+    }
+
+    test {multiple MONITOR commands should result in ERR} {
+        set rd [valkey_deferring_client]
+        $rd HELLO 3
+        $rd read ; # Consume the HELLO reply
+
+        $rd readraw 1;
+
+        $rd monitor
+        assert_equal "+OK" [$rd read]
+
+        $rd monitor
+        assert_equal "-ERR The connection is already in monitoring mode." [$rd read]
+        
+        $rd close
+    }
+
+    test {MONITOR should came after PONG reply} {
+        set rd [valkey_deferring_client]
+        $rd HELLO 3
+        $rd read ; # Consume the HELLO reply
+
+        $rd monitor
+        $rd read ; # Consume the MONITOR reply
+        $rd readraw 1;
+
+        $rd ping
+
+        assert_equal "+PONG" [$rd read]
+        assert_equal ">2" [$rd read]
+        assert_equal "\$7" [$rd read]
+        assert_equal "monitor" [$rd read]
+        assert_match {*"ping"*} [$rd read]
+
+        $rd close
+    }
+
     test {MONITOR can log commands issued by the scripting engine} {
         set rd [valkey_deferring_client]
         $rd monitor

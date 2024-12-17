@@ -2042,6 +2042,7 @@ void createSharedObjects(void) {
     shared.ssubscribebulk = createStringObject("$10\r\nssubscribe\r\n", 17);
     shared.sunsubscribebulk = createStringObject("$12\r\nsunsubscribe\r\n", 19);
     shared.smessagebulk = createStringObject("$8\r\nsmessage\r\n", 14);
+    shared.monitorbulk = createStringObject("$7\r\nmonitor\r\n", 13);
     shared.psubscribebulk = createStringObject("$10\r\npsubscribe\r\n", 17);
     shared.punsubscribebulk = createStringObject("$12\r\npunsubscribe\r\n", 19);
 
@@ -6188,8 +6189,11 @@ void monitorCommand(client *c) {
         return;
     }
 
-    /* ignore MONITOR if already replica or in monitor mode */
-    if (c->flag.replica) return;
+    /* Gently notify the client that the monitor command has already been issued. */
+    if (c->flag.replica) {
+        addReplyError(c, "The connection is already in monitoring mode.");
+        return;
+    }
 
     c->flag.replica = 1;
     c->flag.monitor = 1;
