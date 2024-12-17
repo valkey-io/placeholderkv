@@ -77,6 +77,13 @@ struct benchmarkThread;
 struct clusterNode;
 struct serverConfig;
 
+/* Read from replica options */
+typedef enum readFromReplica {
+    FROM_PRIMARY_ONLY = 0, /* default option */
+    FROM_REPLICA_ONLY,
+    FROM_ALL
+} readFromReplica;
+
 static struct config {
     aeEventLoop *el;
     cliConnInfo conn_info;
@@ -112,8 +119,7 @@ static struct config {
     int num_threads;
     struct benchmarkThread **threads;
     int cluster_mode;
-    int read_from_all;
-    int read_from_replicas_only;
+    readFromReplica read_from_replica;
     int cluster_node_count;
     struct clusterNode **cluster_nodes;
     struct serverConfig *redis_config;
@@ -715,7 +721,7 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
         c->prefix_pending++;
     }
 
-    if (config.cluster_mode && (config.read_from_replicas_only || config.read_from_all)) {
+    if (config.cluster_mode && (config.read_from_replica == FROM_REPLICA_ONLY|| config.read_from_replica == FROM_ALL)) {
         char *buf = NULL;
         int len;
         len = redisFormatCommand(&buf, "READONLY");
@@ -850,9 +856,9 @@ static void showLatencyReport(void) {
         printf("  keep alive: %d\n", config.keepalive);
         if (config.cluster_mode) {
             const char *node_prefix = NULL;
-            if (config.read_from_all) {
+            if (config.read_from_replica == FROM_ALL) {
                 node_prefix = "all";
-            } else if (config.read_from_replicas_only) {
+            } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
                 node_prefix = "replica";
             } else {
                 node_prefix = "primary";
@@ -1076,7 +1082,6 @@ static int fetchClusterConfiguration(void) {
     if (ctx == NULL) {
         exit(1);
     }
-    assert(!(config.read_from_all && config.read_from_replicas_only) && "--rfa and --rfro cannot be enabled simultaneously");
 
     reply = redisCommand(ctx, "CLUSTER SLOTS");
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
@@ -1094,8 +1099,8 @@ static int fetchClusterConfiguration(void) {
         int to = r->element[1]->integer;
         for (j = 2; j < r->elements; j++) {
             int is_primary = (j == 2);
-            int is_cluster_option_only = (!config.read_from_all && !config.read_from_replicas_only);
-            if ((config.read_from_replicas_only && is_primary) || (is_cluster_option_only && !is_primary)) continue;
+            int is_cluster_option_only = (config.read_from_replica == FROM_PRIMARY_ONLY);
+            if ((config.read_from_replica == FROM_REPLICA_ONLY && is_primary) || (is_cluster_option_only && !is_primary)) continue;
 
             redisReply *nr = r->element[j];
             assert(nr->type == REDIS_REPLY_ARRAY && nr->elements >= 3);
@@ -1168,7 +1173,7 @@ static int fetchClusterSlotsConfiguration(client c) {
     if (is_fetching_slots) return -1; // TODO: use other codes || errno ?
     atomic_store_explicit(&config.is_fetching_slots, 1, memory_order_relaxed);
     fprintf(stderr, "WARNING: Cluster slots configuration changed, fetching new one...\n");
-    fprintf(stderr, "If you are using the --rfa and --rfro option and sending write requests (set type commands),\nthe requests could not be processed properly.\n");
+    fprintf(stderr, "If you are using the --rfr option and sending write requests (set type commands),\nthe requests could not be processed properly.\n");
 
     const char *errmsg = "Failed to update cluster slots configuration";
 
@@ -1208,10 +1213,10 @@ static int fetchClusterSlotsConfiguration(client c) {
         from = r->element[0]->integer;
         to = r->element[1]->integer;
         size_t start, end;
-        if (config.read_from_all) {
+        if (config.read_from_replica == FROM_ALL) {
             start = 2;
             end = r->elements;
-        } else if (config.read_from_replicas_only) {
+        } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
             start = 3;
             end = r->elements;
         } else {
@@ -1402,10 +1407,11 @@ int parseOptions(int argc, char **argv) {
                 config.num_threads = 0;
         } else if (!strcmp(argv[i], "--cluster")) {
             config.cluster_mode = 1;
-        } else if (!strcmp(argv[i], "--rfa")) {
-            config.read_from_all = 1;
-        } else if (!strcmp(argv[i], "--rfro")) {
-            config.read_from_replicas_only = 1;
+        } else if (!strcmp(argv[i], "--rfr")) {
+            config.read_from_replica = FROM_REPLICA_ONLY;
+            if (argv[i + 1] && atoi(argv[++i]) == 2) {
+                config.read_from_replica = FROM_ALL;
+            }
         } else if (!strcmp(argv[i], "--enable-tracking")) {
             config.enable_tracking = 1;
         } else if (!strcmp(argv[i], "--help")) {
@@ -1503,14 +1509,12 @@ usage:
         "                    If the command is supplied on the command line in cluster\n"
         "                    mode, the key must contain \"{tag}\". Otherwise, the\n"
         "                    command will not be sent to the right cluster node.\n"
-        " --rfa              Enable read from all nodes(primary and replica) in cluster mode.\n"
+        " --rfr <mode>       Enable read from replicas in cluster mode.\n"
         "                    This command must be used with the --cluster option.\n"
         "                    When using this option, it is recommended to use only \n"
         "                    the commands for read requests.\n"
-        " --rfro             Enable read from replicas only in cluster mode.\n"
-        "                    This command must be used with the --cluster option.\n"
-        "                    When using this option, it is recommended to use only \n"
-        "                    the commands for read requests.\n"
+        "                    default=read from replica only\n"
+        "                    2=read from all nodes(primary and replica)\n"
         " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
         " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
         " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
@@ -1652,8 +1656,7 @@ int main(int argc, char **argv) {
     config.num_threads = 0;
     config.threads = NULL;
     config.cluster_mode = 0;
-    config.read_from_all = 0;
-    config.read_from_replicas_only = 0;
+    config.read_from_replica = FROM_PRIMARY_ONLY;
     config.cluster_node_count = 0;
     config.cluster_nodes = NULL;
     config.redis_config = NULL;
@@ -1699,9 +1702,9 @@ int main(int argc, char **argv) {
             exit(1);
         }
         const char *node_prefix = NULL;
-        if (config.read_from_all) {
+        if (config.read_from_replica == FROM_ALL) {
             node_prefix = "all";
-        } else if (config.read_from_replicas_only) {
+        } else if (config.read_from_replica == FROM_REPLICA_ONLY) {
             node_prefix = "replica";
         } else {
             node_prefix = "primary";
