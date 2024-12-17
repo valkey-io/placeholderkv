@@ -219,7 +219,7 @@ void sdsfree(sds s) {
 /* This variant of sdsfree() gets its argument as void, and is useful
  * as free method in data structures that expect a 'void free_object(void*)'
  * prototype for the free method. */
-void sdsfreeVoid(void *s) {
+void sdsfreeFromVoid(void *s) {
     sdsfree(s);
 }
 
