@@ -3124,27 +3124,6 @@ int clusterProcessPacket(clusterLink *link) {
         return 1;
     }
 
-    if (type == CLUSTERMSG_TYPE_MEET && link->node && nodeInHandshake(link->node)) {
-        /* If the link is bound to a node and the node is in the handshake state, and we receive
-         * a MEET packet, it may be that the sender sent multiple MEET packets so in here we are
-         * dropping the MEET to avoid the assert in setClusterNodeToInboundClusterLink. The assert
-         * will happen if the other sends a MEET packet because it detects that there is no inbound
-         * link, this node creates a new node in HANDSHAKE state (with a random node name), and
-         * respond with a PONG. The other node receives the PONG and removes the CLUSTER_NODE_MEET
-         * flag. This node is supposed to open an outbound connection to the other node in the next
-         * cron cycle, but before this happens, the other node re-sends a MEET on the same link
-         * because it still detects no inbound connection. We improved the re-send logic of MEET in
-         * #1441, now we will only re-send MEET packet once every handshake timeout period.
-         *
-         * Note that in getNodeFromLinkAndMsg, the node in the handshake state has a random name
-         * and not truly "known", so we don't know the sender. Dropping the MEET packet can prevent
-         * us from creating a random node, avoid incorrect link binding, and avoid duplicate MEET
-         * packet eliminate the handshake state. */
-        serverLog(LL_NOTICE, "Dropping MEET packet from node %.40s because the node is already in handshake state",
-                  link->node->name);
-        return 1;
-    }
-
     uint16_t flags = ntohs(hdr->flags);
     uint64_t sender_claimed_current_epoch = 0, sender_claimed_config_epoch = 0;
     clusterNode *sender = getNodeFromLinkAndMsg(link, hdr);
@@ -3241,7 +3220,26 @@ int clusterProcessPacket(clusterLink *link) {
         }
 
         if (type == CLUSTERMSG_TYPE_MEET) {
-            if (!sender) {
+            if (!sender && link->node) {
+                /* We received a MEET packet on an existing link.
+                 * It means we received a second MEET packet from a node during the handshake
+                 * process before we were able to send a PING packet to that node from our outbound
+                 * connection.
+                 * Here we are avoiding going into the next "else if" branch so as to not assert in
+                 * setClusterNodeToInboundClusterLink() because of link->node not being NULL.
+                 *
+                 * The other sends a MEET packet because it detects that there is no inbound link,
+                 * this node creates a new node in HANDSHAKE state (with a random node name), and
+                 * respond with a PONG. The other node receives the PONG and removes the
+                 * CLUSTER_NODE_MEET flag.
+                 * This node is supposed to open an outbound connection to the other node in the
+                 * next cron cycle, but before this happens, the other node might re-send a MEET on
+                 * the same link because it still detects no inbound connection.
+                 *
+                 * Note that in getNodeFromLinkAndMsg, the node in the handshake state has a random name
+                 * and not truly "known", so we don't know the sender. */
+                debugServerAssert(link->inbound && nodeInHandshake(link->node));
+            } else if (!sender) {
                 /* Add this node if it is new for us and the msg type is MEET.
                  * In this stage we don't try to add the node with the right
                  * flags, replicaof pointer, and so forth, as this details will be
@@ -4977,7 +4975,6 @@ static mstime_t getHandshakeTimeout(void) {
 }
 
 static int nodeExceedsHandshakeTimeout(clusterNode *node, mstime_t now) {
-    serverAssert(node != NULL);
     return now - node->ctime > getHandshakeTimeout() ? 1 : 0;
 }
 

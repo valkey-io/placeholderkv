@@ -70,7 +70,7 @@ tags {tls:skip external:skip cluster} {
                 [CI 0 cluster_stats_messages_meet_received] >= 4 &&
                 [CI 1 cluster_stats_messages_meet_sent] == [CI 0 cluster_stats_messages_meet_received]
             } else {
-                fail "1 cluster_state:[CI 1 cluster_state], 0 cluster_state: [CI 0 cluster_state]"
+                fail "Unexpected cluster state: node 1 cluster_state:[CI 1 cluster_state], node 0 cluster_state: [CI 0 cluster_state]"
             }
         }
     } ;# stop servers
