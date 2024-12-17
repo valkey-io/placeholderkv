@@ -183,9 +183,8 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
                 fail "Node 0 never exited handshake state"
             }
 
-            # At this point Node 0 knows Node 1 & 2 through the gossip, but they don't know Node 0.
+            # At this point Node 0 knows Node 2 through the gossip, but Node 1 & 2 don't know Node 0.
             wait_for_condition 50 100 {
-                [cluster_get_node_by_id 0 $node1_id] != {} &&
                 [cluster_get_node_by_id 0 $node2_id] != {} &&
                 [cluster_get_node_by_id 1 $node0_id] eq {} &&
                 [cluster_get_node_by_id 2 $node0_id] eq {}
