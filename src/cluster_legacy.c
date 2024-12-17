@@ -3223,12 +3223,12 @@ int clusterProcessPacket(clusterLink *link) {
             if (!sender) {
                 if (!link->node) {
                     /* Add this node if it is new for us and the msg type is MEET.
-                    * In this stage we don't try to add the node with the right
-                    * flags, replicaof pointer, and so forth, as this details will be
-                    * resolved when we'll receive PONGs from the node. The exception
-                    * to this is the flag that indicates extensions are supported, as
-                    * we want to send extensions right away in the return PONG in order
-                    * to reduce the amount of time needed to stabilize the shard ID. */
+                     * In this stage we don't try to add the node with the right
+                     * flags, replicaof pointer, and so forth, as this details will be
+                     * resolved when we'll receive PONGs from the node. The exception
+                     * to this is the flag that indicates extensions are supported, as
+                     * we want to send extensions right away in the return PONG in order
+                     * to reduce the amount of time needed to stabilize the shard ID. */
                     clusterNode *node;
 
                     node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
