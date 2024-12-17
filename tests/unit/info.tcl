@@ -10,7 +10,7 @@ proc latency_percentiles_usec {cmd} {
     return [latencyrstat_percentiles $cmd r]
 }
 
-start_server {tags {"info" "external:skip"}} {
+start_server {tags {"info" "external:skip" "debug_defrag:skip"}} {
     start_server {} {
 
         test {latencystats: disable/enable} {

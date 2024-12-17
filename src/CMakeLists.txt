@@ -22,6 +22,12 @@ if (VALKEY_RELEASE_BUILD)
     set_property(TARGET valkey-server PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif ()
 
+if (DEBUG_FORCE_DEFRAG)
+    message(STATUS "Forcing Active Defrag run on valkey-server")
+    target_compile_definitions(valkey-server PRIVATE DEBUG_FORCE_DEFRAG)
+    target_compile_definitions(valkey-server PRIVATE HAVE_DEFRAG)
+endif ()
+
 if (BUILD_SANITIZER)
     # 'BUILD_SANITIZER' is defined in ValkeySetup module (based on user input)
     # If defined, the variables 'VALKEY_SANITAIZER_CFLAGS' and 'VALKEY_SANITAIZER_LDFLAGS'

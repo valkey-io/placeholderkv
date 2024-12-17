@@ -130,6 +130,11 @@ ifdef REDIS_LDFLAGS
     SERVER_LDFLAGS := $(REDIS_LDFLAGS)
 endif
 
+# Special case of forcing defrag to run even though we have no Jemlloc support
+ifeq ($(DEBUG_FORCE_DEFRAG), yes)
+	SERVER_CFLAGS +=-DHAVE_DEFRAG -DDEBUG_FORCE_DEFRAG
+endif
+
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(SERVER_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(OPT) $(SERVER_LDFLAGS) $(DEBUG)
 FINAL_LIBS=-lm
