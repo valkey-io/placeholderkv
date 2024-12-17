@@ -1414,18 +1414,18 @@ int parseOptions(int argc, char **argv) {
         } else if (!strcmp(argv[i], "--cluster")) {
             config.cluster_mode = 1;
         } else if (!strcmp(argv[i], "--rfr")) {
-            config.read_from_replica = FROM_REPLICA_ONLY;
-            if (argv[i+1]) {
-                if (!strcmp(argv[i+1], "all")) {
+            if (argv[++i]) {
+                if (!strcmp(argv[i], "all")) {
                     config.read_from_replica = FROM_ALL;
-                    i++;
-                } else if (!strcmp(argv[i+1], "replicas")) {
+                } else if (!strcmp(argv[i], "yes")) {
                     config.read_from_replica = FROM_REPLICA_ONLY;
-                    i++;
-                } else if (strlen(argv[i+1]) > 0 && argv[i+1][0] != '-') {
+                } else if (!strcmp(argv[i], "no")) {
+                    config.read_from_replica = FROM_PRIMARY_ONLY;
+                } else {
                     goto invalid;
                 }
-            }
+            } else
+                goto invalid;
         } else if (!strcmp(argv[i], "--enable-tracking")) {
             config.enable_tracking = 1;
         } else if (!strcmp(argv[i], "--help")) {
