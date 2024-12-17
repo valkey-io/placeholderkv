@@ -47,7 +47,7 @@ static size_t engine_cache_memory = 0;
 static void engineFunctionDispose(void *obj);
 static void engineStatsDispose(void *obj);
 static void engineLibraryDispose(void *obj);
-static int functionsVerifyName(const char *name, size_t len);
+static int functionsVerifyName(sds name);
 
 typedef struct functionsLibEngineStats {
     size_t n_lib;
@@ -254,22 +254,23 @@ void functionsAddEngineStats(engineInfo *ei) {
  *       the function will verify that the given name is following the naming format
  *       and return an error if its not.
  */
-static int functionLibCreateFunction(char *name,
-                                     size_t name_len,
+static int functionLibCreateFunction(robj *name,
                                      void *function,
                                      functionLibInfo *li,
-                                     char *desc,
-                                     size_t desc_len,
+                                     robj *desc,
                                      uint64_t f_flags,
                                      char **err) {
-    if (functionsVerifyName(name, name_len) != C_OK) {
+    serverAssert(name->type == OBJ_STRING);
+    serverAssert(desc == NULL || desc->type == OBJ_STRING);
+
+    if (functionsVerifyName(name->ptr) != C_OK) {
         *err = valkey_asprintf("Function names can only contain letters, numbers,"
                                " or underscores(_) and must be at least one "
                                "character long");
         return C_ERR;
     }
 
-    sds name_sds = sdsnewlen(name, name_len);
+    sds name_sds = sdsdup(name->ptr);
     if (dictFetchValue(li->functions, name_sds)) {
         *err = valkey_asprintf("Function already exists in the library");
         sdsfree(name_sds);
@@ -281,7 +282,7 @@ static int functionLibCreateFunction(char *name,
         .name = name_sds,
         .function = function,
         .li = li,
-        .desc = sdsnewlen(desc, desc_len),
+        .desc = desc ? sdsdup(desc->ptr) : NULL,
         .f_flags = f_flags,
     };
 
@@ -977,11 +978,11 @@ void functionHelpCommand(client *c) {
 }
 
 /* Verify that the function name is of the format: [a-zA-Z0-9_][a-zA-Z0-9_]? */
-static int functionsVerifyName(const char *name, size_t len) {
-    if (len == 0) {
+static int functionsVerifyName(sds name) {
+    if (sdslen(name) == 0) {
         return C_ERR;
     }
-    for (size_t i = 0; i < len; ++i) {
+    for (size_t i = 0; i < sdslen(name); ++i) {
         char curr_char = name[i];
         if ((curr_char >= 'a' && curr_char <= 'z') || (curr_char >= 'A' && curr_char <= 'Z') ||
             (curr_char >= '0' && curr_char <= '9') || (curr_char == '_')) {
@@ -1063,8 +1064,10 @@ static void freeCompiledFunctions(engine *engine,
                                   size_t free_function_from_idx) {
     for (size_t i = 0; i < num_compiled_functions; i++) {
         compiledFunction *func = compiled_functions[i];
-        zfree(func->name);
-        zfree(func->desc);
+        decrRefCount(func->name);
+        if (func->desc) {
+            decrRefCount(func->desc);
+        }
         if (i >= free_function_from_idx) {
             engine->free_function(engine->engine_ctx, func->function);
         }
@@ -1087,7 +1090,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
         return NULL;
     }
 
-    if (functionsVerifyName(md.name, sdslen(md.name))) {
+    if (functionsVerifyName(md.name)) {
         *err = valkey_asprintf("Library names can only contain letters, numbers,"
                                " or underscores(_) and must be at least one "
                                "character long");
@@ -1128,11 +1131,9 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     for (size_t i = 0; i < num_compiled_functions; i++) {
         compiledFunction *func = compiled_functions[i];
         int ret = functionLibCreateFunction(func->name,
-                                            func->name_len,
                                             func->function,
                                             new_li,
                                             func->desc,
-                                            func->desc_len,
                                             func->f_flags,
                                             err);
         if (ret == C_ERR) {

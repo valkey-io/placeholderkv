@@ -1269,23 +1269,6 @@ sds luaGetStringSds(lua_State *lua, int index) {
     return str_sds;
 }
 
-/* Returns a newly allocated C string with the copy of the string value located
- * on the stack at a given index.
- * The length of the string is returned using the out parameter `length`.
- */
-char *luaGetStringCStr(lua_State *lua, int index, size_t *length) {
-    serverAssert(length != NULL);
-
-    if (!lua_isstring(lua, index)) {
-        return NULL;
-    }
-
-    const char *str = lua_tolstring(lua, index, length);
-    char *ret = zmalloc(sizeof(char) * (*length) + 1);
-    memcpy(ret, str, (*length) + 1);
-    return ret;
-}
-
 static int luaProtectedTableError(lua_State *lua) {
     int argc = lua_gettop(lua);
     if (argc != 2) {
