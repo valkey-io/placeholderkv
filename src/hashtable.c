@@ -1023,7 +1023,7 @@ void *hashtableMetadata(hashtable *ht) {
 }
 
 /* Returns the number of entries stored. */
-size_t hashtableSize(hashtable *ht) {
+size_t hashtableSize(const hashtable *ht) {
     return ht->used[0] + ht->used[1];
 }
 
@@ -1178,6 +1178,14 @@ hashtable *hashtableDefragTables(hashtable *ht, void *(*defragfn)(void *)) {
         if (table != NULL) ht->tables[i] = table;
     }
     return ht1;
+}
+
+/* Used for releasing memory to OS to avoid unnecessary CoW. Called when we've
+ * forked and memory won't be used again. See zmadvise_dontneed() */
+void dismissHashtable(hashtable *ht) {
+    for (int i = 0; i < 2; i++) {
+        zmadvise_dontneed(ht->tables[i], numBuckets(ht->bucket_exp[i]) * sizeof(bucket *));
+    }
 }
 
 /* Returns 1 if an entry was found matching the key. Also points *found to it,

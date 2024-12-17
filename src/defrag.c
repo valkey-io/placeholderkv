@@ -34,6 +34,7 @@
  */
 
 #include "server.h"
+#include "hashtable.h"
 #include "script.h"
 #include <stddef.h>
 
@@ -147,11 +148,6 @@ static_assert(offsetof(defragPubSubCtx, kvstate) == 0, "defragStageKvstoreHelper
  */
 static list *defrag_later;
 static unsigned long defrag_later_cursor;
-
-
-/* this method was added to jemalloc in order to help us understand which
- * pointers are worthwhile moving and which aren't */
-int je_get_defrag_hint(void *ptr);
 
 /* Defrag function which allocates and copies memory if needed, but DOESN'T free the old block.
  * It is the responsibility of the caller to free the old block if a non-NULL value (new block)
@@ -379,6 +375,20 @@ static void activeDefragSdsDict(dict *d, int val_type) {
     } while (cursor != 0);
 }
 
+void activeDefragSdsHashtableCallback(void *privdata, void *entry_ref) {
+    UNUSED(privdata);
+    sds *sds_ref = (sds *)entry_ref;
+    sds new_sds = activeDefragSds(*sds_ref);
+    if (new_sds != NULL) *sds_ref = new_sds;
+}
+
+void activeDefragSdsHashtable(hashtable *ht) {
+    unsigned long cursor = 0;
+    do {
+        cursor = hashtableScanDefrag(ht, cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
+    } while (cursor != 0);
+}
+
 /* Defrag a list of ptr, sds or robj string values */
 static void activeDefragQuickListNode(quicklist *ql, quicklistNode **node_ref) {
     quicklistNode *newnode, *node = *node_ref;
@@ -497,11 +507,9 @@ static void scanCallbackCountScanned(void *privdata, const dictEntry *de) {
 }
 
 static void scanLaterSet(robj *ob, unsigned long *cursor) {
-    if (ob->type != OBJ_SET || ob->encoding != OBJ_ENCODING_HT) return;
-    dict *d = ob->ptr;
-    dictDefragFunctions defragfns = {.defragAlloc = activeDefragAlloc,
-                                     .defragKey = (dictDefragAllocFunction *)activeDefragSds};
-    *cursor = dictScanDefrag(d, *cursor, scanCallbackCountScanned, &defragfns, NULL);
+    if (ob->type != OBJ_SET || ob->encoding != OBJ_ENCODING_HASHTABLE) return;
+    hashtable *ht = ob->ptr;
+    *cursor = hashtableScanDefrag(ht, *cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
 }
 
 static void scanLaterHash(robj *ob, unsigned long *cursor) {
@@ -560,15 +568,16 @@ static void defragHash(robj *ob) {
 }
 
 static void defragSet(robj *ob) {
-    dict *d, *newd;
-    serverAssert(ob->type == OBJ_SET && ob->encoding == OBJ_ENCODING_HT);
-    d = ob->ptr;
-    if (dictSize(d) > server.active_defrag_max_scan_fields)
+    serverAssert(ob->type == OBJ_SET && ob->encoding == OBJ_ENCODING_HASHTABLE);
+    hashtable *ht = ob->ptr;
+    if (hashtableSize(ht) > server.active_defrag_max_scan_fields) {
         defragLater(ob);
-    else
-        activeDefragSdsDict(d, DEFRAG_SDS_DICT_NO_VAL);
-    /* defrag the dict struct and tables */
-    if ((newd = dictDefragTables(ob->ptr))) ob->ptr = newd;
+    } else {
+        activeDefragSdsHashtable(ht);
+    }
+    /* defrag the hashtable struct and tables */
+    hashtable *newHashtable = hashtableDefragTables(ht, activeDefragAlloc);
+    if (newHashtable) ob->ptr = newHashtable;
 }
 
 /* Defrag callback for radix tree iterator, called for each node,
@@ -766,7 +775,7 @@ static void defragKey(defragKeysCtx *ctx, robj **elemref) {
             serverPanic("Unknown list encoding");
         }
     } else if (ob->type == OBJ_SET) {
-        if (ob->encoding == OBJ_ENCODING_HT) {
+        if (ob->encoding == OBJ_ENCODING_HASHTABLE) {
             defragSet(ob);
         } else if (ob->encoding == OBJ_ENCODING_INTSET || ob->encoding == OBJ_ENCODING_LISTPACK) {
             void *newptr, *ptr = ob->ptr;
@@ -808,29 +817,6 @@ static void dbKeysScanCallback(void *privdata, void *elemref) {
     else
         server.stat_active_defrag_key_misses++;
     server.stat_active_defrag_scanned++;
-}
-
-/* Utility function to get the fragmentation ratio from jemalloc.
- * It is critical to do that by comparing only heap maps that belong to
- * jemalloc, and skip ones the jemalloc keeps as spare. Since we use this
- * fragmentation ratio in order to decide if a defrag action should be taken
- * or not, a false detection can cause the defragmenter to waste a lot of CPU
- * without the possibility of getting any results. */
-static float getAllocatorFragmentation(size_t *out_frag_bytes) {
-    size_t resident, active, allocated, frag_smallbins_bytes;
-    zmalloc_get_allocator_info(&allocated, &active, &resident, NULL, NULL);
-    frag_smallbins_bytes = allocatorDefragGetFragSmallbins();
-    /* Calculate the fragmentation ratio as the proportion of wasted memory in small
-     * bins (which are defraggable) relative to the total allocated memory (including large bins).
-     * This is because otherwise, if most of the memory usage is large bins, we may show high percentage,
-     * despite the fact it's not a lot of memory for the user. */
-    float frag_pct = (float)frag_smallbins_bytes / allocated * 100;
-    float rss_pct = ((float)resident / allocated) * 100 - 100;
-    size_t rss_bytes = resident - allocated;
-    if (out_frag_bytes) *out_frag_bytes = frag_smallbins_bytes;
-    serverLog(LL_DEBUG, "allocated=%zu, active=%zu, resident=%zu, frag=%.2f%% (%.2f%% rss), frag_bytes=%zu (%zu rss)",
-              allocated, active, resident, frag_pct, rss_pct, frag_smallbins_bytes, rss_bytes);
-    return frag_pct;
 }
 
 /* Defrag scan callback for a pubsub channels hashtable. */

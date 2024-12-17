@@ -372,12 +372,19 @@ void dictDictDestructor(void *val) {
     dictRelease((dict *)val);
 }
 
+/* Returns 1 when keys match */
 int dictSdsKeyCompare(const void *key1, const void *key2) {
     int l1, l2;
     l1 = sdslen((sds)key1);
     l2 = sdslen((sds)key2);
     if (l1 != l2) return 0;
     return memcmp(key1, key2, l1) == 0;
+}
+
+/* Returns 0 when keys match */
+int hashtableSdsKeyCompare(const void *key1, const void *key2) {
+    const sds sds1 = (const sds)key1, sds2 = (const sds)key2;
+    return sdslen(sds1) != sdslen(sds2) || sdscmp(sds1, sds2);
 }
 
 size_t dictSdsEmbedKey(unsigned char *buf, size_t buf_len, const void *key, uint8_t *key_offset) {
@@ -542,17 +549,11 @@ dictType objectKeyHeapPointerValueDictType = {
     NULL                  /* allow to expand */
 };
 
-/* Set dictionary type. Keys are SDS strings, values are not used. */
-dictType setDictType = {
-    dictSdsHash,       /* hash function */
-    NULL,              /* key dup */
-    dictSdsKeyCompare, /* key compare */
-    dictSdsDestructor, /* key destructor */
-    NULL,              /* val destructor */
-    NULL,              /* allow to expand */
-    .no_value = 1,     /* no values in this dict */
-    .keys_are_odd = 1  /* an SDS string is always an odd pointer */
-};
+/* Set hashtable type. Items are SDS strings */
+hashtableType setHashtableType = {
+    .hashFunction = dictSdsHash,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = dictSdsDestructor};
 
 /* Sorted sets hash (note: a skiplist is used in addition to the hash table) */
 dictType zsetDictType = {
@@ -570,11 +571,6 @@ uint64_t hashtableSdsHash(const void *key) {
 
 const void *hashtableObjectGetKey(const void *entry) {
     return objectGetKey(entry);
-}
-
-int hashtableSdsKeyCompare(const void *key1, const void *key2) {
-    const sds sds1 = (const sds)key1, sds2 = (const sds)key2;
-    return sdslen(sds1) != sdslen(sds2) || sdscmp(sds1, sds2);
 }
 
 int hashtableObjKeyCompare(const void *key1, const void *key2) {
@@ -644,6 +640,11 @@ dictType sdsReplyDictType = {
     NULL,              /* val destructor */
     NULL               /* allow to expand */
 };
+
+/* Hashtable type without destructor */
+hashtableType sdsReplyHashtableType = {
+    .hashFunction = dictSdsCaseHash,
+    .keyCompare = hashtableSdsKeyCompare};
 
 /* Keylist hash table type has unencoded Objects as keys and
  * lists as values. It's used for blocking operations (BLPOP) and to
@@ -6521,27 +6522,7 @@ void sendChildInfo(childInfoType info_type, size_t keys, char *pname) {
     sendChildInfoGeneric(info_type, keys, -1, pname);
 }
 
-/* Try to release pages back to the OS directly (bypassing the allocator),
- * in an effort to decrease CoW during fork. For small allocations, we can't
- * release any full page, so in an effort to avoid getting the size of the
- * allocation from the allocator (malloc_size) when we already know it's small,
- * we check the size_hint. If the size is not already known, passing a size_hint
- * of 0 will lead the checking the real size of the allocation.
- * Also please note that the size may be not accurate, so in order to make this
- * solution effective, the judgement for releasing memory pages should not be
- * too strict. */
-void dismissMemory(void *ptr, size_t size_hint) {
-    if (ptr == NULL) return;
-
-    /* madvise(MADV_DONTNEED) can not release pages if the size of memory
-     * is too small, we try to release only for the memory which the size
-     * is more than half of page size. */
-    if (size_hint && size_hint <= server.page_size / 2) return;
-
-    zmadvise_dontneed(ptr);
-}
-
-/* Dismiss big chunks of memory inside a client structure, see dismissMemory() */
+/* Dismiss big chunks of memory inside a client structure, see zmadvise_dontneed() */
 void dismissClientMemory(client *c) {
     /* Dismiss client query buffer and static reply buffer. */
     dismissMemory(c->buf, c->buf_usable_size);
@@ -6572,7 +6553,7 @@ void dismissClientMemory(client *c) {
 /* In the child process, we don't need some buffers anymore, and these are
  * likely to change in the parent when there's heavy write traffic.
  * We dismiss them right away, to avoid CoW.
- * see dismissMemory(). */
+ * see zmadvise_dontneed(). */
 void dismissMemoryInChild(void) {
     /* madvise(MADV_DONTNEED) may not work if Transparent Huge Pages is enabled. */
     if (server.thp_enabled) return;
