@@ -3220,45 +3220,38 @@ int clusterProcessPacket(clusterLink *link) {
         }
 
         if (type == CLUSTERMSG_TYPE_MEET) {
-            if (!sender && link->node) {
-                /* We received a MEET packet on an existing link.
-                 * It means we received a second MEET packet from a node during the handshake
-                 * process before we were able to send a PING packet to that node from our outbound
-                 * connection.
-                 * Here we are avoiding going into the next "else if" branch so as to not assert in
-                 * setClusterNodeToInboundClusterLink() because of link->node not being NULL.
-                 *
-                 * The other sends a MEET packet because it detects that there is no inbound link,
-                 * this node creates a new node in HANDSHAKE state (with a random node name), and
-                 * respond with a PONG. The other node receives the PONG and removes the
-                 * CLUSTER_NODE_MEET flag.
-                 * This node is supposed to open an outbound connection to the other node in the
-                 * next cron cycle, but before this happens, the other node might re-send a MEET on
-                 * the same link because it still detects no inbound connection.
-                 *
-                 * Note that in getNodeFromLinkAndMsg, the node in the handshake state has a random name
-                 * and not truly "known", so we don't know the sender. */
-                debugServerAssert(link->inbound && nodeInHandshake(link->node));
-            } else if (!sender) {
-                /* Add this node if it is new for us and the msg type is MEET.
-                 * In this stage we don't try to add the node with the right
-                 * flags, replicaof pointer, and so forth, as this details will be
-                 * resolved when we'll receive PONGs from the node. The exception
-                 * to this is the flag that indicates extensions are supported, as
-                 * we want to send extensions right away in the return PONG in order
-                 * to reduce the amount of time needed to stabilize the shard ID. */
-                clusterNode *node;
+            if (!sender) {
+                if (!link->node) {
+                    /* Add this node if it is new for us and the msg type is MEET.
+                    * In this stage we don't try to add the node with the right
+                    * flags, replicaof pointer, and so forth, as this details will be
+                    * resolved when we'll receive PONGs from the node. The exception
+                    * to this is the flag that indicates extensions are supported, as
+                    * we want to send extensions right away in the return PONG in order
+                    * to reduce the amount of time needed to stabilize the shard ID. */
+                    clusterNode *node;
 
-                node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
-                serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
-                getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
-                node->cport = ntohs(hdr->cport);
-                if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
-                    node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                    node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
+                    serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
+                    getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
+                    node->cport = ntohs(hdr->cport);
+                    if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
+                        node->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
+                    }
+                    setClusterNodeToInboundClusterLink(node, link);
+                    clusterAddNode(node);
+                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
+                } else {
+                    /* A second MEET packet was received on an existing link during the handshake process.
+                     * This happens when the other node detects no inbound link, and re-sends a MEET packet
+                     * before this node can respond with a PING. This MEET is a no-op.
+                     *
+                     * Note: Nodes in HANDSHAKE state are not fully "known" (random names), so the sender
+                     * remains unidentified at this point. The MEET packet might be re-sent if the inbound
+                     * connection is still unestablished by the next cron cycle.
+                     */
+                    debugServerAssert(link->inbound && nodeInHandshake(link->node));
                 }
-                setClusterNodeToInboundClusterLink(node, link);
-                clusterAddNode(node);
-                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
 
                 /* If this is a MEET packet from an unknown node, we still process
                  * the gossip section here since we have to trust the sender because
