@@ -69,7 +69,7 @@ set ::single_tests {}
 set ::run_solo_tests {}
 set ::skip_till ""
 set ::external 0; # If "1" this means, we are running against external instance
-set ::old_server_path {}; # Used in upgrade and inter-version tests
+set ::other_server_path {}; # Used in upgrade and inter-version tests
 set ::file ""; # If set, runs only the tests in this comma separated list
 set ::curfile ""; # Hold the filename of the current suite
 set ::accurate 0; # If true runs fuzz tests with more iterations
@@ -612,7 +612,7 @@ proc print_help_screen {} {
         "--tls-module       Run tests in TLS mode with Valkey module."
         "--host <addr>      Run tests against an external host."
         "--port <port>      TCP port to use against external host."
-        "--old-server-path <path>"
+        "--other-server-path <path>"
         "                   Path to another version of valkey-server, used for inter-"
         "                   version compatibility testing."
         "--baseport <port>  Initial port number for spawned valkey servers."
@@ -688,8 +688,8 @@ for {set j 0} {$j < [llength $argv]} {incr j} {
     } elseif {$opt eq {--port}} {
         set ::port $arg
         incr j
-    } elseif {$opt eq {--old-server-path}} {
-        set ::old_server_path $arg
+    } elseif {$opt eq {--other-server-path}} {
+        set ::other_server_path $arg
         incr j
     } elseif {$opt eq {--baseport}} {
         set ::baseport $arg

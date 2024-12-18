@@ -216,8 +216,8 @@ proc tags_acceptable {tags err_return} {
         return 0
     }
 
-    if {$::old_server_path eq {} && [lsearch $tags "needs:old-server"] >= 0} {
-        set err "Old server path not provided"
+    if {$::other_server_path eq {} && [lsearch $tags "needs:other-server"] >= 0} {
+        set err "Other server path not provided"
         return 0
     }
 
@@ -441,7 +441,7 @@ proc start_server {options {code undefined}} {
     set args {}
     set keep_persistence false
     set config_lines {}
-    set start_old_server 0
+    set start_other_server 0
 
     # Wait for the server to be ready and check for server liveness/client connectivity before starting the test.
     set wait_ready true
@@ -449,8 +449,8 @@ proc start_server {options {code undefined}} {
     # parse options
     foreach {option value} $options {
         switch $option {
-            "start-old-server" {
-                set start_old_server $value
+            "start-other-server" {
+                set start_other_server $value ; # boolean, 0 or 1
             }
             "config" {
                 set baseconfig $value
@@ -502,8 +502,8 @@ proc start_server {options {code undefined}} {
         return
     }
 
-    if {$start_old_server} {
-        set executable $::old_server_path
+    if {$start_other_server} {
+        set executable $::other_server_path
         if {![file executable $executable]} {
             error "File not found or not executable: $executable"
         }
