@@ -524,6 +524,77 @@ int functionsUnregisterEngine(const char *engine_name) {
     return C_OK;
 }
 
+static void functionsReturnCallDeferredResult(scriptRunCtx *run_ctx,
+                                              const callResult *result) {
+    serverAssert(result->kind == VMSE_ARRAY ||
+                 result->kind == VMSE_SET ||
+                 result->kind == VMSE_MAP);
+
+    client *c = run_ctx->original_client;
+    void *replylen = addReplyDeferredLen(c);
+    long length = 0;
+    while (result->val.deferred.returnNextElem(result->val.deferred.context)) {
+        length++;
+    }
+
+    if (result->kind == VMSE_ARRAY) {
+        setDeferredArrayLen(c, replylen, length);
+    } else if (result->kind == VMSE_SET) {
+        setDeferredSetLen(c, replylen, length);
+    } else {
+        setDeferredMapLen(c, replylen, length);
+    }
+}
+
+void functionsReturnCallResult(scriptRunCtx *run_ctx, const callResult *result) {
+    client *c = run_ctx->original_client;
+    switch (result->kind) {
+    case VMSE_ERROR:
+        addReplyError(c, result->val.buffer.ptr);
+        break;
+    case VMSE_ERROR_FORMAT:
+        addReplyErrorFormatEx(c, result->val.error.flags, result->val.error.buffer.ptr);
+        break;
+    case VMSE_STATUS:
+        addReplyStatusLength(c, result->val.buffer.ptr, result->val.buffer.len);
+        break;
+    case VMSE_BULK_STRING:
+        addReplyBulkCString(c, result->val.buffer.ptr);
+        break;
+    case VMSE_VERBATIM:
+        addReplyVerbatim(c, result->val.verb.buffer.ptr,
+                         result->val.verb.buffer.len, result->val.verb.format);
+        break;
+    case VMSE_BIGNUM:
+        addReplyBigNum(c, result->val.buffer.ptr, result->val.buffer.len);
+        break;
+    case VMSE_BOOL:
+        if (run_ctx->c->resp == 2) {
+            addReply(c, result->val.i32 ? shared.cone : shared.null[c->resp]);
+        } else {
+            addReplyBool(c, result->val.i32);
+        }
+        break;
+    case VMSE_LONG_LONG:
+        addReplyLongLong(c, result->val.i64);
+        break;
+    case VMSE_DOUBLE:
+        addReplyDouble(c, result->val.d64);
+        break;
+    case VMSE_HUMAN_LONG_DOUBLE:
+        addReplyHumanLongDouble(c, result->val.d128);
+        break;
+    case VMSE_NULL:
+        addReplyNull(c);
+        break;
+    case VMSE_ARRAY:
+    case VMSE_SET:
+    case VMSE_MAP:
+        functionsReturnCallDeferredResult(run_ctx, result);
+        break;
+    }
+}
+
 /*
  * FUNCTION STATS
  */

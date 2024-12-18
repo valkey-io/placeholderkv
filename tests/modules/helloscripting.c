@@ -319,15 +319,19 @@ callHelloLangFunction(ValkeyModuleCtx *module_ctx,
                       void *compiled_function,
                       ValkeyModuleString **keys, size_t nkeys,
                       ValkeyModuleString **args, size_t nargs) {
+    VALKEYMODULE_NOT_USED(module_ctx);
     VALKEYMODULE_NOT_USED(engine_ctx);
-    VALKEYMODULE_NOT_USED(func_ctx);
     VALKEYMODULE_NOT_USED(keys);
     VALKEYMODULE_NOT_USED(nkeys);
 
-    HelloFunc *func = (HelloFunc *)compiled_function;
-    uint32_t result = executeHelloLangFunction(func, args, nargs);
+    ValkeyModuleScriptingEngineCallResult result = {
+        .kind = VMSE_LONG_LONG,
+    };
 
-    ValkeyModule_ReplyWithLongLong(module_ctx, result);
+    HelloFunc *func = (HelloFunc *)compiled_function;
+    result.val.i64 = executeHelloLangFunction(func, args, nargs);
+
+    ValkeyModule_ReturnFunctionCallResult(func_ctx, &result);
 }
 
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv,
