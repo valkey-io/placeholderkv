@@ -392,7 +392,9 @@ start_server {tags {"info" "external:skip" "debug_defrag:skip"}} {
             set org_qbuf_limit [lindex [r config get client-query-buffer-limit] 1]
             r config set client-query-buffer-limit 1048576
             catch {r set key [string repeat a 1048576]}
-            catch {r read} ; # We sometimes get a broken pipe and I/O error, so make sure there are no more errors
+            # We might get an error on the write path of the previous command, so there will be
+            # a secondary read error we need to ignore before proceeding on the test.
+            catch {r read}
             set info [r info stats]
             assert_equal [getInfoProperty $info client_query_buffer_limit_disconnections] {1}
             r config set client-query-buffer-limit $org_qbuf_limit
