@@ -393,6 +393,34 @@ void getCommand(client *c) {
     getGenericCommand(c);
 }
 
+void getExpireGenericCommand(client *c, int output_ms) {
+    long long expire;
+    robj *o;
+
+    if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.null[c->resp])) == NULL)
+        return;
+
+    if (checkType(c, o, OBJ_STRING)) {
+        return;
+    }
+
+    addReplyArrayLen(c, 2);
+    addReplyBulk(c, o);
+
+    /* The key exists. Return -1 if it has no expire, or the actual
+     * expire value otherwise. */
+    expire = getExpire(c->db, c->argv[1]);
+    if (expire == -1) {
+        addReplyLongLong(c, -1);
+    } else {
+        addReplyLongLong(c, output_ms ? expire : ((expire + 500) / 1000));
+    }
+}
+
+void getpxtCommand(client *c) {
+    getExpireGenericCommand(c, 1);
+}
+
 /*
  * GETEX <key> [PERSIST][EX seconds][PX milliseconds][EXAT seconds-timestamp][PXAT milliseconds-timestamp]
  *

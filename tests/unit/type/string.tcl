@@ -658,6 +658,23 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         assert_range [r ttl foo] 5 10
     }
 
+    test "GETPXT after SET PXAT" {
+        r del foo
+        r set foo bar pxat 17344823940230
+        r getpxt foo
+    } {bar 17344823940230}
+
+    test "GETPXT after SET" {
+        r del foo
+        r set foo bar
+        r getpxt foo
+    } {bar -1}
+
+    test "GETPXT with no entry" {
+        r del foo
+        r getpxt foo
+    } {}
+
     test "SET EXAT / PXAT Expiration time is expired" {
         r debug set-active-expire 0
         set repl [attach_to_replication_stream]
