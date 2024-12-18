@@ -1179,8 +1179,6 @@ static int fetchClusterSlotsConfiguration(client c) {
     if (is_fetching_slots) return -1; // TODO: use other codes || errno ?
     atomic_store_explicit(&config.is_fetching_slots, 1, memory_order_relaxed);
     fprintf(stderr, "WARNING: Cluster slots configuration changed, fetching new one...\n");
-    fprintf(stderr, "If you are using the --rfr option and sending write requests (set type commands),\nthe requests could not be processed properly.\n");
-
     const char *errmsg = "Failed to update cluster slots configuration";
 
     /* printf("[%d] fetchClusterSlotsConfiguration\n", c->thread_id); */
