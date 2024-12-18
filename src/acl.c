@@ -297,11 +297,6 @@ int ACLListMatchSds(void *a, void *b) {
     return sdscmp(a, b) == 0;
 }
 
-/* Method to free list elements from ACL users password/patterns lists. */
-void ACLListFreeSds(void *item) {
-    sdsfree(item);
-}
-
 /* Method to duplicate list elements from ACL users password/patterns lists. */
 void *ACLListDupSds(void *item) {
     return sdsdup(item);
@@ -374,7 +369,7 @@ aclSelector *ACLCreateSelector(int flags) {
     listSetFreeMethod(selector->patterns, ACLListFreeKeyPattern);
     listSetDupMethod(selector->patterns, ACLListDupKeyPattern);
     listSetMatchMethod(selector->channels, ACLListMatchSds);
-    listSetFreeMethod(selector->channels, ACLListFreeSds);
+    listSetFreeMethod(selector->channels, sdsfreeVoid);
     listSetDupMethod(selector->channels, ACLListDupSds);
     memset(selector->allowed_commands, 0, sizeof(selector->allowed_commands));
 
@@ -445,7 +440,7 @@ user *ACLCreateUser(const char *name, size_t namelen) {
     u->passwords = listCreate();
     u->acl_string = NULL;
     listSetMatchMethod(u->passwords, ACLListMatchSds);
-    listSetFreeMethod(u->passwords, ACLListFreeSds);
+    listSetFreeMethod(u->passwords, sdsfreeVoid);
     listSetDupMethod(u->passwords, ACLListDupSds);
 
     u->selectors = listCreate();
@@ -487,6 +482,11 @@ void ACLFreeUser(user *u) {
     listRelease(u->passwords);
     listRelease(u->selectors);
     zfree(u);
+}
+
+/* Used for generic free functions. */
+static void ACLFreeUserVoid(void *u) {
+    ACLFreeUser(u);
 }
 
 /* When a user is deleted we need to cycle the active
@@ -2445,12 +2445,12 @@ sds ACLLoadFromFile(const char *filename) {
             c->user = new_user;
         }
 
-        if (user_channels) raxFreeWithCallback(user_channels, (void (*)(void *))listRelease);
-        raxFreeWithCallback(old_users, (void (*)(void *))ACLFreeUser);
+        if (user_channels) raxFreeWithCallback(user_channels, listReleaseVoid);
+        raxFreeWithCallback(old_users, ACLFreeUserVoid);
         sdsfree(errors);
         return NULL;
     } else {
-        raxFreeWithCallback(Users, (void (*)(void *))ACLFreeUser);
+        raxFreeWithCallback(Users, ACLFreeUserVoid);
         Users = old_users;
         errors =
             sdscat(errors, "WARNING: ACL errors detected, no change to the previously active ACL rules was performed");

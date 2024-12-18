@@ -421,7 +421,7 @@ static void activeDefragQuickListNodes(quicklist *ql) {
 static void defragLater(robj *obj) {
     if (!defrag_later) {
         defrag_later = listCreate();
-        listSetFreeMethod(defrag_later, (void (*)(void *))sdsfree);
+        listSetFreeMethod(defrag_later, sdsfreeVoid);
         defrag_later_cursor = 0;
     }
     sds key = sdsdup(objectGetKey(obj));
