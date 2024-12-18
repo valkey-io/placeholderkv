@@ -355,8 +355,8 @@ start_server {tags {"dual-channel-replication external:skip"}} {
                 verify_replica_online $primary 0 500
                 verify_replica_online $primary 1 500
 
-                wait_for_value_to_propegate_to_replica $primary $replica1 "key1"
-                wait_for_value_to_propegate_to_replica $primary $replica2 "key1"
+                wait_for_value_to_propagate_to_replica $primary $replica1 "key1"
+                wait_for_value_to_propagate_to_replica $primary $replica2 "key1"
 
                 assert {[s 0 total_forks] eq "1" }       
             }
@@ -374,8 +374,8 @@ start_server {tags {"dual-channel-replication external:skip"}} {
                 $replica2 replicaof $primary_host $primary_port
                 verify_replica_online $primary 0 500
                 verify_replica_online $primary 1 500
-                wait_for_value_to_propegate_to_replica $primary $replica1 "key2"
-                wait_for_value_to_propegate_to_replica $primary $replica2 "key2"
+                wait_for_value_to_propagate_to_replica $primary $replica1 "key2"
+                wait_for_value_to_propagate_to_replica $primary $replica2 "key2"
                 wait_for_condition 50 1000 {
                     [status $replica1 master_link_status] == "up"
                 } else {
@@ -444,7 +444,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
                 } else {
                     fail "Replica is not synced"
                 }
-                wait_for_value_to_propegate_to_replica $primary $replica1 "key3"
+                wait_for_value_to_propagate_to_replica $primary $replica1 "key3"
 
                 # Verify that we did not use dual-channel-replication sync
                 assert {[status $primary sync_partial_ok] == $cur_psync}
@@ -483,7 +483,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             } else {
                 fail "Replica is not synced"
             }
-            wait_for_value_to_propegate_to_replica $primary $replica "key1"
+            wait_for_value_to_propagate_to_replica $primary $replica "key1"
             # Confirm the occurrence of a race condition.
             wait_for_log_messages -1 {"*<Dual Channel> Psync established after rdb load*"} 0 2000 1
         }
@@ -775,7 +775,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
 
         $replica config set dual-channel-replication-enabled yes
         $replica config set loglevel debug
-        $replica config set repl-timeout 10
+        $replica config set repl-timeout 60
         $primary config set repl-backlog-size 1mb
 
         test "Test dual-channel-replication primary gets cob overrun before established psync" {
@@ -815,6 +815,37 @@ start_server {tags {"dual-channel-replication external:skip"}} {
         } else {
             fail "Primary should abort sync"
         }
+        stop_write_load $load_handle0
+        stop_write_load $load_handle1
+        stop_write_load $load_handle2
+    }
+}
+
+start_server {tags {"dual-channel-replication external:skip"}} {
+    set primary [srv 0 client]
+    set primary_host [srv 0 host]
+    set primary_port [srv 0 port]
+    set loglines [count_log_lines 0]
+
+    $primary config set repl-diskless-sync yes
+    $primary config set dual-channel-replication-enabled yes
+    $primary config set client-output-buffer-limit "replica 1100k 0 0"
+    $primary config set loglevel debug
+    start_server {} {
+        set replica [srv 0 client]
+        set replica_host [srv 0 host]
+        set replica_port [srv 0 port]
+        set replica_log [srv 0 stdout]
+        set replica_pid  [srv 0 pid]
+        
+        set load_handle0 [start_write_load $primary_host $primary_port 60]
+        set load_handle1 [start_write_load $primary_host $primary_port 60]
+        set load_handle2 [start_write_load $primary_host $primary_port 60]
+
+        $replica config set dual-channel-replication-enabled yes
+        $replica config set loglevel debug
+        $replica config set repl-timeout 60
+        $primary config set repl-backlog-size 1mb
         
         $replica debug pause-after-fork 1
         $primary debug populate 1000 primary 100000

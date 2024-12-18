@@ -204,7 +204,7 @@ void scriptingInit(int setup) {
      * and we need to free them respectively. */
     lctx.lua_scripts = dictCreate(&shaScriptObjectDictType);
     lctx.lua_scripts_lru_list = listCreate();
-    listSetFreeMethod(lctx.lua_scripts_lru_list, (void (*)(void *))sdsfree);
+    listSetFreeMethod(lctx.lua_scripts_lru_list, sdsfreeVoid);
     lctx.lua_scripts_mem = 0;
 
     luaRegisterServerAPI(lua);
@@ -777,7 +777,7 @@ void ldbInit(void) {
     ldb.conn = NULL;
     ldb.active = 0;
     ldb.logs = listCreate();
-    listSetFreeMethod(ldb.logs, (void (*)(void *))sdsfree);
+    listSetFreeMethod(ldb.logs, sdsfreeVoid);
     ldb.children = listCreate();
     ldb.src = NULL;
     ldb.lines = 0;

@@ -931,6 +931,30 @@ proc debug_digest {{level 0}} {
     r $level debug digest
 }
 
+proc main_hash_table_size {{level 0}} {
+    set dbnum [expr {$::singledb ? 0 : 9}]
+    append re \
+        {^\[Dictionary HT\]\n} \
+        {Hash table 0 stats \(main hash table\):\n} \
+        { table size: (\d+)}
+    regexp $re [r $level DEBUG HTSTATS $dbnum] -> table_size
+    return $table_size
+}
+
+# Returns the number of keys that can be added before rehashing starts. Insert
+# this number of keys and no rehashing happens. Insert one more key and
+# rehashing can be triggered by the cron function. Insert two more keys and
+# rehashing is triggered immediately.
+proc main_hash_table_keys_before_rehashing_starts {{level 0}} {
+    # This fill factor is defined internally in hashtable.c and duplicated here.
+    # If we change the fill factor, this needs to be updated accordingly.
+    set MAX_FILL_PERCENT_SOFT 100
+    set table_size [main_hash_table_size $level]
+    set dbsize [r $level dbsize]
+    set free_space [expr {$table_size * $MAX_FILL_PERCENT_SOFT / 100 - $dbsize - 1}]
+    return $free_space
+}
+
 proc wait_for_blocked_client {{idx 0}} {
     wait_for_condition 50 100 {
         [s $idx blocked_clients] ne 0

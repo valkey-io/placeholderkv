@@ -22,6 +22,12 @@ if (VALKEY_RELEASE_BUILD)
     set_property(TARGET valkey-server PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif ()
 
+if (DEBUG_FORCE_DEFRAG)
+    message(STATUS "Forcing Active Defrag run on valkey-server")
+    target_compile_definitions(valkey-server PRIVATE DEBUG_FORCE_DEFRAG)
+    target_compile_definitions(valkey-server PRIVATE HAVE_DEFRAG)
+endif ()
+
 if (BUILD_SANITIZER)
     # 'BUILD_SANITIZER' is defined in ValkeySetup module (based on user input)
     # If defined, the variables 'VALKEY_SANITAIZER_CFLAGS' and 'VALKEY_SANITAIZER_LDFLAGS'
@@ -55,7 +61,7 @@ if (BUILD_RDMA_MODULE)
     set(MODULE_NAME "valkey-rdma")
     message(STATUS "Building RDMA module")
     add_library(${MODULE_NAME} SHARED "${VALKEY_RDMA_MODULE_SRCS}")
-    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE -DUSE_RDMA=1)
+    target_compile_options(${MODULE_NAME} PRIVATE -DBUILD_RDMA_MODULE=2 -DUSE_RDMA=1)
     target_link_libraries(${MODULE_NAME} "${RDMA_LIBS}")
     # remove the "lib" prefix from the module
     set_target_properties(${MODULE_NAME} PROPERTIES PREFIX "")

@@ -2190,7 +2190,6 @@ werr:
 }
 
 int rewriteAppendOnlyFileRio(rio *aof) {
-    dictEntry *de;
     int j;
     long key_count = 0;
     long long updated_time = 0;
@@ -2219,17 +2218,18 @@ int rewriteAppendOnlyFileRio(rio *aof) {
 
         kvs_it = kvstoreIteratorInit(db->keys);
         /* Iterate this DB writing every entry */
-        while ((de = kvstoreIteratorNext(kvs_it)) != NULL) {
+        void *next;
+        while (kvstoreIteratorNext(kvs_it, &next)) {
+            robj *o = next;
             sds keystr;
-            robj key, *o;
+            robj key;
             long long expiretime;
             size_t aof_bytes_before_key = aof->processed_bytes;
 
-            keystr = dictGetKey(de);
-            o = dictGetVal(de);
+            keystr = objectGetKey(o);
             initStaticStringObject(key, keystr);
 
-            expiretime = getExpire(db, &key);
+            expiretime = objectGetExpire(o);
 
             /* Save the key and associated value */
             if (o->type == OBJ_STRING) {
