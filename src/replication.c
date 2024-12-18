@@ -4155,13 +4155,7 @@ void replicationCachePrimary(client *c) {
     c->reply_bytes = 0;
     c->bufpos = 0;
     resetClient(c);
-
-    /* Reset the primary IO state. */
-    c->nwritten = 0;
-    c->nread = 0;
-    c->io_read_state = c->io_write_state = CLIENT_IDLE;
-    c->io_parsed_cmd = NULL;
-    c->flag.pending_command = 0;
+    resetClientIOState(c);
 
     /* Save the primary. Server.primary will be set to null later by
      * replicationHandlePrimaryDisconnection(). */
