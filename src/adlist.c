@@ -77,8 +77,8 @@ void listRelease(list *list) {
     zfree(list);
 }
 
-/* Just like listRelease, but takes in a into a generic free
- * function that expects (void *). */
+/* Just like listRelease, but takes the list as a (void *).
+ * Useful as generic free callback. */
 void listReleaseVoid(void *l) {
     listRelease((list *)l);
 }
