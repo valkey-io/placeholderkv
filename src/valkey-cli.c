@@ -218,10 +218,8 @@ static struct config {
     int shutdown;
     int monitor_mode;
     int pubsub_mode;
-    int pubsub_channel_count;
-    int pubsub_pattern_count;
-    int pubsub_shard_count;
-    int pubsub_total_count;
+    int pubsub_unsharded_count; /* channels and patterns */
+    int pubsub_sharded_count;   /* shard channels */
     int blocking_state_aborted; /* used to abort monitor_mode and pubsub_mode. */
     int latency_mode;
     int latency_dist_mode;
@@ -2236,16 +2234,14 @@ static int cliReadReply(int output_raw_strings) {
                 char *cmd = reply->element[0]->str;
                 int count = reply->element[2]->integer;
 
-                if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "unsubscribe") == 0) {
-                    config.pubsub_channel_count = count;
-                } else if (strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
-                    config.pubsub_pattern_count = count;
+                if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 ||
+                    strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+                    config.pubsub_unsharded_count = count;
                 } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-                    config.pubsub_shard_count = count;
+                    config.pubsub_sharded_count = count;
                 }
-                config.pubsub_total_count = config.pubsub_channel_count + config.pubsub_pattern_count + config.pubsub_shard_count;
-
-                if (config.pubsub_total_count == 0) {
+                
+                if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
                     config.pubsub_mode = 0;
                     cliRefreshPrompt();
                 }
@@ -9522,10 +9518,8 @@ int main(int argc, char **argv) {
     config.shutdown = 0;
     config.monitor_mode = 0;
     config.pubsub_mode = 0;
-    config.pubsub_channel_count = 0;
-    config.pubsub_pattern_count = 0;
-    config.pubsub_shard_count = 0;
-    config.pubsub_total_count = 0;
+    config.pubsub_unsharded_count = 0;
+    config.pubsub_sharded_count = 0;
     config.blocking_state_aborted = 0;
     config.latency_mode = 0;
     config.latency_dist_mode = 0;
