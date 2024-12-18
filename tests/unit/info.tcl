@@ -396,7 +396,6 @@ start_server {tags {"info" "external:skip" "debug_defrag:skip"}} {
             # an I/O error based on how the client is designed. We will need to manually consume
             # the secondary I/O error.
             if {![string match "I/O error*" $e]} {
-                puts $e
                 catch {r read}
             }
             set info [r info stats]
