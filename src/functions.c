@@ -555,7 +555,7 @@ void functionsReturnCallResult(scriptRunCtx *run_ctx, const callResult *result) 
         addReplyError(c, result->val.buffer.ptr);
         break;
     case VMSE_ERROR_FORMAT:
-        addReplyErrorFormatEx(c, result->val.error.flags, "%s", result->val.error.buffer.ptr);
+        addReplyErrorFormatEx(c, result->val.error.flags, result->val.error.buffer.ptr);
         break;
     case VMSE_STATUS:
         addReplyStatusLength(c, result->val.buffer.ptr, result->val.buffer.len);
