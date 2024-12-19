@@ -4430,7 +4430,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
          * by the replica requesting our vote. Refuse to vote for this replica. */
         serverLog(LL_WARNING,
                   "Failover auth denied to %.40s (%s): "
-                  "slot %d epoch (%llu) > reqEpoch (%llu)",
+                  "slot %d epoch (%llu) > reqConfigEpoch (%llu)",
                   node->name, node->human_nodename, j, (unsigned long long)server.cluster->slots[j]->configEpoch,
                   (unsigned long long)requestConfigEpoch);
         return;
@@ -4721,8 +4721,8 @@ void clusterHandleReplicaFailover(void) {
     if (server.cluster->failover_auth_sent == 0) {
         server.cluster->currentEpoch++;
         server.cluster->failover_auth_epoch = server.cluster->currentEpoch;
-        serverLog(LL_NOTICE, "Starting a failover election for epoch %llu.",
-                  (unsigned long long)server.cluster->currentEpoch);
+        serverLog(LL_NOTICE, "Starting a failover election for epoch %llu, node config epoch is %llu",
+                  (unsigned long long)server.cluster->currentEpoch, (unsigned long long)nodeEpoch(myself));
         clusterRequestFailoverAuth();
         server.cluster->failover_auth_sent = 1;
         clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_UPDATE_STATE | CLUSTER_TODO_FSYNC_CONFIG);
