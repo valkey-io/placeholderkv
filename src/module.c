@@ -13096,6 +13096,8 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
 
 /* Registers a new scripting engine in the server.
  *
+ * - `module_ctx`: the module context object.
+ *
  * - `engine_name`: the name of the scripting engine. This name will match
  *   against the engine name specified in the script header using a shebang.
  *
@@ -13108,7 +13110,7 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
  * VALKEYMODULE_ERR in case some failure occurs. In case of a failure, an error
  * message is logged.
  */
-int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
+int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
                                const char *engine_name,
                                ValkeyModuleScriptingEngineCtx *engine_ctx,
                                ValkeyModuleScriptingEngineMethods *engine_methods) {
@@ -13124,7 +13126,7 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *ctx,
     }
 
     if (functionsRegisterEngine(engine_name,
-                                ctx->module,
+                                module_ctx->module,
                                 engine_ctx,
                                 engine_methods) != C_OK) {
         return VALKEYMODULE_ERR;
