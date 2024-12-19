@@ -2951,11 +2951,11 @@ void rdbLoadProgressCallback(rio *r, const void *buf, size_t len) {
  * structure with out performing the actual functions loading. */
 int rdbFunctionLoad(rio *rdb, int ver, functionsLibCtx *lib_ctx, int rdbflags, sds *err) {
     UNUSED(ver);
-    char *error = NULL;
+    sds error = NULL;
     sds final_payload = NULL;
     int res = C_ERR;
     if (!(final_payload = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL))) {
-        error = valkey_asprintf("Failed loading library payload");
+        error = sdsnew("Failed loading library payload");
         goto done;
     }
 
@@ -2964,7 +2964,7 @@ int rdbFunctionLoad(rio *rdb, int ver, functionsLibCtx *lib_ctx, int rdbflags, s
         if (!(library_name =
                   functionsCreateWithLibraryCtx(final_payload, rdbflags & RDBFLAGS_ALLOW_DUP, &error, lib_ctx, 0))) {
             if (!error) {
-                error = valkey_asprintf("Failed creating the library");
+                error = sdsnew("Failed creating the library");
             }
             goto done;
         }
@@ -2977,11 +2977,10 @@ done:
     if (final_payload) sdsfree(final_payload);
     if (error) {
         if (err) {
-            *err = sdsnew(error);
-            zfree(error);
+            *err = error;
         } else {
             serverLog(LL_WARNING, "Failed creating function, %s", error);
-            zfree(error);
+            sdsfree(error);
         }
     }
     return res;

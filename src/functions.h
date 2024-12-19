@@ -65,13 +65,10 @@ typedef struct engine {
     /* engine specific context */
     engineCtx *engine_ctx;
 
-    /* Create function callback, get the engine_ctx, and function code
-     * engine_ctx - opaque struct that was created on engine initialization
-     * li - library information that need to be provided and when add functions
-     * code - the library code
-     * timeout - timeout for the library creation (0 for no timeout)
-     * err - description of error (if occurred)
-     * returns C_ERR on error and set err to be the error message */
+    /* Compiles the script code and returns an array of compiled functions
+     * registered in the script./
+     *
+     * Returns NULL on error and set err to be the error message */
     compiledFunction **(*create)(
         engineCtx *engine_ctx,
         const char *code,

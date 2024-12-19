@@ -259,20 +259,19 @@ static int functionLibCreateFunction(robj *name,
                                      functionLibInfo *li,
                                      robj *desc,
                                      uint64_t f_flags,
-                                     char **err) {
+                                     sds *err) {
     serverAssert(name->type == OBJ_STRING);
     serverAssert(desc == NULL || desc->type == OBJ_STRING);
 
     if (functionsVerifyName(name->ptr) != C_OK) {
-        *err = valkey_asprintf("Function names can only contain letters, numbers,"
-                               " or underscores(_) and must be at least one "
-                               "character long");
+        *err = sdsnew("Function names can only contain letters, numbers, or "
+                      "underscores(_) and must be at least one character long");
         return C_ERR;
     }
 
     sds name_sds = sdsdup(name->ptr);
     if (dictFetchValue(li->functions, name_sds)) {
-        *err = valkey_asprintf("Function already exists in the library");
+        *err = sdsnew("Function already exists in the library");
         sdsfree(name_sds);
         return C_ERR;
     }
@@ -1064,16 +1063,16 @@ static int functionsVerifyName(sds name) {
     return C_OK;
 }
 
-int functionExtractLibMetaData(sds payload, functionsLibMetaData *md, char **err) {
+int functionExtractLibMetaData(sds payload, functionsLibMetaData *md, sds *err) {
     sds name = NULL;
     sds engine = NULL;
     if (strncmp(payload, "#!", 2) != 0) {
-        *err = valkey_asprintf("Missing library metadata");
+        *err = sdsnew("Missing library metadata");
         return C_ERR;
     }
     char *shebang_end = strchr(payload, '\n');
     if (shebang_end == NULL) {
-        *err = valkey_asprintf("Invalid library metadata");
+        *err = sdsnew("Invalid library metadata");
         return C_ERR;
     }
     size_t shebang_len = shebang_end - payload;
@@ -1082,7 +1081,7 @@ int functionExtractLibMetaData(sds payload, functionsLibMetaData *md, char **err
     sds *parts = sdssplitargs(shebang, &numparts);
     sdsfree(shebang);
     if (!parts || numparts == 0) {
-        *err = valkey_asprintf("Invalid library metadata");
+        *err = sdsnew("Invalid library metadata");
         sdsfreesplitres(parts, numparts);
         return C_ERR;
     }
@@ -1092,19 +1091,19 @@ int functionExtractLibMetaData(sds payload, functionsLibMetaData *md, char **err
         sds part = parts[i];
         if (strncasecmp(part, "name=", 5) == 0) {
             if (name) {
-                *err = valkey_asprintf("Invalid metadata value, name argument was given multiple times");
+                *err = sdscatfmt(sdsempty(), "Invalid metadata value, name argument was given multiple times");
                 goto error;
             }
             name = sdsdup(part);
             sdsrange(name, 5, -1);
             continue;
         }
-        *err = valkey_asprintf("Invalid metadata value given: %s", part);
+        *err = sdscatfmt(sdsempty(), "Invalid metadata value given: %s", part);
         goto error;
     }
 
     if (!name) {
-        *err = valkey_asprintf("Library name was not given");
+        *err = sdsnew("Library name was not given");
         goto error;
     }
 
@@ -1150,7 +1149,7 @@ static void freeCompiledFunctions(engine *engine,
 
 /* Compile and save the given library, return the loaded library name on success
  * and NULL on failure. In case on failure the err out param is set with relevant error message */
-sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLibCtx *lib_ctx, size_t timeout) {
+sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout) {
     dictIterator *iter = NULL;
     dictEntry *entry = NULL;
     functionLibInfo *old_li = NULL;
@@ -1162,15 +1161,14 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     }
 
     if (functionsVerifyName(md.name)) {
-        *err = valkey_asprintf("Library names can only contain letters, numbers,"
-                               " or underscores(_) and must be at least one "
-                               "character long");
+        *err = sdsnew("Library names can only contain letters, numbers, or underscores(_) and must be at least one "
+                      "character long");
         goto error;
     }
 
     engineInfo *ei = dictFetchValue(engines, md.engine);
     if (!ei) {
-        *err = valkey_asprintf("Engine '%s' not found", md.engine);
+        *err = sdscatfmt(sdsempty(), "Engine '%S' not found", md.engine);
         goto error;
     }
     engine *engine = ei->engine;
@@ -1178,7 +1176,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
     old_li = dictFetchValue(lib_ctx->libraries, md.name);
     if (old_li && !replace) {
         old_li = NULL;
-        *err = valkey_asprintf("Library '%s' already exists", md.name);
+        *err = sdscatfmt(sdsempty(), "Library '%S' already exists", md.name);
         goto error;
     }
 
@@ -1188,14 +1186,18 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
 
     new_li = engineLibraryCreate(md.name, ei, code);
     size_t num_compiled_functions = 0;
+    char *compile_error = NULL;
     compiledFunction **compiled_functions =
         engine->create(engine->engine_ctx,
                        md.code,
                        timeout,
                        &num_compiled_functions,
-                       err);
+                       &compile_error);
     if (compiled_functions == NULL) {
         serverAssert(num_compiled_functions == 0);
+        serverAssert(compile_error != NULL);
+        *err = sdsnew(compile_error);
+        zfree(compile_error);
         goto error;
     }
 
@@ -1222,7 +1224,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
                           num_compiled_functions);
 
     if (dictSize(new_li->functions) == 0) {
-        *err = valkey_asprintf("No functions registered");
+        *err = sdsnew("No functions registered");
         goto error;
     }
 
@@ -1232,7 +1234,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, char **err, functionsLi
         functionInfo *fi = dictGetVal(entry);
         if (dictFetchValue(lib_ctx->functions, fi->name)) {
             /* functions name collision, abort. */
-            *err = valkey_asprintf("Function %s already exists", fi->name);
+            *err = sdscatfmt(sdsempty(), "Function %s already exists", fi->name);
             goto error;
         }
     }
@@ -1283,7 +1285,7 @@ void functionLoadCommand(client *c) {
     }
 
     robj *code = c->argv[argc_pos];
-    char *err = NULL;
+    sds err = NULL;
     sds library_name = NULL;
     size_t timeout = LOAD_TIMEOUT_MS;
     if (mustObeyClient(c)) {
@@ -1291,8 +1293,7 @@ void functionLoadCommand(client *c) {
     }
     if (!(library_name = functionsCreateWithLibraryCtx(code->ptr, replace, &err, curr_functions_lib_ctx, timeout))) {
         serverAssert(err != NULL);
-        addReplyError(c, err);
-        zfree(err);
+        addReplyErrorSds(c, err);
         return;
     }
     /* Indicate that the command changed the data so it will be replicated and
