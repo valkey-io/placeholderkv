@@ -869,6 +869,9 @@ typedef struct ValkeyModuleScriptingEngineCallResult {
         /* Used by ARRAY, SET, MAP */
         struct {
             void *context;
+            /* This callback implementation should call
+             * `ValkeyModule_ReturnFunctionCallResult` with the next element of
+             * the array, set, or map. */
             int (*returnNextElem)(void *context);
         } deferred;
     } val;
