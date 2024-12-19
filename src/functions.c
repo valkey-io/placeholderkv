@@ -118,11 +118,28 @@ static dict *engines = NULL;
 /* Libraries Ctx. */
 static functionsLibCtx *curr_functions_lib_ctx = NULL;
 
+static void setupEngineModuleCtx(engineInfo *ei, client *c) {
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        moduleScriptingEngineInitContext(ei->module_ctx, ei->engineModule, c);
+    }
+}
+
+static void teardownEngineModuleCtx(engineInfo *ei) {
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        moduleFreeContext(ei->module_ctx);
+    }
+}
+
 static size_t functionMallocSize(functionInfo *fi) {
-    return zmalloc_size(fi) +
-           sdsAllocSize(fi->name) +
-           (fi->desc ? sdsAllocSize(fi->desc) : 0) +
-           fi->li->ei->engine->get_function_memory_overhead(fi->li->ei->module_ctx, fi->function);
+    setupEngineModuleCtx(fi->li->ei, NULL);
+    size_t size = zmalloc_size(fi) +
+                  sdsAllocSize(fi->name) +
+                  (fi->desc ? sdsAllocSize(fi->desc) : 0) +
+                  fi->li->ei->engine->get_function_memory_overhead(fi->li->ei->module_ctx, fi->function);
+    teardownEngineModuleCtx(fi->li->ei);
+    return size;
 }
 
 static size_t libraryMallocSize(functionLibInfo *li) {
@@ -144,10 +161,12 @@ static void engineFunctionDispose(void *obj) {
     if (fi->desc) {
         sdsfree(fi->desc);
     }
+    setupEngineModuleCtx(fi->li->ei, NULL);
     engine *engine = fi->li->ei->engine;
     engine->free_function(fi->li->ei->module_ctx,
                           engine->engine_ctx,
                           fi->function);
+    teardownEngineModuleCtx(fi->li->ei);
     zfree(fi);
 }
 
@@ -471,7 +490,7 @@ int functionsRegisterEngine(const char *engine_name,
     *ei = (engineInfo){
         .name = engine_name_sds,
         .engineModule = engine_module,
-        .module_ctx = engine_module ? moduleAllocateScriptingEngineContext(engine_module) : NULL,
+        .module_ctx = engine_module ? moduleAllocateContext() : NULL,
         .engine = eng,
         .c = c,
     };
@@ -480,9 +499,11 @@ int functionsRegisterEngine(const char *engine_name,
 
     functionsAddEngineStats(ei);
 
+    setupEngineModuleCtx(ei, NULL);
     engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) +
                            zmalloc_size(eng) +
                            eng->get_engine_memory_overhead(ei->module_ctx, eng->engine_ctx);
+    teardownEngineModuleCtx(ei);
 
     return C_OK;
 }
@@ -517,7 +538,6 @@ int functionsUnregisterEngine(const char *engine_name) {
     freeClient(ei->c);
     if (ei->engineModule != NULL) {
         serverAssert(ei->module_ctx != NULL);
-        moduleFreeContext(ei->module_ctx);
         zfree(ei->module_ctx);
     }
     zfree(ei);
@@ -742,6 +762,7 @@ static void fcallCommandGeneric(client *c, int ro) {
 
     scriptRunCtx run_ctx;
     if (scriptPrepareForRun(&run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK) return;
+    setupEngineModuleCtx(fi->li->ei, run_ctx.original_client);
 
     engine->call(fi->li->ei->module_ctx,
                  engine->engine_ctx,
@@ -751,6 +772,8 @@ static void fcallCommandGeneric(client *c, int ro) {
                  numkeys,
                  c->argv + 3 + numkeys,
                  c->argc - 3 - numkeys);
+
+    teardownEngineModuleCtx(fi->li->ei);
     scriptResetRun(&run_ctx);
 }
 
@@ -1054,6 +1077,8 @@ static void freeCompiledFunctions(engineInfo *ei,
                                   compiledFunction **compiled_functions,
                                   size_t num_compiled_functions,
                                   size_t free_function_from_idx) {
+    setupEngineModuleCtx(ei, NULL);
+
     for (size_t i = 0; i < num_compiled_functions; i++) {
         compiledFunction *func = compiled_functions[i];
         decrRefCount(func->name);
@@ -1069,6 +1094,8 @@ static void freeCompiledFunctions(engineInfo *ei,
     }
 
     zfree(compiled_functions);
+
+    teardownEngineModuleCtx(ei);
 }
 
 /* Compile and save the given library, return the loaded library name on success
@@ -1111,6 +1138,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
     new_li = engineLibraryCreate(md.name, ei, code);
     size_t num_compiled_functions = 0;
     char *compile_error = NULL;
+    setupEngineModuleCtx(ei, NULL);
     compiledFunction **compiled_functions =
         engine->create(ei->module_ctx,
                        engine->engine_ctx,
@@ -1118,6 +1146,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
                        timeout,
                        &num_compiled_functions,
                        &compile_error);
+    teardownEngineModuleCtx(ei);
     if (compiled_functions == NULL) {
         serverAssert(num_compiled_functions == 0);
         serverAssert(compile_error != NULL);
@@ -1235,8 +1264,10 @@ unsigned long functionsMemory(void) {
     while ((entry = dictNext(iter))) {
         engineInfo *ei = dictGetVal(entry);
         engine *engine = ei->engine;
+        setupEngineModuleCtx(ei, NULL);
         engines_memory += engine->get_used_memory(ei->module_ctx,
                                                   engine->engine_ctx);
+        teardownEngineModuleCtx(ei);
     }
     dictReleaseIterator(iter);
 

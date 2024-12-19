@@ -880,13 +880,13 @@ void moduleCallCommandUnblockedHandler(client *c) {
     moduleReleaseTempClient(c);
 }
 
-/* Allocates the memory necessary to hold the ValkeyModuleCtx structure,
- * initializes the context for use by the server to call scripting engines
- * callback functions, and returns the pointer to the allocated memory. */
-ValkeyModuleCtx *moduleAllocateScriptingEngineContext(ValkeyModule *module) {
-    ValkeyModuleCtx *ctx = (ValkeyModuleCtx *)zcalloc(sizeof(ValkeyModuleCtx));
-    moduleCreateContext(ctx, module, VALKEYMODULE_CTX_NEW_CLIENT);
-    return ctx;
+/* Allocates the memory necessary to hold the ValkeyModuleCtx structure, and
+ * returns the pointer to the allocated memory.
+ *
+ * Used by the scripting engines implementation to cache the context structure.
+ */
+ValkeyModuleCtx *moduleAllocateContext(void) {
+    return (ValkeyModuleCtx *)zcalloc(sizeof(ValkeyModuleCtx));
 }
 
 /* Create a module ctx and keep track of the nesting level.
@@ -929,6 +929,16 @@ void moduleCreateContext(ValkeyModuleCtx *out_ctx, ValkeyModule *module, int ctx
     if (!(ctx_flags & (VALKEYMODULE_CTX_THREAD_SAFE | VALKEYMODULE_CTX_COMMAND))) {
         enterExecutionUnit(1, 0);
     }
+}
+
+/* Initialize a module context to be used by scripting engines callback
+ * functions.
+ */
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
+                                      ValkeyModule *module,
+                                      client *client) {
+    moduleCreateContext(out_ctx, module, VALKEYMODULE_CTX_NONE);
+    out_ctx->client = client;
 }
 
 /* This command binds the normal command invocation with commands

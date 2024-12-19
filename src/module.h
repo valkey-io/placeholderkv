@@ -8,7 +8,10 @@
 typedef struct ValkeyModuleCtx ValkeyModuleCtx;
 typedef struct ValkeyModule ValkeyModule;
 
-ValkeyModuleCtx *moduleAllocateScriptingEngineContext(ValkeyModule *module);
+ValkeyModuleCtx *moduleAllocateContext(void);
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
+                                      ValkeyModule *module,
+                                      client *client);
 void moduleFreeContext(ValkeyModuleCtx *ctx);
 
 #endif /* _MODULE_H_ */
