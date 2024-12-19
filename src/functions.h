@@ -70,6 +70,7 @@ typedef struct engine {
      *
      * Returns NULL on error and set err to be the error message */
     compiledFunction **(*create)(
+        ValkeyModuleCtx *module_ctx,
         engineCtx *engine_ctx,
         const char *code,
         size_t timeout,
@@ -91,18 +92,23 @@ typedef struct engine {
                  size_t nargs);
 
     /* get current used memory by the engine */
-    size_t (*get_used_memory)(engineCtx *engine_ctx);
+    size_t (*get_used_memory)(ValkeyModuleCtx *module_ctx,
+                              engineCtx *engine_ctx);
 
     /* Return memory overhead for a given function,
      * such memory is not counted as engine memory but as general
      * structs memory that hold different information */
-    size_t (*get_function_memory_overhead)(void *compiled_function);
+    size_t (*get_function_memory_overhead)(ValkeyModuleCtx *module_ctx,
+                                           void *compiled_function);
 
     /* Return memory overhead for engine (struct size holding the engine)*/
-    size_t (*get_engine_memory_overhead)(engineCtx *engine_ctx);
+    size_t (*get_engine_memory_overhead)(ValkeyModuleCtx *module_ctx,
+                                         engineCtx *engine_ctx);
 
     /* free the given function */
-    void (*free_function)(engineCtx *engine_ctx, void *compiled_function);
+    void (*free_function)(ValkeyModuleCtx *module_ctx,
+                          engineCtx *engine_ctx,
+                          void *compiled_function);
 } engine;
 
 /* Hold information about an engine.

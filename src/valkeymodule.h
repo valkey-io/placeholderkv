@@ -875,6 +875,7 @@ typedef struct ValkeyModuleScriptingEngineCallResult {
 } ValkeyModuleScriptingEngineCallResult;
 
 typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
+    ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
     const char *code,
     size_t timeout,
@@ -892,15 +893,19 @@ typedef void (*ValkeyModuleScriptingEngineCallFunctionFunc)(
     size_t nargs);
 
 typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(
+    ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx);
 
 typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(
+    ValkeyModuleCtx *module_ctx,
     void *compiled_function);
 
 typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(
+    ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx);
 
 typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
+    ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
     void *compiled_function);
 

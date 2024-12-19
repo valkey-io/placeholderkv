@@ -69,7 +69,8 @@ typedef struct loadCtx {
     size_t timeout;
 } loadCtx;
 
-static void luaEngineFreeFunction(engineCtx *engine_ctx,
+static void luaEngineFreeFunction(ValkeyModuleCtx *module_ctx,
+                                  engineCtx *engine_ctx,
                                   void *compiled_function);
 
 /* Hook for FUNCTION LOAD execution.
@@ -89,13 +90,18 @@ static void luaEngineLoadHook(lua_State *lua, lua_Debug *ar) {
     }
 }
 
-static void freeCompiledFunc(luaEngineCtx *lua_engine_ctx, void *compiled_func) {
+static void freeCompiledFunc(ValkeyModuleCtx *module_ctx,
+                             luaEngineCtx *lua_engine_ctx,
+                             void *compiled_func) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     compiledFunction *func = compiled_func;
     decrRefCount(func->name);
     if (func->desc) {
         decrRefCount(func->desc);
     }
-    luaEngineFreeFunction(lua_engine_ctx, func->function);
+    luaEngineFreeFunction(module_ctx, lua_engine_ctx, func->function);
     zfree(func);
 }
 
@@ -110,11 +116,15 @@ static void freeCompiledFunc(luaEngineCtx *lua_engine_ctx, void *compiled_func) 
  *
  * Return NULL on compilation error and set the error to the err variable
  */
-static compiledFunction **luaEngineCreate(engineCtx *engine_ctx,
+static compiledFunction **luaEngineCreate(ValkeyModuleCtx *module_ctx,
+                                          engineCtx *engine_ctx,
                                           const char *code,
                                           size_t timeout,
                                           size_t *out_num_compiled_functions,
                                           char **err) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     compiledFunction **compiled_functions = NULL;
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     lua_State *lua = lua_engine_ctx->lua;
@@ -153,7 +163,7 @@ static compiledFunction **luaEngineCreate(engineCtx *engine_ctx,
         listIter *iter = listGetIterator(load_ctx.functions, AL_START_HEAD);
         listNode *node = NULL;
         while ((node = listNext(iter)) != NULL) {
-            freeCompiledFunc(lua_engine_ctx, listNodeValue(node));
+            freeCompiledFunc(module_ctx, lua_engine_ctx, listNodeValue(node));
         }
         listReleaseIterator(iter);
         listRelease(load_ctx.functions);
@@ -198,6 +208,7 @@ static void luaEngineCall(ValkeyModuleCtx *module_ctx,
                           size_t nkeys,
                           robj **args,
                           size_t nargs) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
     serverAssert(module_ctx == NULL);
 
     luaEngineCtx *lua_engine_ctx = engine_ctx;
@@ -217,22 +228,38 @@ static void luaEngineCall(ValkeyModuleCtx *module_ctx,
     lua_pop(lua, 1); /* Pop error handler */
 }
 
-static size_t luaEngineGetUsedMemoy(engineCtx *engine_ctx) {
+static size_t luaEngineGetUsedMemoy(ValkeyModuleCtx *module_ctx,
+                                    engineCtx *engine_ctx) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     return luaMemory(lua_engine_ctx->lua);
 }
 
-static size_t luaEngineFunctionMemoryOverhead(void *compiled_function) {
+static size_t luaEngineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
+                                              void *compiled_function) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     return zmalloc_size(compiled_function);
 }
 
-static size_t luaEngineMemoryOverhead(engineCtx *engine_ctx) {
+static size_t luaEngineMemoryOverhead(ValkeyModuleCtx *module_ctx,
+                                      engineCtx *engine_ctx) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     return zmalloc_size(lua_engine_ctx);
 }
 
-static void luaEngineFreeFunction(engineCtx *engine_ctx,
+static void luaEngineFreeFunction(ValkeyModuleCtx *module_ctx,
+                                  engineCtx *engine_ctx,
                                   void *compiled_function) {
+    /* The lua engine is implemented in the core, and not in a Valkey Module */
+    serverAssert(module_ctx == NULL);
+
     luaEngineCtx *lua_engine_ctx = engine_ctx;
     lua_State *lua = lua_engine_ctx->lua;
     luaFunctionCtx *f_ctx = compiled_function;
