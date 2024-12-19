@@ -241,13 +241,13 @@ static void luaEngineFreeFunction(engineCtx *engine_ctx,
 }
 
 static void luaRegisterFunctionArgsInitialize(compiledFunction *func,
-                                              sds name,
-                                              sds desc,
+                                              robj *name,
+                                              robj *desc,
                                               luaFunctionCtx *lua_f_ctx,
                                               uint64_t flags) {
     *func = (compiledFunction){
-        .name = createStringObject(name, sdslen(name)),
-        .desc = desc ? createStringObject(desc, sdslen(desc)) : NULL,
+        .name = name,
+        .desc = desc,
         .function = lua_f_ctx,
         .f_flags = flags,
     };
@@ -300,8 +300,8 @@ done:
 static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
                                             compiledFunction *func) {
     char *err = NULL;
-    sds name = NULL;
-    sds desc = NULL;
+    robj *name = NULL;
+    robj *desc = NULL;
     luaFunctionCtx *lua_f_ctx = NULL;
     uint64_t flags = 0;
     if (!lua_istable(lua, 1)) {
@@ -321,12 +321,12 @@ static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
 
         const char *key = lua_tostring(lua, -2);
         if (!strcasecmp(key, "function_name")) {
-            if (!(name = luaGetStringSds(lua, -1))) {
+            if (!(name = luaGetStringObject(lua, -1))) {
                 err = "function_name argument given to server.register_function must be a string";
                 goto error;
             }
         } else if (!strcasecmp(key, "description")) {
-            if (!(desc = luaGetStringSds(lua, -1))) {
+            if (!(desc = luaGetStringObject(lua, -1))) {
                 err = "description argument given to server.register_function must be a string";
                 goto error;
             }
@@ -373,14 +373,11 @@ static int luaRegisterFunctionReadNamedArgs(lua_State *lua,
                                       lua_f_ctx,
                                       flags);
 
-    sdsfree(name);
-    sdsfree(desc);
-
     return C_OK;
 
 error:
-    if (name) sdsfree(name);
-    if (desc) sdsfree(desc);
+    if (name) decrRefCount(name);
+    if (desc) decrRefCount(desc);
     if (lua_f_ctx) {
         lua_unref(lua, lua_f_ctx->lua_function_ref);
         zfree(lua_f_ctx);
@@ -392,9 +389,9 @@ error:
 static int luaRegisterFunctionReadPositionalArgs(lua_State *lua,
                                                  compiledFunction *func) {
     char *err = NULL;
-    sds name = NULL;
+    robj *name = NULL;
     luaFunctionCtx *lua_f_ctx = NULL;
-    if (!(name = luaGetStringSds(lua, 1))) {
+    if (!(name = luaGetStringObject(lua, 1))) {
         err = "first argument to server.register_function must be a string";
         goto error;
     }
@@ -411,12 +408,10 @@ static int luaRegisterFunctionReadPositionalArgs(lua_State *lua,
 
     luaRegisterFunctionArgsInitialize(func, name, NULL, lua_f_ctx, 0);
 
-    sdsfree(name);
-
     return C_OK;
 
 error:
-    if (name) sdsfree(name);
+    if (name) decrRefCount(name);
     luaPushError(lua, err);
     return C_ERR;
 }
