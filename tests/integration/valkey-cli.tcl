@@ -631,7 +631,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         catch {run_command $fd "SET key value"} err
         assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
 
-        # Unsubscribe from patternvt
+        # Unsubscribe from pattern
         write_cli $fd "PUNSUBSCRIBE pattern*"
         assert_match "*punsubscribe*pattern**" [read_cli $fd]
 
