@@ -618,3 +618,13 @@ int trySendAcceptToIOThreads(connection *conn) {
 
     return C_OK;
 }
+
+int isCopyAvoidIndicatedByIOThreads(void) {
+    /* Starting min_io_threads_for_copy_avoid I/O threads copy avoidance should be beneficial for any string size */
+    return server.min_io_threads_copy_avoid && server.io_threads_num >= server.min_io_threads_copy_avoid;
+}
+
+int isValuePrefetchIndicatedByIOThreads(void) {
+    /* Starting min_io_threads_value_prefetch_off I/O threads copy avoidance should be more efficient without value prefetch */
+    return server.io_threads_num < server.min_io_threads_value_prefetch_off;
+}
