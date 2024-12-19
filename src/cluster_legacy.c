@@ -4683,7 +4683,7 @@ void clusterHandleReplicaFailover(void) {
     if (server.cluster->failover_auth_sent == 0) {
         server.cluster->currentEpoch++;
         server.cluster->failover_auth_epoch = server.cluster->currentEpoch;
-        serverLog(LL_NOTICE, "Starting a failover election for epoch %llu, node epoch is %llu",
+        serverLog(LL_NOTICE, "Starting a failover election for epoch %llu, node config epoch is %llu",
                   (unsigned long long)server.cluster->currentEpoch, (unsigned long long)nodeEpoch(myself));
         clusterRequestFailoverAuth();
         server.cluster->failover_auth_sent = 1;
