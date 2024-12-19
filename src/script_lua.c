@@ -36,15 +36,11 @@
 #include "cluster.h"
 #include "monotonic.h"
 #include "resp_parser.h"
-#include "functions.h"
 #include "version.h"
 #include <lauxlib.h>
 #include <lualib.h>
 #include <ctype.h>
 #include <math.h>
-
-typedef ValkeyModuleScriptingEngineCallResultKind callResultKind;
-typedef ValkeyModuleScriptingEngineCallResult callResult;
 
 /* Globals that are added by the Lua libraries */
 static char *libraries_allow_list[] = {
@@ -165,7 +161,7 @@ static void redisProtocolToLuaType_VerbatimString(void *ctx,
                                                   size_t proto_len);
 static void redisProtocolToLuaType_Attribute(struct ReplyParser *parser, void *ctx, size_t len, const char *proto);
 
-static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua);
+static void luaReplyToServerReply(client *c, client *script_client, lua_State *lua);
 
 /*
  * Save the give pointer on Lua registry, used to save the Lua context and
@@ -614,60 +610,9 @@ int luaError(lua_State *lua) {
  * Lua reply to server reply conversion functions.
  * ------------------------------------------------------------------------- */
 
-typedef struct luaDeferredReplyCtx {
-    scriptRunCtx *run_ctx;
-    lua_State *lua;
-    callResultKind kind;
-    uint32_t iterNum;
-    callResult result;
-} luaDeferredReplyCtx;
-
-static int returnNextElemFromStack(void *context) {
-    luaDeferredReplyCtx *ctx = context;
-
-    serverAssert(ctx->kind == VMSE_MAP ||
-                 ctx->kind == VMSE_SET ||
-                 ctx->kind == VMSE_ARRAY);
-
-    if (ctx->kind == VMSE_MAP || ctx->kind == VMSE_SET) {
-        if (!lua_next(ctx->lua, -2)) {
-            lua_pop(ctx->lua, 2);
-            return 0;
-        }
-
-        if (ctx->kind == VMSE_MAP) {
-            /* Stack now: table, key, value */
-            lua_pushvalue(ctx->lua, -2);                   /* Dup key before consuming. */
-            luaReplyToServerReply(ctx->run_ctx, ctx->lua); /* Return key. */
-            luaReplyToServerReply(ctx->run_ctx, ctx->lua); /* Return value. */
-            /* Stack now: table, key. */
-        } else if (ctx->kind == VMSE_SET) {
-            /* Stack now: table, key, true */
-            lua_pop(ctx->lua, 1);                          /* Discard the boolean value. */
-            lua_pushvalue(ctx->lua, -1);                   /* Dup key before consuming. */
-            luaReplyToServerReply(ctx->run_ctx, ctx->lua); /* Return key. */
-            /* Stack now: table, key. */
-        }
-
-    } else {
-        lua_pushnumber(ctx->lua, ctx->iterNum++);
-        lua_rawget(ctx->lua, -2);
-        int t = lua_type(ctx->lua, -1);
-        if (t == LUA_TNIL) {
-            lua_pop(ctx->lua, 2);
-            return 0;
-        }
-        luaReplyToServerReply(ctx->run_ctx, ctx->lua);
-    }
-
-    return 1;
-}
-
 /* Reply to client 'c' converting the top element in the Lua stack to a
  * server reply. As a side effect the element is consumed from the stack.  */
-static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
-    luaDeferredReplyCtx ctx = {0};
-    callResult result = {0};
+static void luaReplyToServerReply(client *c, client *script_client, lua_State *lua) {
     int t = lua_type(lua, -1);
 
     if (!lua_checkstack(lua, 4)) {
@@ -675,27 +620,20 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
          * to push 4 elements to the stack. On failure, return error.
          * Notice that we need, in the worst case, 4 elements because returning a map might
          * require push 4 elements to the Lua stack.*/
-        result.kind = VMSE_ERROR;
-        result.val.buffer.ptr = "reached lua stack limit";
-        functionsReturnCallResult(run_ctx, &result);
+        addReplyError(c, "reached lua stack limit");
         lua_pop(lua, 1); /* pop the element from the stack */
         return;
     }
 
     switch (t) {
-    case LUA_TSTRING:
-        result.kind = VMSE_BULK_STRING;
-        result.val.buffer.ptr = lua_tostring(lua, -1);
-        result.val.buffer.len = lua_strlen(lua, -1);
-        break;
+    case LUA_TSTRING: addReplyBulkCBuffer(c, (char *)lua_tostring(lua, -1), lua_strlen(lua, -1)); break;
     case LUA_TBOOLEAN:
-        result.kind = VMSE_BOOL;
-        result.val.i32 = lua_toboolean(lua, -1);
+        if (script_client->resp == 2)
+            addReply(c, lua_toboolean(lua, -1) ? shared.cone : shared.null[c->resp]);
+        else
+            addReplyBool(c, lua_toboolean(lua, -1));
         break;
-    case LUA_TNUMBER:
-        result.kind = VMSE_LONG_LONG;
-        result.val.i64 = (long long)lua_tonumber(lua, -1);
-        break;
+    case LUA_TNUMBER: addReplyLongLong(c, (long long)lua_tonumber(lua, -1)); break;
     case LUA_TTABLE:
         /* We need to check if it is an array, an error, or a status reply.
          * Error are returned as a single element table with 'err' field.
@@ -708,17 +646,13 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         lua_rawget(lua, -2);
         t = lua_type(lua, -1);
         if (t == LUA_TSTRING) {
-            /* pop the error message, we will use luaExtractErrorInformation to get error information */
-            lua_pop(lua, 1);
+            lua_pop(lua,
+                    1); /* pop the error message, we will use luaExtractErrorInformation to get error information */
             errorInfo err_info = {0};
             luaExtractErrorInformation(lua, &err_info);
-            char *error_msg = valkey_asprintf("-%s", err_info.msg);
-            result.kind = VMSE_ERROR_FORMAT;
-            result.val.error.buffer.ptr = error_msg;
-            result.val.error.flags = ERR_REPLY_FLAG_CUSTOM |
-                                     (err_info.ignore_err_stats_update ? ERR_REPLY_FLAG_NO_STATS_UPDATE : 0);
-            functionsReturnCallResult(run_ctx, &result);
-            zfree(error_msg);
+            addReplyErrorFormatEx(
+                c, ERR_REPLY_FLAG_CUSTOM | (err_info.ignore_err_stats_update ? ERR_REPLY_FLAG_NO_STATS_UPDATE : 0),
+                "-%s", err_info.msg);
             luaErrorInformationDiscard(&err_info);
             lua_pop(lua, 1); /* pop the result table */
             return;
@@ -732,12 +666,9 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         if (t == LUA_TSTRING) {
             sds ok = sdsnew(lua_tostring(lua, -1));
             sdsmapchars(ok, "\r\n", "  ", 2);
-            result.kind = VMSE_STATUS;
-            result.val.buffer.ptr = ok;
-            result.val.buffer.len = sdslen(ok);
-            functionsReturnCallResult(run_ctx, &result);
-            lua_pop(lua, 2);
+            addReplyStatusLength(c, ok, sdslen(ok));
             sdsfree(ok);
+            lua_pop(lua, 2);
             return;
         }
         lua_pop(lua, 1); /* Discard field name pushed before. */
@@ -747,9 +678,7 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         lua_rawget(lua, -2);
         t = lua_type(lua, -1);
         if (t == LUA_TNUMBER) {
-            result.kind = VMSE_DOUBLE;
-            result.val.d64 = lua_tonumber(lua, -1);
-            functionsReturnCallResult(run_ctx, &result);
+            addReplyDouble(c, lua_tonumber(lua, -1));
             lua_pop(lua, 2);
             return;
         }
@@ -762,12 +691,9 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         if (t == LUA_TSTRING) {
             sds big_num = sdsnewlen(lua_tostring(lua, -1), lua_strlen(lua, -1));
             sdsmapchars(big_num, "\r\n", "  ", 2);
-            result.kind = VMSE_BIGNUM;
-            result.val.buffer.ptr = big_num;
-            result.val.buffer.len = sdslen(big_num);
-            functionsReturnCallResult(run_ctx, &result);
-            lua_pop(lua, 2);
+            addReplyBigNum(c, big_num, sdslen(big_num));
             sdsfree(big_num);
+            lua_pop(lua, 2);
             return;
         }
         lua_pop(lua, 1); /* Discard field name pushed before. */
@@ -786,10 +712,9 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
                 lua_rawget(lua, -3);
                 t = lua_type(lua, -1);
                 if (t == LUA_TSTRING) {
-                    result.kind = VMSE_VERBATIM;
-                    result.val.verb.buffer.ptr = lua_tolstring(lua, -1, &result.val.verb.buffer.len);
-                    result.val.verb.format = format;
-                    functionsReturnCallResult(run_ctx, &result);
+                    size_t len;
+                    char *str = (char *)lua_tolstring(lua, -1, &len);
+                    addReplyVerbatim(c, str, len, format);
                     lua_pop(lua, 4);
                     return;
                 }
@@ -804,17 +729,20 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         lua_rawget(lua, -2);
         t = lua_type(lua, -1);
         if (t == LUA_TTABLE) {
+            int maplen = 0;
+            void *replylen = addReplyDeferredLen(c);
             /* we took care of the stack size on function start */
             lua_pushnil(lua); /* Use nil to start iteration. */
-            ctx = (luaDeferredReplyCtx){
-                .run_ctx = run_ctx,
-                .lua = lua,
-                .kind = VMSE_MAP,
-            };
-            result.kind = VMSE_MAP;
-            result.val.deferred.context = &ctx;
-            result.val.deferred.returnNextElem = &returnNextElemFromStack;
-            functionsReturnCallResult(run_ctx, &result);
+            while (lua_next(lua, -2)) {
+                /* Stack now: table, key, value */
+                lua_pushvalue(lua, -2);                       /* Dup key before consuming. */
+                luaReplyToServerReply(c, script_client, lua); /* Return key. */
+                luaReplyToServerReply(c, script_client, lua); /* Return value. */
+                /* Stack now: table, key. */
+                maplen++;
+            }
+            setDeferredMapLen(c, replylen, maplen);
+            lua_pop(lua, 2);
             return;
         }
         lua_pop(lua, 1); /* Discard field name pushed before. */
@@ -824,37 +752,43 @@ static void luaReplyToServerReply(scriptRunCtx *run_ctx, lua_State *lua) {
         lua_rawget(lua, -2);
         t = lua_type(lua, -1);
         if (t == LUA_TTABLE) {
+            int setlen = 0;
+            void *replylen = addReplyDeferredLen(c);
             /* we took care of the stack size on function start */
             lua_pushnil(lua); /* Use nil to start iteration. */
-            ctx = (luaDeferredReplyCtx){
-                .run_ctx = run_ctx,
-                .lua = lua,
-                .kind = VMSE_SET,
-            };
-            result.kind = VMSE_SET;
-            result.val.deferred.context = &ctx;
-            result.val.deferred.returnNextElem = &returnNextElemFromStack;
-            functionsReturnCallResult(run_ctx, &result);
+            while (lua_next(lua, -2)) {
+                /* Stack now: table, key, true */
+                lua_pop(lua, 1);                              /* Discard the boolean value. */
+                lua_pushvalue(lua, -1);                       /* Dup key before consuming. */
+                luaReplyToServerReply(c, script_client, lua); /* Return key. */
+                /* Stack now: table, key. */
+                setlen++;
+            }
+            setDeferredSetLen(c, replylen, setlen);
+            lua_pop(lua, 2);
             return;
         }
         lua_pop(lua, 1); /* Discard field name pushed before. */
 
         /* Handle the array reply. */
-        /* we took care of the stack size on function start */
-        ctx = (luaDeferredReplyCtx){
-            .run_ctx = run_ctx,
-            .lua = lua,
-            .kind = VMSE_ARRAY,
-            .iterNum = 1,
-        };
-        result.kind = VMSE_ARRAY;
-        result.val.deferred.context = &ctx;
-        result.val.deferred.returnNextElem = &returnNextElemFromStack;
-        functionsReturnCallResult(run_ctx, &result);
-        return;
-    default: result.kind = VMSE_NULL;
+        void *replylen = addReplyDeferredLen(c);
+        int j = 1, mbulklen = 0;
+        while (1) {
+            /* we took care of the stack size on function start */
+            lua_pushnumber(lua, j++);
+            lua_rawget(lua, -2);
+            t = lua_type(lua, -1);
+            if (t == LUA_TNIL) {
+                lua_pop(lua, 1);
+                break;
+            }
+            luaReplyToServerReply(c, script_client, lua);
+            mbulklen++;
+        }
+        setDeferredArrayLen(c, replylen, mbulklen);
+        break;
+    default: addReplyNull(c);
     }
-    functionsReturnCallResult(run_ctx, &result);
     lua_pop(lua, 1);
 }
 
@@ -1833,7 +1767,7 @@ void luaCallFunction(scriptRunCtx *run_ctx,
     } else {
         /* On success convert the Lua return value into RESP, and
          * send it to * the client. */
-        luaReplyToServerReply(run_ctx, lua); /* Convert and consume the reply. */
+        luaReplyToServerReply(c, run_ctx->c, lua); /* Convert and consume the reply. */
     }
 
     /* Perform some cleanup that we need to do both on error and success. */

@@ -58,7 +58,6 @@ typedef struct functionLibInfo functionLibInfo;
 typedef ValkeyModuleScriptingEngineCtx engineCtx;
 typedef ValkeyModuleScriptingEngineFunctionCtx functionCtx;
 typedef ValkeyModuleScriptingEngineCompiledFunction compiledFunction;
-typedef ValkeyModuleScriptingEngineCallResult callResult;
 typedef ValkeyModuleScriptingEngineMethods engineMethods;
 
 typedef struct engine {
@@ -146,7 +145,6 @@ int functionsRegisterEngine(const char *engine_name,
                             void *engine_ctx,
                             engineMethods *engine_methods);
 int functionsUnregisterEngine(const char *engine_name);
-void functionsReturnCallResult(scriptRunCtx *run_ctx, const callResult *result);
 
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout);
 unsigned long functionsMemory(void);

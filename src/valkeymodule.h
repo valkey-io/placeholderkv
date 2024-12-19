@@ -817,63 +817,6 @@ typedef struct ValkeyModuleScriptingEngineCompiledFunction {
     uint64_t f_flags;         /* Function flags */
 } ValkeyModuleScriptingEngineCompiledFunction;
 
-typedef enum ValkeyModuleScriptingEngineCallResultKind {
-    VMSE_ERROR = 1,
-    VMSE_ERROR_FORMAT,
-    VMSE_STATUS,
-    VMSE_BULK_STRING,
-    VMSE_VERBATIM,
-    VMSE_BOOL,
-    VMSE_DOUBLE,
-    VMSE_BIGNUM,
-    VMSE_HUMAN_LONG_DOUBLE,
-    VMSE_LONG_LONG,
-    VMSE_ARRAY,
-    VMSE_MAP,
-    VMSE_SET,
-    VMSE_NULL,
-} ValkeyModuleScriptingEngineCallResultKind;
-
-typedef struct ValkeyModuleScriptingEngineCallResult {
-    ValkeyModuleScriptingEngineCallResultKind kind;
-    union {
-        /* Used by ERROR, STATUS, BULK_STRING, VERBATIM, BIGNUM */
-        struct string {
-            const char *ptr;
-            size_t len;
-        } buffer;
-
-        /* Used by ERROR_FORMAT */
-        struct {
-            struct string buffer;
-            int flags;
-        } error;
-
-        struct {
-            struct string buffer;
-            const char *format;
-        } verb;
-
-        /* Used by BOOL */
-        int i32;
-
-        /* Used by LONG LONG */
-        long long i64;
-
-        /* Used by DOUBLE */
-        double d64;
-
-        /* Used by HUMAN_LONG_DOUBLE */
-        long double d128;
-
-        /* Used by ARRAY, SET, MAP */
-        struct {
-            void *context;
-            int (*returnNextElem)(void *context);
-        } deferred;
-    } val;
-} ValkeyModuleScriptingEngineCallResult;
-
 typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
@@ -1800,9 +1743,6 @@ VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *mo
 VALKEYMODULE_API int (*ValkeyModule_UnregisterScriptingEngine)(ValkeyModuleCtx *module_ctx,
                                                                const char *engine_name) VALKEYMODULE_ATTR;
 
-VALKEYMODULE_API void (*ValkeyModule_ReturnFunctionCallResult)(ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
-                                                               const ValkeyModuleScriptingEngineCallResult *result) VALKEYMODULE_ATTR;
-
 #define ValkeyModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
 /* This is included inline inside each Valkey module. */
@@ -2172,7 +2112,6 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(RdbSave);
     VALKEYMODULE_GET_API(RegisterScriptingEngine);
     VALKEYMODULE_GET_API(UnregisterScriptingEngine);
-    VALKEYMODULE_GET_API(ReturnFunctionCallResult);
 
     if (ValkeyModule_IsModuleNameBusy && ValkeyModule_IsModuleNameBusy(name)) return VALKEYMODULE_ERR;
     ValkeyModule_SetModuleAttribs(ctx, name, ver, apiver);

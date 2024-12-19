@@ -13138,18 +13138,6 @@ int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) 
     return VALKEYMODULE_OK;
 }
 
-/* Returns the result of calling a scripting engine function back to the client.
- *
- * `func_ctx` is the function call runtime context.
- *
- * `result` is the pointer to a structure that contains the result value.
- *
- */
-void VM_ReturnFunctionCallResult(ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
-                                 const ValkeyModuleScriptingEngineCallResult *result) {
-    functionsReturnCallResult(func_ctx, result);
-}
-
 /* MODULE command.
  *
  * MODULE LIST
@@ -14022,5 +14010,4 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbSave);
     REGISTER_API(RegisterScriptingEngine);
     REGISTER_API(UnregisterScriptingEngine);
-    REGISTER_API(ReturnFunctionCallResult);
 }
