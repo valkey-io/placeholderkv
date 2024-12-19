@@ -721,7 +721,7 @@ static client createClient(char *cmd, size_t len, client from, int thread_id) {
         c->prefix_pending++;
     }
 
-    if (config.cluster_mode && (config.read_from_replica == FROM_REPLICA_ONLY|| config.read_from_replica == FROM_ALL)) {
+    if (config.cluster_mode && (config.read_from_replica == FROM_REPLICA_ONLY || config.read_from_replica == FROM_ALL)) {
         char *buf = NULL;
         int len;
         len = redisFormatCommand(&buf, "READONLY");
@@ -1731,7 +1731,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid cluster node #%d\n", i);
                 exit(1);
             }
-            const char* node_type = (node->replicate == NULL ? "Primary" : "Replica");
+            const char *node_type = (node->replicate == NULL ? "Primary" : "Replica");
             printf("Node %d(%s): ", i, node_type);
             if (node->name) printf("%s ", node->name);
             printf("%s:%d\n", node->ip, node->port);
