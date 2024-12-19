@@ -2227,28 +2227,6 @@ static int cliReadReply(int output_raw_strings) {
         sdsfree(out);
     }
 
-    /* Handle pubsub mode */
-    if (config.pubsub_mode) {
-        if (isPubsubPush(reply)) {
-            if (reply->elements >= 3) {
-                char *cmd = reply->element[0]->str;
-                int count = reply->element[2]->integer;
-
-                if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 ||
-                    strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
-                    config.pubsub_unsharded_count = count;
-                } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-                    config.pubsub_sharded_count = count;
-                }
-                
-                if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
-                    config.pubsub_mode = 0;
-                    cliRefreshPrompt();
-                }
-            }
-        }
-    }
-
     return REDIS_OK;
 }
 
@@ -2427,6 +2405,25 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
                             config.pubsub_mode = 1;
                             cliRefreshPrompt();
                         }
+
+                        /* Handle pubsub mode */
+                        if (config.last_reply->elements >= 3) {
+                            char *cmd = config.last_reply->element[0]->str;
+                            int count = config.last_reply->element[2]->integer;
+
+                            if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 ||
+                                strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+                                config.pubsub_unsharded_count = count;
+                            } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+                                config.pubsub_sharded_count = count;
+                            }
+
+                            if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+                                config.pubsub_mode = 0;
+                                cliRefreshPrompt();
+                            }
+                        }
+
                         if (--num_expected_pubsub_push > 0) {
                             continue; /* We need more of these. */
                         }

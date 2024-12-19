@@ -608,6 +608,47 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         assert_equal "a\n1\nb\n2\nc\n3" [exec {*}$cmdline ZRANGE new_zset 0 -1 WITHSCORES]
     }
 
+    test {valkey-cli pubsub mode with multiple subscription types} {
+        set fd [open_cli]
+        
+        # Subscribe to a regular channel
+        write_cli $fd "SUBSCRIBE channel1"
+        assert_match "*subscribe*channel1*" [read_cli $fd]
+
+        # Subscribe to a pattern
+        write_cli $fd "PSUBSCRIBE pattern*"
+        assert_match "*psubscribe*pattern**" [read_cli $fd]
+
+        # Subscribe to a shard channel
+        write_cli $fd "SSUBSCRIBE schannel1"
+        assert_match "*ssubscribe*schannel1*" [read_cli $fd]
+
+        # Unsubscribe from regular channel
+        write_cli $fd "UNSUBSCRIBE channel1"
+        assert_match "*unsubscribe*channel1*" [read_cli $fd]
+
+        # Verify still in pubsub mode
+        catch {run_command $fd "SET key value"} err
+        assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
+
+        # Unsubscribe from patternvt
+        write_cli $fd "PUNSUBSCRIBE pattern*"
+        assert_match "*punsubscribe*pattern**" [read_cli $fd]
+
+         # Verify still in pubsub mode
+        catch {run_command $fd "GET key"} err
+        assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
+
+        # Unsubscribe from shard channel
+        write_cli $fd "SUNSUBSCRIBE schannel1"
+        assert_match "*sunsubscribe*schannel1*" [read_cli $fd]
+
+        # Verify that we've exited pubsub mode
+        assert_equal "PONG" [run_command $fd "PING"]
+
+        close_cli $fd
+    }
+
     test "Valid Connection Scheme: redis://" {
         set cmdline [valkeycliuri "redis://" [srv host] [srv port]]
         assert_equal {PONG} [exec {*}$cmdline PING]
