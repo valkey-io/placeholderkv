@@ -557,7 +557,7 @@ hashtableType setHashtableType = {
     .entryDestructor = dictSdsDestructor};
 
 const void *zsetHashtableGetKey(const void *element) {
-    zskiplistNode *node = (zskiplistNode *)element;
+    const zskiplistNode *node = element;
     return node->ele;
 }
 

@@ -1026,7 +1026,7 @@ void hashtableScanCallback(void *privdata, void *entry) {
     serverAssert(o != NULL);
 
     /* get key */
-    if (o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HASHTABLE) {
+    if (o->type == OBJ_SET) {
         key = (sds)entry;
     } else if (o->type == OBJ_ZSET) {
         zskiplistNode *node = (zskiplistNode *)entry;
@@ -1042,7 +1042,7 @@ void hashtableScanCallback(void *privdata, void *entry) {
         }
     }
 
-    if (o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HASHTABLE) {
+    if (o->type == OBJ_SET) {
         /* no value, key used by reference */
     } else if (o->type == OBJ_ZSET) {
         /* zset data is copied */

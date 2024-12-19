@@ -1499,15 +1499,16 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
     if (zobj->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = zobj->ptr;
 
-        zskiplistNode **existing_node = (zskiplistNode **)hashtableFindRef(zs->ht, ele);
-        if (existing_node != NULL) {
+        void **node_ref_in_hashtable = hashtableFindRef(zs->ht, ele);
+        if (node_ref_in_hashtable != NULL) {
             /* NX? Return, same element already exists. */
             if (nx) {
                 *out_flags |= ZADD_OUT_NOP;
                 return 1;
             }
 
-            curscore = (*existing_node)->score;
+            zskiplistNode *existing_node = *node_ref_in_hashtable;
+            curscore = existing_node->score;
 
             /* Prepare the score for the increment if needed. */
             if (incr) {
@@ -1530,7 +1531,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
             if (score != curscore) {
                 /* Note that this assignment updates the node pointer stored in
                  * the hashtable */
-                *existing_node = zslUpdateScore(zs->zsl, curscore, ele, score);
+                *node_ref_in_hashtable = zslUpdateScore(zs->zsl, curscore, ele, score);
                 *out_flags |= ZADD_OUT_UPDATED;
             }
             return 1;
@@ -1551,10 +1552,9 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
     return 0; /* Never reached. */
 }
 
-/* Deletes the element 'ele' from the sorted set encoded as a skiplist+dict,
+/* Deletes the element 'ele' from the sorted set encoded as a skiplist+hashtable,
  * returning 1 if the element existed and was deleted, 0 otherwise (the
- * element was not there). It does not resize the dict after deleting the
- * element. */
+ * element was not there). */
 static int zsetRemoveFromSkiplist(zset *zs, sds ele) {
     void *entry;
     if (!hashtablePop(zs->ht, ele, &entry)) return 0;
@@ -2553,16 +2553,21 @@ static void zdiff(zsetopsrc *src, long setnum, zset *dstzset, size_t *maxelelen,
     }
 }
 
+/* key->score entry for temporary union hashtable */
 struct sdsDoublePair {
     sds key;
     double score;
 };
 
+/* Hashtable callback to retrieve key from sdsDoublePair */
 const void *sdsDoubleMapGetKey(const void *entry) {
-    struct sdsDoublePair *keyval = (struct sdsDoublePair *)entry;
+    const struct sdsDoublePair *keyval = entry;
     return keyval->key;
 }
 
+/* We need a temporary hashtable that maps from sds key to double value to help
+ * compute union operations. The temporary table is used to eliminate duplicate
+ * entries and to aggregate score values as needed. */
 hashtableType sds_double_map_hashtable = {
     .hashFunction = dictSdsHash,
     .entryGetKey = sdsDoubleMapGetKey,

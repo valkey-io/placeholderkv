@@ -297,9 +297,9 @@ static void zslUpdateNode(zskiplist *zsl, zskiplistNode *oldnode, zskiplistNode 
     }
 }
 
-/* Defrag helper for sorted set.
- * Defragment a single skiplist node, update skiplist pointers, and update the
- * hashtable pointer to the node */
+/* Hashtable scan callback for sorted set. It defragments a single skiplist
+ * node, updates skiplist pointers, and updates the hashtable pointer to the
+ * node. */
 static void activeDefragZsetNode(void *privdata, void *entry_ref) {
     zskiplist *zsl = privdata;
     zskiplistNode **node_ref = (zskiplistNode **)entry_ref;
@@ -315,17 +315,15 @@ static void activeDefragZsetNode(void *privdata, void *entry_ref) {
      * skiplist node. */
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL];
     zskiplistNode *x = zsl->header;
-    for (int i = zsl->level - 1; i >= 0; i--) {
-        while (1) {
-            /* stop when we've reached the end of this level or the next node
-             * comes after our target in sorted order */
-            zskiplistNode *next = x->level[i].forward;
-            if (!next) break;
-            if (next->score > score) break;
-            if (next->score == score && sdscmp(next->ele, ele) >= 0) {
-                break;
-            }
-            x = x->level[i].forward;
+for (int i = zsl->level - 1; i >= 0; i--) {
+        /* stop when we've reached the end of this level or the next node comes
+         * after our target in sorted order */
+        zskiplistNode *next = x->level[i].forward;
+        while (next &&
+            (next->score < score ||
+            (next->score == score && sdscmp(next->ele, ele) < 0))) {
+            x = next;
+            next = x->level[i].forward;
         }
         update[i] = x;
     }
