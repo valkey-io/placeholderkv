@@ -3403,7 +3403,7 @@ static sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide
     listNode *ln;
     listIter li;
     client *client;
-    sds o = sdsnewlen(SDS_NOINIT, 500);
+    sds o = sdsempty();
     sdsclear(o);
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
