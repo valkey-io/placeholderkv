@@ -285,12 +285,13 @@ int redis_check_rdb(char *rdbfilename, FILE *fp) {
             }
 
             if (!strcasecmp(auxkey->ptr, "lua")) {
-                /* We do not print the lua aux field in here, otherwise a large number of lua
-                 * scripts will pollute the output. */
+                /* In older version before 7.0, we may save lua scripts in a replication RDB,
+                 * although it is not an actually aux field, we will still print it in here since
+                 * it's easy to filter using external grep. Use a counter so that at the end we
+                 * can print its number, if any. */
                 rdbstate.lua_scripts++;
-            } else {
-                rdbCheckInfo("AUX FIELD %s = '%s'", (char *)auxkey->ptr, (char *)auxval->ptr);
             }
+            rdbCheckInfo("AUX FIELD %s = '%s'", (char *)auxkey->ptr, (char *)auxval->ptr);
             decrRefCount(auxkey);
             decrRefCount(auxval);
             continue; /* Read type again. */
