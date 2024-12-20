@@ -421,7 +421,8 @@ proc read_from_test_client fd {
     } elseif {$status eq {server-spawning}} {
         set ::active_clients_task($fd) "(SPAWNING SERVER) $data"
     } elseif {$status eq {server-spawned}} {
-        lappend ::active_servers $data
+        set pid [string trim [lindex [split $data "-"] 0]]
+        lappend ::active_servers $pid
         set ::active_clients_task($fd) "(SPAWNED SERVER) pid:$data"
     } elseif {$status eq {server-killing}} {
         set ::active_clients_task($fd) "(KILLING SERVER) pid:$data"
