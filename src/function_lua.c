@@ -228,13 +228,17 @@ static void luaEngineCall(ValkeyModuleCtx *module_ctx,
     lua_pop(lua, 1); /* Pop error handler */
 }
 
-static size_t luaEngineGetUsedMemoy(ValkeyModuleCtx *module_ctx,
-                                    engineCtx *engine_ctx) {
+static engineMemoryInfo luaEngineGetMemoryInfo(ValkeyModuleCtx *module_ctx,
+                                               engineCtx *engine_ctx) {
     /* The lua engine is implemented in the core, and not in a Valkey Module */
     serverAssert(module_ctx == NULL);
 
     luaEngineCtx *lua_engine_ctx = engine_ctx;
-    return luaMemory(lua_engine_ctx->lua);
+
+    return (engineMemoryInfo){
+        .used_memory = luaMemory(lua_engine_ctx->lua),
+        .engine_memory_overhead = zmalloc_size(lua_engine_ctx),
+    };
 }
 
 static size_t luaEngineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
@@ -243,15 +247,6 @@ static size_t luaEngineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
     serverAssert(module_ctx == NULL);
 
     return zmalloc_size(compiled_function);
-}
-
-static size_t luaEngineMemoryOverhead(ValkeyModuleCtx *module_ctx,
-                                      engineCtx *engine_ctx) {
-    /* The lua engine is implemented in the core, and not in a Valkey Module */
-    serverAssert(module_ctx == NULL);
-
-    luaEngineCtx *lua_engine_ctx = engine_ctx;
-    return zmalloc_size(lua_engine_ctx);
 }
 
 static void luaEngineFreeFunction(ValkeyModuleCtx *module_ctx,
@@ -557,10 +552,9 @@ int luaEngineInitEngine(void) {
         .version = VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
         .create_functions_library = luaEngineCreate,
         .call_function = luaEngineCall,
-        .get_used_memory = luaEngineGetUsedMemoy,
         .get_function_memory_overhead = luaEngineFunctionMemoryOverhead,
-        .get_engine_memory_overhead = luaEngineMemoryOverhead,
         .free_function = luaEngineFreeFunction,
+        .get_memory_info = luaEngineGetMemoryInfo,
     };
 
     return functionsRegisterEngine(LUA_ENGINE_NAME,

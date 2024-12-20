@@ -58,6 +58,7 @@ typedef struct functionLibInfo functionLibInfo;
 typedef ValkeyModuleScriptingEngineCtx engineCtx;
 typedef ValkeyModuleScriptingEngineFunctionCtx functionCtx;
 typedef ValkeyModuleScriptingEngineCompiledFunction compiledFunction;
+typedef ValkeyModuleScriptingEngineMemoryInfo engineMemoryInfo;
 typedef ValkeyModuleScriptingEngineMethods engineMethods;
 
 typedef struct engine {
@@ -90,9 +91,10 @@ typedef struct engine {
                  robj **args,
                  size_t nargs);
 
-    /* get current used memory by the engine */
-    size_t (*get_used_memory)(ValkeyModuleCtx *module_ctx,
-                              engineCtx *engine_ctx);
+    /* free the given function */
+    void (*free_function)(ValkeyModuleCtx *module_ctx,
+                          engineCtx *engine_ctx,
+                          void *compiled_function);
 
     /* Return memory overhead for a given function,
      * such memory is not counted as engine memory but as general
@@ -100,14 +102,10 @@ typedef struct engine {
     size_t (*get_function_memory_overhead)(ValkeyModuleCtx *module_ctx,
                                            void *compiled_function);
 
-    /* Return memory overhead for engine (struct size holding the engine)*/
-    size_t (*get_engine_memory_overhead)(ValkeyModuleCtx *module_ctx,
-                                         engineCtx *engine_ctx);
+    /* Get the current used memory by the engine */
+    engineMemoryInfo (*get_memory_info)(ValkeyModuleCtx *module_ctx,
+                                        engineCtx *engine_ctx);
 
-    /* free the given function */
-    void (*free_function)(ValkeyModuleCtx *module_ctx,
-                          engineCtx *engine_ctx,
-                          void *compiled_function);
 } engine;
 
 /* Hold information about an engine.

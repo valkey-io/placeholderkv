@@ -235,29 +235,28 @@ static uint32_t executeHelloLangFunction(HelloFunc *func,
     return 0;
 }
 
-static size_t engineGetUsedMemoy(ValkeyModuleCtx *module_ctx,
-                                 ValkeyModuleScriptingEngineCtx *engine_ctx) {
+static ValkeyModuleScriptingEngineMemoryInfo engineGetMemoryInfo(ValkeyModuleCtx *module_ctx,
+                                                                 ValkeyModuleScriptingEngineCtx *engine_ctx) {
     VALKEYMODULE_NOT_USED(module_ctx);
     HelloLangCtx *ctx = (HelloLangCtx *)engine_ctx;
-    size_t memory = ValkeyModule_MallocSize(ctx);
-    memory += ValkeyModule_MallocSize(ctx->program);
-    for (uint32_t i = 0; i < ctx->program->num_functions; i++) {
-        HelloFunc *func = ctx->program->functions[i];
-        memory += ValkeyModule_MallocSize(func);
-        memory += ValkeyModule_MallocSize(func->name);
-    }
-    return memory;
-}
+    ValkeyModuleScriptingEngineMemoryInfo mem_info = {0};
 
-static size_t engineMemoryOverhead(ValkeyModuleCtx *module_ctx,
-                                   ValkeyModuleScriptingEngineCtx *engine_ctx) {
-    VALKEYMODULE_NOT_USED(module_ctx);
-    HelloLangCtx *ctx = (HelloLangCtx *)engine_ctx;
-    size_t overhead = ValkeyModule_MallocSize(engine_ctx);
     if (ctx->program != NULL) {
-        overhead += ValkeyModule_MallocSize(ctx->program);
+        mem_info.used_memory += ValkeyModule_MallocSize(ctx->program);
+
+        for (uint32_t i = 0; i < ctx->program->num_functions; i++) {
+            HelloFunc *func = ctx->program->functions[i];
+            mem_info.used_memory += ValkeyModule_MallocSize(func);
+            mem_info.used_memory += ValkeyModule_MallocSize(func->name);
+        }
     }
-    return overhead;
+
+    mem_info.engine_memory_overhead = ValkeyModule_MallocSize(ctx);
+    if (ctx->program != NULL) {
+        mem_info.engine_memory_overhead += ValkeyModule_MallocSize(ctx->program);
+    }
+
+    return mem_info;
 }
 
 static size_t engineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
@@ -356,10 +355,9 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv,
         .version = VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
         .create_functions_library = createHelloLangEngine,
         .call_function = callHelloLangFunction,
-        .get_used_memory = engineGetUsedMemoy,
         .get_function_memory_overhead = engineFunctionMemoryOverhead,
-        .get_engine_memory_overhead = engineMemoryOverhead,
         .free_function = engineFreeFunction,
+        .get_memory_info = engineGetMemoryInfo,
     };
 
     ValkeyModule_RegisterScriptingEngine(ctx,

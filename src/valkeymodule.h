@@ -817,6 +817,15 @@ typedef struct ValkeyModuleScriptingEngineCompiledFunction {
     uint64_t f_flags;         /* Function flags */
 } ValkeyModuleScriptingEngineCompiledFunction;
 
+/* This struct is used to return the memory information of the scripting
+ * engine. */
+typedef struct ValkeyModuleScriptingEngineMemoryInfo {
+    /* The memory used by the scripting engine runtime. */
+    size_t used_memory;
+    /* The memory used by the scripting engine data structures. */
+    size_t engine_memory_overhead;
+} ValkeyModuleScriptingEngineMemoryInfo;
+
 typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
@@ -835,22 +844,18 @@ typedef void (*ValkeyModuleScriptingEngineCallFunctionFunc)(
     ValkeyModuleString **args,
     size_t nargs);
 
-typedef size_t (*ValkeyModuleScriptingEngineGetUsedMemoryFunc)(
-    ValkeyModuleCtx *module_ctx,
-    ValkeyModuleScriptingEngineCtx *engine_ctx);
-
 typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(
     ValkeyModuleCtx *module_ctx,
     void *compiled_function);
-
-typedef size_t (*ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc)(
-    ValkeyModuleCtx *module_ctx,
-    ValkeyModuleScriptingEngineCtx *engine_ctx);
 
 typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx,
     void *compiled_function);
+
+typedef ValkeyModuleScriptingEngineMemoryInfo (*ValkeyModuleScriptingEngineGetMemoryInfoFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx);
 
 typedef struct ValkeyModuleScriptingEngineMethodsV1 {
     uint64_t version; /* Version of this structure for ABI compat. */
@@ -870,11 +875,8 @@ typedef struct ValkeyModuleScriptingEngineMethodsV1 {
     /* Function callback to return memory overhead for a given function. */
     ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead;
 
-    /* Function callback to get current used memory by the engine. */
-    ValkeyModuleScriptingEngineGetUsedMemoryFunc get_used_memory;
-
-    /* Function callback to return memory overhead of the engine. */
-    ValkeyModuleScriptingEngineGetEngineMemoryOverheadFunc get_engine_memory_overhead;
+    /* Function callback to get the used memory by the engine. */
+    ValkeyModuleScriptingEngineGetMemoryInfoFunc get_memory_info;
 
 } ValkeyModuleScriptingEngineMethodsV1;
 

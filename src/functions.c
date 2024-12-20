@@ -476,10 +476,9 @@ int functionsRegisterEngine(const char *engine_name,
         .engine_ctx = engine_ctx,
         .create = engine_methods->create_functions_library,
         .call = engine_methods->call_function,
-        .get_used_memory = engine_methods->get_used_memory,
         .get_function_memory_overhead = engine_methods->get_function_memory_overhead,
-        .get_engine_memory_overhead = engine_methods->get_engine_memory_overhead,
         .free_function = engine_methods->free_function,
+        .get_memory_info = engine_methods->get_memory_info,
     };
 
     client *c = createClient(NULL);
@@ -500,9 +499,13 @@ int functionsRegisterEngine(const char *engine_name,
     functionsAddEngineStats(ei);
 
     setupEngineModuleCtx(ei, NULL);
-    engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) +
+    engineMemoryInfo mem_info = eng->get_memory_info(ei->module_ctx,
+                                                     eng->engine_ctx);
+    engine_cache_memory += zmalloc_size(ei) +
+                           sdsAllocSize(ei->name) +
                            zmalloc_size(eng) +
-                           eng->get_engine_memory_overhead(ei->module_ctx, eng->engine_ctx);
+                           mem_info.engine_memory_overhead;
+
     teardownEngineModuleCtx(ei);
 
     return C_OK;
@@ -1265,8 +1268,9 @@ unsigned long functionsMemory(void) {
         engineInfo *ei = dictGetVal(entry);
         engine *engine = ei->engine;
         setupEngineModuleCtx(ei, NULL);
-        engines_memory += engine->get_used_memory(ei->module_ctx,
-                                                  engine->engine_ctx);
+        engineMemoryInfo mem_info = engine->get_memory_info(ei->module_ctx,
+                                                            engine->engine_ctx);
+        engines_memory += mem_info.used_memory;
         teardownEngineModuleCtx(ei);
     }
     dictReleaseIterator(iter);
