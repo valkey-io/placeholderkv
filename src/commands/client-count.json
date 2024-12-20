@@ -1,0 +1,163 @@
+{
+    "COUNT": {
+        "summary": "Counts open connections.",
+        "complexity": "O(N) where N is the number of client connections",
+        "group": "connection",
+        "since": "8.1.0",
+        "arity": -2,
+        "container": "CLIENT",
+        "function": "clientCommand",
+        "history": [
+            [
+                "8.1.0",
+                "Introducing client count command with filters"
+            ]
+        ],
+        "command_flags": [
+            "ADMIN",
+            "NOSCRIPT",
+            "LOADING",
+            "STALE",
+            "SENTINEL"
+        ],
+        "acl_categories": [
+            "CONNECTION"
+        ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT"
+        ],
+        "reply_schema": {
+            "type": "string",
+            "description": "Information and statistics about client connections"
+        },
+        "arguments": [
+            {
+                "name": "client-id",
+                "token": "ID",
+                "type": "integer",
+                "optional": true,
+                "multiple": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "TYPE",
+                "name": "client-type",
+                "type": "oneof",
+                "optional": true,
+                "arguments": [
+                    {
+                        "name": "normal",
+                        "type": "pure-token",
+                        "token": "normal"
+                    },
+                    {
+                        "name": "master",
+                        "type": "pure-token",
+                        "token": "master"
+                    },
+                    {
+                        "name": "replica",
+                        "type": "pure-token",
+                        "token": "replica"
+                    },
+                    {
+                        "name": "pubsub",
+                        "type": "pure-token",
+                        "token": "pubsub"
+                    }
+                ]
+            },
+            {
+                "token": "USER",
+                "name": "username",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "ADDR",
+                "name": "addr",
+                "display": "ip:port",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "LADDR",
+                "name": "laddr",
+                "display": "ip:port",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "SKIPME",
+                "name": "skipme",
+                "type": "oneof",
+                "optional": true,
+                "since": "8.1.0",
+                "arguments": [
+                    {
+                        "name": "yes",
+                        "type": "pure-token",
+                        "token": "YES"
+                    },
+                    {
+                        "name": "no",
+                        "type": "pure-token",
+                        "token": "NO"
+                    }
+                ]
+            },
+            {
+                "token": "MAXAGE",
+                "name": "maxage",
+                "type": "integer",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "NAME",
+                "name": "name",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "MINIDLE",
+                "name": "minidle",
+                "type": "integer",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "FLAGS",
+                "name": "flags",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "PATTERN",
+                "name": "pattern",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "CHANNEL",
+                "name": "channel",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            },
+            {
+                "token": "SHARDCHANNEL",
+                "name": "shardchannel",
+                "type": "string",
+                "optional": true,
+                "since": "8.1.0"
+            }
+        ]
+    }
+}

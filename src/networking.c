@@ -4459,6 +4459,57 @@ static void clientCommandImportSource(client *c) {
     }
 }
 
+void clientCountCommand(client *c) {
+    /* If there are additional arguments */
+    if (c->argc > 2) {
+        clientFilter filter = {.ids = NULL, .max_age = 0, .addr = NULL, .laddr = NULL, .user = NULL, .type = -1, .skipme = 0};
+        const int i = 2; // Start parsing filters from the third argument
+
+        if (parseClientFiltersOrReply(c, i, &filter) != C_OK) {
+            /* Free filter resources on failure */
+            freeClientFilter(&filter);
+            return;
+        }
+
+        long long count = 0;
+        listIter li;
+        listNode *ln;
+        listRewind(server.clients, &li);
+
+        /* Count clients that match the filter */
+        while ((ln = listNext(&li)) != NULL) {
+            client *cl = listNodeValue(ln);
+            if (clientMatchesFilter(cl, filter)) {
+                count++;
+            }
+        }
+
+        /* Free filter resources after use */
+        freeClientFilter(&filter);
+        /* Return the count to the client */
+        addReplyLongLong(c, count);
+
+    } else if (c->argc == 2) {
+        /* No filters, just "CLIENT COUNT" */
+        long long count = 0;
+        listIter li;
+        listNode *ln;
+        listRewind(server.clients, &li);
+
+        /* Count all clients */
+        while ((ln = listNext(&li)) != NULL) {
+            count++;
+        }
+
+        /* Return the total count to the client */
+        addReplyLongLong(c, count);
+    } else {
+        /* Invalid syntax */
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
+}
+
 void clientCommand(client *c) {
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
         clientCommandHelp(c);
@@ -4498,6 +4549,8 @@ void clientCommand(client *c) {
         clientCommandCapa(c);
     } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
         clientCommandImportSource(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "count")) {
+        clientCountCommand(c);
     } else {
         addReplySubcommandSyntaxError(c);
     }
