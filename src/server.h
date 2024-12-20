@@ -83,6 +83,8 @@ typedef long long ustime_t; /* microsecond time type. */
 #include "connection.h" /* Connection abstraction */
 #include "memory_prefetch.h"
 
+#define dismissMemory zmadvise_dontneed
+
 #define VALKEYMODULE_CORE 1
 typedef struct serverObject robj;
 #include "valkeymodule.h" /* Modules API defines. */
@@ -146,6 +148,11 @@ struct hdr_histogram;
 #define DEFAULT_WAIT_BEFORE_RDB_CLIENT_FREE 60      /* Grace period in seconds for replica main \
                                                      * channel to establish psync. */
 #define LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT 100 /* Default: 0.1 seconds */
+#if !defined(DEBUG_FORCE_DEFRAG)
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 0
+#else
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
+#endif
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -873,6 +880,7 @@ struct ValkeyModuleDigest {
 #define OBJ_ENCODING_QUICKLIST 9  /* Encoded as linked list of listpacks */
 #define OBJ_ENCODING_STREAM 10    /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11  /* Encoded as a listpack */
+#define OBJ_ENCODING_HASHTABLE 12 /* Encoded as a hashtable */
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1 << LRU_BITS) - 1) /* Max value of obj->lru */
@@ -1436,7 +1444,7 @@ struct sharedObjectsStruct {
         *rpoplpush, *lmove, *blmove, *zpopmin, *zpopmax, *emptyscan, *multi, *exec, *left, *right, *hset, *srem,
         *xgroup, *xclaim, *script, *replconf, *eval, *persist, *set, *pexpireat, *pexpire, *time, *pxat, *absttl,
         *retrycount, *force, *justid, *entriesread, *lastid, *ping, *setid, *keepttl, *load, *createconsumer, *getack,
-        *special_asterick, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
+        *special_asterisk, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
         *smessagebulk, *select[PROTO_SHARED_SELECT_CMDS], *integers[OBJ_SHARED_INTEGERS],
         *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
         *bulkhdr[OBJ_SHARED_BULKHDR_LEN],  /* "$<value>\r\n" */
@@ -1861,6 +1869,7 @@ struct valkeyServer {
     long long stat_io_reads_processed;                 /* Number of read events processed by IO threads */
     long long stat_io_writes_processed;                /* Number of write events processed by IO threads */
     long long stat_io_freed_objects;                   /* Number of objects freed by IO threads */
+    long long stat_io_accept_offloaded;                /* Number of offloaded accepts */
     long long stat_poll_processed_by_io_threads;       /* Total number of poll jobs processed by IO */
     long long stat_total_reads_processed;              /* Total number of read events processed */
     long long stat_total_writes_processed;             /* Total number of write events processed */
@@ -1900,8 +1909,7 @@ struct valkeyServer {
     int sanitize_dump_payload;                   /* Enables deep sanitization for ziplist and listpack in RDB and RESTORE. */
     int skip_checksum_validation;                /* Disable checksum validation for RDB and RESTORE payload. */
     int jemalloc_bg_thread;                      /* Enable jemalloc background thread */
-    int active_defrag_configuration_changed;     /* defrag configuration has been changed and need to reconsider
-                                                  * active_defrag_running in computeDefragCycles. */
+    int active_defrag_configuration_changed;     /* Config changed; need to recompute active_defrag_cpu_percent. */
     size_t active_defrag_ignore_bytes;           /* minimum amount of fragmentation waste to start active defrag */
     int active_defrag_threshold_lower;           /* minimum percentage of fragmentation to start active defrag */
     int active_defrag_threshold_upper;           /* maximum percentage of fragmentation at which we use maximum effort */
@@ -2635,7 +2643,7 @@ typedef struct {
     robj *subject;
     int encoding;
     int ii; /* intset iterator */
-    dictIterator *di;
+    hashtableIterator *hashtable_iterator;
     unsigned char *lpi; /* listpack iterator */
 } setTypeIterator;
 
@@ -2666,7 +2674,7 @@ extern struct valkeyServer server;
 extern struct sharedObjectsStruct shared;
 extern dictType objectKeyPointerValueDictType;
 extern dictType objectKeyHeapPointerValueDictType;
-extern dictType setDictType;
+extern hashtableType setHashtableType;
 extern dictType BenchmarkDictType;
 extern dictType zsetDictType;
 extern hashtableType kvstoreKeysHashtableType;
@@ -2681,6 +2689,7 @@ extern dictType objToDictDictType;
 extern hashtableType kvstoreChannelHashtableType;
 extern dictType modulesDictType;
 extern dictType sdsReplyDictType;
+extern hashtableType sdsReplyHashtableType;
 extern dictType keylistDictType;
 extern dict *modules;
 
@@ -3375,7 +3384,6 @@ void rejectCommandFormat(client *c, const char *fmt, ...);
 void *activeDefragAlloc(void *ptr);
 robj *activeDefragStringOb(robj *ob);
 void dismissSds(sds s);
-void dismissMemory(void *ptr, size_t size_hint);
 void dismissMemoryInChild(void);
 
 #define RESTART_SERVER_NONE 0

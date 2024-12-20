@@ -561,3 +561,55 @@ void trySendPollJobToIOThreads(void) {
     aeSetPollProtect(server.el, 1);
     IOJobQueue_push(jq, IOThreadPoll, server.el);
 }
+
+static void ioThreadAccept(void *data) {
+    client *c = (client *)data;
+    connAccept(c->conn, NULL);
+    c->io_read_state = CLIENT_COMPLETED_IO;
+}
+
+/*
+ * Attempts to offload an Accept operation (currently used for TLS accept) for a client
+ * connection to I/O threads.
+ *
+ * Returns:
+ *   C_OK  - If the accept operation was successfully queued for processing
+ *   C_ERR - If the connection is not eligible for offloading
+ *
+ * Parameters:
+ *   conn - The connection object to perform the accept operation on
+ */
+int trySendAcceptToIOThreads(connection *conn) {
+    if (server.io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    if (!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD)) {
+        return C_ERR;
+    }
+
+    client *c = connGetPrivateData(conn);
+    if (c->io_read_state != CLIENT_IDLE) {
+        return C_OK;
+    }
+
+    if (server.active_io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    size_t thread_id = (c->id % (server.active_io_threads_num - 1)) + 1;
+    IOJobQueue *job_queue = &io_jobs[thread_id];
+
+    if (IOJobQueue_isFull(job_queue)) {
+        return C_ERR;
+    }
+
+    c->io_read_state = CLIENT_PENDING_IO;
+    c->flag.pending_read = 1;
+    listLinkNodeTail(server.clients_pending_io_read, &c->pending_read_list_node);
+    connSetPostponeUpdateState(c->conn, 1);
+    server.stat_io_accept_offloaded++;
+    IOJobQueue_push(job_queue, ioThreadAccept, c);
+
+    return C_OK;
+}

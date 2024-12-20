@@ -429,9 +429,9 @@ robj *createListListpackObject(void) {
 }
 
 robj *createSetObject(void) {
-    dict *d = dictCreate(&setDictType);
-    robj *o = createObject(OBJ_SET, d);
-    o->encoding = OBJ_ENCODING_HT;
+    hashtable *ht = hashtableCreate(&setHashtableType);
+    robj *o = createObject(OBJ_SET, ht);
+    o->encoding = OBJ_ENCODING_HASHTABLE;
     return o;
 }
 
@@ -506,7 +506,7 @@ void freeListObject(robj *o) {
 
 void freeSetObject(robj *o) {
     switch (o->encoding) {
-    case OBJ_ENCODING_HT: dictRelease((dict *)o->ptr); break;
+    case OBJ_ENCODING_HASHTABLE: hashtableRelease((hashtable *)o->ptr); break;
     case OBJ_ENCODING_INTSET:
     case OBJ_ENCODING_LISTPACK: zfree(o->ptr); break;
     default: serverPanic("Unknown set encoding type");
@@ -622,23 +622,23 @@ void dismissListObject(robj *o, size_t size_hint) {
 
 /* See dismissObject() */
 void dismissSetObject(robj *o, size_t size_hint) {
-    if (o->encoding == OBJ_ENCODING_HT) {
-        dict *set = o->ptr;
-        serverAssert(dictSize(set) != 0);
+    if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+        hashtable *ht = o->ptr;
+        serverAssert(hashtableSize(ht) != 0);
         /* We iterate all nodes only when average member size is bigger than a
          * page size, and there's a high chance we'll actually dismiss something. */
-        if (size_hint / dictSize(set) >= server.page_size) {
-            dictEntry *de;
-            dictIterator *di = dictGetIterator(set);
-            while ((de = dictNext(di)) != NULL) {
-                dismissSds(dictGetKey(de));
+        if (size_hint / hashtableSize(ht) >= server.page_size) {
+            hashtableIterator iter;
+            hashtableInitIterator(&iter, ht);
+            void *next;
+            while (hashtableNext(&iter, &next)) {
+                sds item = next;
+                dismissSds(item);
             }
-            dictReleaseIterator(di);
+            hashtableResetIterator(&iter);
         }
 
-        /* Dismiss hash table memory. */
-        dismissMemory(set->ht_table[0], DICTHT_SIZE(set->ht_size_exp[0]) * sizeof(dictEntry *));
-        dismissMemory(set->ht_table[1], DICTHT_SIZE(set->ht_size_exp[1]) * sizeof(dictEntry *));
+        dismissHashtable(ht);
     } else if (o->encoding == OBJ_ENCODING_INTSET) {
         dismissMemory(o->ptr, intsetBlobLen((intset *)o->ptr));
     } else if (o->encoding == OBJ_ENCODING_LISTPACK) {
@@ -728,7 +728,7 @@ void dismissStreamObject(robj *o, size_t size_hint) {
  * modifies any keys due to write traffic, it'll cause CoW which consume
  * physical memory. In the child process, after serializing the key and value,
  * the data is definitely not accessed again, so to avoid unnecessary CoW, we
- * try to release their memory back to OS. see dismissMemory().
+ * try to release their memory back to OS. see zmadvise_dontneed().
  *
  * Because of the cost of iterating all node/field/member/entry of complex data
  * types, we iterate and dismiss them only when approximate average we estimate
@@ -1109,6 +1109,7 @@ char *strEncoding(int encoding) {
     case OBJ_ENCODING_RAW: return "raw";
     case OBJ_ENCODING_INT: return "int";
     case OBJ_ENCODING_HT: return "hashtable";
+    case OBJ_ENCODING_HASHTABLE: return "hashtable";
     case OBJ_ENCODING_QUICKLIST: return "quicklist";
     case OBJ_ENCODING_LISTPACK: return "listpack";
     case OBJ_ENCODING_INTSET: return "intset";
@@ -1160,17 +1161,20 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
             serverPanic("Unknown list encoding");
         }
     } else if (o->type == OBJ_SET) {
-        if (o->encoding == OBJ_ENCODING_HT) {
-            d = o->ptr;
-            di = dictGetIterator(d);
-            asize = sizeof(*o) + sizeof(dict) + (sizeof(struct dictEntry *) * dictBuckets(d));
-            while ((de = dictNext(di)) != NULL && samples < sample_size) {
-                ele = dictGetKey(de);
-                elesize += dictEntryMemUsage(de) + sdsAllocSize(ele);
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+            hashtable *ht = o->ptr;
+            asize = sizeof(*o) + hashtableMemUsage(ht);
+
+            hashtableIterator iter;
+            hashtableInitIterator(&iter, ht);
+            void *next;
+            while (hashtableNext(&iter, &next) && samples < sample_size) {
+                sds element = next;
+                elesize += sdsAllocSize(element);
                 samples++;
             }
-            dictReleaseIterator(di);
-            if (samples) asize += (double)elesize / samples * dictSize(d);
+            hashtableResetIterator(&iter);
+            if (samples) asize += (double)elesize / samples * hashtableSize(ht);
         } else if (o->encoding == OBJ_ENCODING_INTSET) {
             asize = sizeof(*o) + zmalloc_size(o->ptr);
         } else if (o->encoding == OBJ_ENCODING_LISTPACK) {
