@@ -393,7 +393,7 @@ void getCommand(client *c) {
     getGenericCommand(c);
 }
 
-void getExpireGenericCommand(client *c, int output_ms) {
+void getpxtCommand(client *c) {
     long long expire;
     robj *o;
 
@@ -413,12 +413,8 @@ void getExpireGenericCommand(client *c, int output_ms) {
     if (expire == -1) {
         addReplyLongLong(c, -1);
     } else {
-        addReplyLongLong(c, output_ms ? expire : ((expire + 500) / 1000));
+        addReplyLongLong(c, expire);
     }
-}
-
-void getpxtCommand(client *c) {
-    getExpireGenericCommand(c, 1);
 }
 
 /*
@@ -631,6 +627,34 @@ void mgetCommand(client *c) {
                 addReplyNull(c);
             } else {
                 addReplyBulk(c, o);
+            }
+        }
+    }
+}
+
+void mgetpxtCommand(client *c) {
+    int j;
+
+    addReplyArrayLen(c, c->argc - 1);
+    for (j = 1; j < c->argc; j++) {
+        robj *o = lookupKeyRead(c->db, c->argv[j]);
+        if (o == NULL) {
+            addReplyNull(c);
+        } else {
+            if (o->type != OBJ_STRING) {
+                addReplyNull(c);
+            } else {
+                addReplyArrayLen(c, 2);
+                addReplyBulk(c, o);
+
+                /* The key exists. Return -1 if it has no expire, or the actual
+                * expire value otherwise. */
+                long long expire = getExpire(c->db, c->argv[j]);
+                if (expire == -1) {
+                    addReplyLongLong(c, -1);
+                } else {
+                    addReplyLongLong(c, expire);
+                }
             }
         }
     }
