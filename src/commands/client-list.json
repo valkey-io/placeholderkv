@@ -35,6 +35,10 @@
             [
                 "8.0.0",
                 "Replaced `master` `TYPE` with `primary`. `master` still supported for backward compatibility."
+            ],
+            [
+                "8.1.0",
+                "Added filters like USER, ADDR, LADDR, SKIPME, and MAXAGE"
             ]
         ],
         "command_flags": [
