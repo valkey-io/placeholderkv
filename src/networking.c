@@ -31,6 +31,7 @@
 #include "cluster.h"
 #include "cluster_slot_stats.h"
 #include "script.h"
+#include "intset.h"
 #include "sds.h"
 #include "fpconv_dtoa.h"
 #include "fmtargs.h"
@@ -41,7 +42,6 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdatomic.h>
-#include "intset.h"
 
 /* This struct is used to encapsulate filtering criteria for operations on clients
  * such as identifying specific clients to kill or retrieve. Each field in the struct
@@ -3740,8 +3740,8 @@ static void clientCommandHelp(client *c) {
         "      Kill connections authenticated by <username>.",
         "    * SKIPME (YES|NO)",
         "      Skip killing current connection (default: yes).",
-        "    * ID <client-id>",
-        "      Kill connections by client id.",
+        "    * ID <client-id> [<client-id>...]",
+        "      Kill connections by client ids.",
         "    * MAXAGE <maxage>",
         "      Kill connections older than the specified age.",
         "LIST [options ...]",
@@ -3754,12 +3754,12 @@ static void clientCommandHelp(client *c) {
         "      Return clients connected from the specified address.",
         "    * LADDR <ip:port>",
         "      Return clients connected to the specified local address.",
-        "    * ID <client-id>",
+        "    * ID <client-id> [<client-id>...]",
         "      Return clients with the specified IDs.",
         "    * SKIPME (YES|NO)",
         "      Exclude the current client from the list (default: no).",
         "    * MAXAGE <maxage>",
-        "      Kill connections older than the specified age.",
+        "      List connections older than the specified age.",
         "UNPAUSE",
         "    Stop the current client pause, resuming traffic.",
         "PAUSE <timeout> [WRITE|ALL]",
