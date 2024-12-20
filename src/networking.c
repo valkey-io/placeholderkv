@@ -88,9 +88,9 @@ static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
-static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter);
+static int parseClientFiltersOrReply(client *c, int index, clientFilter *filter);
 static int clientMatchesFilter(client *client, clientFilter client_filter);
-sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
+static sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_shared_qb = NULL;
@@ -3485,7 +3485,7 @@ sds getAllClientsInfoString(int type, int hide_user_data) {
     return o;
 }
 
-sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data) {
+static sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data) {
     listNode *ln;
     listIter li;
     client *client;
@@ -3620,21 +3620,22 @@ void quitCommand(client *c) {
     c->flag.close_after_reply = 1;
 }
 
-static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter) {
-    while (i < c->argc) {
-        int moreargs = c->argc > i + 1;
+static int parseClientFiltersOrReply(client *c, int index, clientFilter *filter) {
+    while (index < c->argc) {
+        int moreargs = c->argc > index + 1;
 
-        if (!strcasecmp(c->argv[i]->ptr, "id")) {
+        if (!strcasecmp(c->argv[index]->ptr, "id")) {
             if (filter->ids == NULL) {
-                filter->ids = intsetNew(); // Initialize the intset for IDs
+                /* Initialize the intset for IDs */
+                filter->ids = intsetNew();
             }
-            i++; // Move to the first ID after "ID"
+            index++; /* Move to the first ID after "ID" */
 
-            // Process all IDs until a non-numeric argument or end of args
-            while (i < c->argc) {
+            /* Process all IDs until a non-numeric argument or end of args */
+            while (index < c->argc) {
                 long long id;
-                if (!string2ll(c->argv[i]->ptr, sdslen(c->argv[i]->ptr), &id)) {
-                    break; // Stop processing IDs if a non-numeric argument is encountered
+                if (!string2ll(c->argv[index]->ptr, sdslen(c->argv[index]->ptr), &id)) {
+                    break; /* Stop processing IDs if a non-numeric argument is encountered */
                 }
                 if (id < 1) {
                     addReplyError(c, "client-id should be greater than 0");
@@ -3643,12 +3644,12 @@ static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter) {
 
                 uint8_t added;
                 filter->ids = intsetAdd(filter->ids, id, &added);
-                i++; // Move to the next argument
+                index++; /* Move to the next argument */
             }
-        } else if (!strcasecmp(c->argv[i]->ptr, "maxage") && moreargs) {
+        } else if (!strcasecmp(c->argv[index]->ptr, "maxage") && moreargs) {
             long long tmp;
 
-            if (getLongLongFromObjectOrReply(c, c->argv[i + 1], &tmp,
+            if (getLongLongFromObjectOrReply(c, c->argv[index + 1], &tmp,
                                              "maxage is not an integer or out of range") != C_OK)
                 return C_ERR;
             if (tmp <= 0) {
@@ -3657,37 +3658,37 @@ static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter) {
             }
 
             filter->max_age = tmp;
-            i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "type") && moreargs) {
-            filter->type = getClientTypeByName(c->argv[i + 1]->ptr);
+            index += 2;
+        } else if (!strcasecmp(c->argv[index]->ptr, "type") && moreargs) {
+            filter->type = getClientTypeByName(c->argv[index + 1]->ptr);
             if (filter->type == -1) {
-                addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[i + 1]->ptr);
+                addReplyErrorFormat(c, "Unknown client type '%s'", (char *)c->argv[index + 1]->ptr);
                 return C_ERR;
             }
-            i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "addr") && moreargs) {
-            filter->addr = c->argv[i + 1]->ptr;
-            i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "laddr") && moreargs) {
-            filter->laddr = c->argv[i + 1]->ptr;
-            i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "user") && moreargs) {
-            filter->user = ACLGetUserByName(c->argv[i + 1]->ptr, sdslen(c->argv[i + 1]->ptr));
+            index += 2;
+        } else if (!strcasecmp(c->argv[index]->ptr, "addr") && moreargs) {
+            filter->addr = c->argv[index + 1]->ptr;
+            index += 2;
+        } else if (!strcasecmp(c->argv[index]->ptr, "laddr") && moreargs) {
+            filter->laddr = c->argv[index + 1]->ptr;
+            index += 2;
+        } else if (!strcasecmp(c->argv[index]->ptr, "user") && moreargs) {
+            filter->user = ACLGetUserByName(c->argv[index + 1]->ptr, sdslen(c->argv[index + 1]->ptr));
             if (filter->user == NULL) {
-                addReplyErrorFormat(c, "No such user '%s'", (char *)c->argv[i + 1]->ptr);
+                addReplyErrorFormat(c, "No such user '%s'", (char *)c->argv[index + 1]->ptr);
                 return C_ERR;
             }
-            i += 2;
-        } else if (!strcasecmp(c->argv[i]->ptr, "skipme") && moreargs) {
-            if (!strcasecmp(c->argv[i + 1]->ptr, "yes")) {
+            index += 2;
+        } else if (!strcasecmp(c->argv[index]->ptr, "skipme") && moreargs) {
+            if (!strcasecmp(c->argv[index + 1]->ptr, "yes")) {
                 filter->skipme = 1;
-            } else if (!strcasecmp(c->argv[i + 1]->ptr, "no")) {
+            } else if (!strcasecmp(c->argv[index + 1]->ptr, "no")) {
                 filter->skipme = 0;
             } else {
                 addReplyErrorObject(c, shared.syntaxerr);
                 return C_ERR;
             }
-            i += 2;
+            index += 2;
         } else {
             addReplyErrorObject(c, shared.syntaxerr);
             return C_ERR;
@@ -3697,16 +3698,16 @@ static int parseClientFiltersOrReply(client *c, int i, clientFilter *filter) {
 }
 
 static int clientMatchesFilter(client *client, clientFilter client_filter) {
-    // Check each filter condition and return false if the client does not match.
+    /* Check each filter condition and return false if the client does not match. */
     if (client_filter.addr && strcmp(getClientPeerId(client), client_filter.addr) != 0) return 0;
     if (client_filter.laddr && strcmp(getClientSockname(client), client_filter.laddr) != 0) return 0;
     if (client_filter.type != -1 && getClientType(client) != client_filter.type) return 0;
     if (client_filter.ids && !intsetFind(client_filter.ids, client->id)) return 0;
     if (client_filter.user && client->user != client_filter.user) return 0;
-    if (client_filter.skipme && client == server.current_client) return 0; // Skipme check
+    if (client_filter.skipme && client == server.current_client) return 0;
     if (client_filter.max_age != 0 && (long long)(commandTimeSnapshot() / 1000 - client->ctime) < client_filter.max_age) return 0;
 
-    // If all conditions are satisfied, the client matches the filter.
+    /* If all conditions are satisfied, the client matches the filter. */
     return 1;
 }
 
@@ -3884,12 +3885,14 @@ static void clientCommandKill(client *c) {
 
         /* New style syntax: parse options. */
         if (parseClientFiltersOrReply(c, i, &client_filter) != C_OK) {
-            goto client_kill_done; // Free the intset on error
+            /* Free the intset on error */
+            goto client_kill_done;
             return;
         }
     } else {
         addReplyErrorObject(c, shared.syntaxerr);
-        goto client_kill_done; // Free the intset on error
+        /* Free the intset on error */
+        goto client_kill_done;
         return;
     }
 
