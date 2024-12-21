@@ -3233,7 +3233,7 @@ int clusterProcessPacket(clusterLink *link) {
                     if (nodeIp2String(node->ip, link, hdr->myip) != C_OK) {
                         /* We cannot get the IP info from the link, it probably means the connection is closed. */
                         serverLog(LL_NOTICE, "Closing link even though we received a MEET packet on it, "
-                                  "because the connection has an error");
+                                             "because the connection has an error");
                         freeClusterLink(link);
                         freeClusterNode(node);
                         return 0;
