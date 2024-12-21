@@ -178,7 +178,7 @@ start_cluster 2 0 {tags {external:skip cluster} overrides {cluster-node-timeout 
 
             # Wait for Node 0's handshake to timeout
             wait_for_condition 50 100 {
-                [cluster_get_first_node_in_handshake 1] eq {}
+                [cluster_get_first_node_in_handshake 0] eq {}
             } else {
                 fail "Node 0 never exited handshake state"
             }
