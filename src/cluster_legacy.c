@@ -3229,10 +3229,15 @@ int clusterProcessPacket(clusterLink *link) {
                      * to this is the flag that indicates extensions are supported, as
                      * we want to send extensions right away in the return PONG in order
                      * to reduce the amount of time needed to stabilize the shard ID. */
-                    clusterNode *node;
-
-                    node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
-                    serverAssert(nodeIp2String(node->ip, link, hdr->myip) == C_OK);
+                    clusterNode *node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
+                    if (nodeIp2String(node->ip, link, hdr->myip) != C_OK) {
+                        /* We cannot get the IP info from the link, it probably means the connection is closed. */
+                        serverLog(LL_NOTICE, "Closing link even though we received a MEET packet on it, "
+                                  "because the connection has an error");
+                        freeClusterLink(link);
+                        freeClusterNode(node);
+                        return 0;
+                    }
                     getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
                     node->cport = ntohs(hdr->cport);
                     if (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA) {
