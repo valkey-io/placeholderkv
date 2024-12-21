@@ -31,6 +31,7 @@
 #include "sds.h"
 #include "dict.h"
 #include "adlist.h"
+#include "module.h"
 
 #define LOAD_TIMEOUT_MS 500
 
@@ -117,9 +118,28 @@ static dict *engines = NULL;
 /* Libraries Ctx. */
 static functionsLibCtx *curr_functions_lib_ctx = NULL;
 
+static void setupEngineModuleCtx(engineInfo *ei, client *c) {
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        moduleScriptingEngineInitContext(ei->module_ctx, ei->engineModule, c);
+    }
+}
+
+static void teardownEngineModuleCtx(engineInfo *ei) {
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        moduleFreeContext(ei->module_ctx);
+    }
+}
+
 static size_t functionMallocSize(functionInfo *fi) {
-    return zmalloc_size(fi) + sdsAllocSize(fi->name) + (fi->desc ? sdsAllocSize(fi->desc) : 0) +
-           fi->li->ei->engine->get_function_memory_overhead(fi->function);
+    setupEngineModuleCtx(fi->li->ei, NULL);
+    size_t size = zmalloc_size(fi) +
+                  sdsAllocSize(fi->name) +
+                  (fi->desc ? sdsAllocSize(fi->desc) : 0) +
+                  fi->li->ei->engine->get_function_memory_overhead(fi->li->ei->module_ctx, fi->function);
+    teardownEngineModuleCtx(fi->li->ei);
+    return size;
 }
 
 static size_t libraryMallocSize(functionLibInfo *li) {
@@ -141,8 +161,12 @@ static void engineFunctionDispose(void *obj) {
     if (fi->desc) {
         sdsfree(fi->desc);
     }
+    setupEngineModuleCtx(fi->li->ei, NULL);
     engine *engine = fi->li->ei->engine;
-    engine->free_function(engine->engine_ctx, fi->function);
+    engine->free_function(fi->li->ei->module_ctx,
+                          engine->engine_ctx,
+                          fi->function);
+    teardownEngineModuleCtx(fi->li->ei);
     zfree(fi);
 }
 
@@ -233,6 +257,15 @@ functionsLibCtx *functionsLibCtxCreate(void) {
     return ret;
 }
 
+void functionsAddEngineStats(engineInfo *ei) {
+    serverAssert(curr_functions_lib_ctx != NULL);
+    dictEntry *entry = dictFind(curr_functions_lib_ctx->engines_stats, ei->name);
+    if (entry == NULL) {
+        functionsLibEngineStats *stats = zcalloc(sizeof(*stats));
+        dictAdd(curr_functions_lib_ctx->engines_stats, ei->name, stats);
+    }
+}
+
 /*
  * Creating a function inside the given library.
  * On success, return C_OK.
@@ -242,24 +275,34 @@ functionsLibCtx *functionsLibCtxCreate(void) {
  *       the function will verify that the given name is following the naming format
  *       and return an error if its not.
  */
-int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err) {
-    if (functionsVerifyName(name) != C_OK) {
-        *err = sdsnew("Library names can only contain letters, numbers, or underscores(_) and must be at least one "
-                      "character long");
+static int functionLibCreateFunction(robj *name,
+                                     void *function,
+                                     functionLibInfo *li,
+                                     robj *desc,
+                                     uint64_t f_flags,
+                                     sds *err) {
+    serverAssert(name->type == OBJ_STRING);
+    serverAssert(desc == NULL || desc->type == OBJ_STRING);
+
+    if (functionsVerifyName(name->ptr) != C_OK) {
+        *err = sdsnew("Function names can only contain letters, numbers, or "
+                      "underscores(_) and must be at least one character long");
         return C_ERR;
     }
 
-    if (dictFetchValue(li->functions, name)) {
+    sds name_sds = sdsdup(name->ptr);
+    if (dictFetchValue(li->functions, name_sds)) {
         *err = sdsnew("Function already exists in the library");
+        sdsfree(name_sds);
         return C_ERR;
     }
 
     functionInfo *fi = zmalloc(sizeof(*fi));
     *fi = (functionInfo){
-        .name = name,
+        .name = name_sds,
         .function = function,
         .li = li,
-        .desc = desc,
+        .desc = desc ? sdsdup(desc->ptr) : NULL,
         .f_flags = f_flags,
     };
 
@@ -403,17 +446,40 @@ done:
     return ret;
 }
 
-/* Register an engine, should be called once by the engine on startup and give the following:
+/* Register an engine, should be called once by the engine on startup and give
+ * the following:
  *
  * - engine_name - name of the engine to register
- * - engine_ctx - the engine ctx that should be used by the server to interact with the engine */
-int functionsRegisterEngine(const char *engine_name, engine *engine) {
+ *
+ * - engine_module - the valkey module that implements this engine
+ *
+ * - engine_ctx - the engine ctx that should be used by the server to interact
+ * with the engine.
+ *
+ * - engine_methods - the struct with the scripting engine callback functions
+ * pointers.
+ *
+ */
+int functionsRegisterEngine(const char *engine_name,
+                            ValkeyModule *engine_module,
+                            engineCtx *engine_ctx,
+                            engineMethods *engine_methods) {
     sds engine_name_sds = sdsnew(engine_name);
     if (dictFetchValue(engines, engine_name_sds)) {
         serverLog(LL_WARNING, "Same engine was registered twice");
         sdsfree(engine_name_sds);
         return C_ERR;
     }
+
+    engine *eng = zmalloc(sizeof(engine));
+    *eng = (engine){
+        .engine_ctx = engine_ctx,
+        .create = engine_methods->create_functions_library,
+        .call = engine_methods->call_function,
+        .get_function_memory_overhead = engine_methods->get_function_memory_overhead,
+        .free_function = engine_methods->free_function,
+        .get_memory_info = engine_methods->get_memory_info,
+    };
 
     client *c = createClient(NULL);
     c->flag.deny_blocking = 1;
@@ -422,15 +488,64 @@ int functionsRegisterEngine(const char *engine_name, engine *engine) {
     engineInfo *ei = zmalloc(sizeof(*ei));
     *ei = (engineInfo){
         .name = engine_name_sds,
-        .engine = engine,
+        .engineModule = engine_module,
+        .module_ctx = engine_module ? moduleAllocateContext() : NULL,
+        .engine = eng,
         .c = c,
     };
 
     dictAdd(engines, engine_name_sds, ei);
 
-    engine_cache_memory += zmalloc_size(ei) + sdsAllocSize(ei->name) + zmalloc_size(engine) +
-                           engine->get_engine_memory_overhead(engine->engine_ctx);
+    functionsAddEngineStats(ei);
 
+    setupEngineModuleCtx(ei, NULL);
+    engineMemoryInfo mem_info = eng->get_memory_info(ei->module_ctx,
+                                                     eng->engine_ctx);
+    engine_cache_memory += zmalloc_size(ei) +
+                           sdsAllocSize(ei->name) +
+                           zmalloc_size(eng) +
+                           mem_info.engine_memory_overhead;
+
+    teardownEngineModuleCtx(ei);
+
+    return C_OK;
+}
+
+/* Removes a scripting engine from the server.
+ *
+ * - engine_name - name of the engine to remove
+ */
+int functionsUnregisterEngine(const char *engine_name) {
+    sds engine_name_sds = sdsnew(engine_name);
+    dictEntry *entry = dictFind(engines, engine_name_sds);
+    if (entry == NULL) {
+        serverLog(LL_WARNING, "There's no engine registered with name %s", engine_name);
+        sdsfree(engine_name_sds);
+        return C_ERR;
+    }
+
+    engineInfo *ei = dictGetVal(entry);
+
+    dictIterator *iter = dictGetSafeIterator(curr_functions_lib_ctx->libraries);
+    while ((entry = dictNext(iter))) {
+        functionLibInfo *li = dictGetVal(entry);
+        if (li->ei == ei) {
+            libraryUnlink(curr_functions_lib_ctx, li);
+            engineLibraryFree(li);
+        }
+    }
+    dictReleaseIterator(iter);
+
+    zfree(ei->engine);
+    sdsfree(ei->name);
+    freeClient(ei->c);
+    if (ei->engineModule != NULL) {
+        serverAssert(ei->module_ctx != NULL);
+        zfree(ei->module_ctx);
+    }
+    zfree(ei);
+
+    sdsfree(engine_name_sds);
     return C_OK;
 }
 
@@ -649,11 +764,19 @@ static void fcallCommandGeneric(client *c, int ro) {
     }
 
     scriptRunCtx run_ctx;
-
     if (scriptPrepareForRun(&run_ctx, fi->li->ei->c, c, fi->name, fi->f_flags, ro) != C_OK) return;
+    setupEngineModuleCtx(fi->li->ei, run_ctx.original_client);
 
-    engine->call(&run_ctx, engine->engine_ctx, fi->function, c->argv + 3, numkeys, c->argv + 3 + numkeys,
+    engine->call(fi->li->ei->module_ctx,
+                 engine->engine_ctx,
+                 &run_ctx,
+                 fi->function,
+                 c->argv + 3,
+                 numkeys,
+                 c->argv + 3 + numkeys,
                  c->argc - 3 - numkeys);
+
+    teardownEngineModuleCtx(fi->li->ei);
     scriptResetRun(&run_ctx);
 }
 
@@ -953,14 +1076,40 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
     if (md->engine) sdsfree(md->engine);
 }
 
+static void freeCompiledFunctions(engineInfo *ei,
+                                  compiledFunction **compiled_functions,
+                                  size_t num_compiled_functions,
+                                  size_t free_function_from_idx) {
+    setupEngineModuleCtx(ei, NULL);
+
+    for (size_t i = 0; i < num_compiled_functions; i++) {
+        compiledFunction *func = compiled_functions[i];
+        decrRefCount(func->name);
+        if (func->desc) {
+            decrRefCount(func->desc);
+        }
+        if (i >= free_function_from_idx) {
+            ei->engine->free_function(ei->module_ctx,
+                                      ei->engine->engine_ctx,
+                                      func->function);
+        }
+        zfree(func);
+    }
+
+    zfree(compiled_functions);
+
+    teardownEngineModuleCtx(ei);
+}
+
 /* Compile and save the given library, return the loaded library name on success
  * and NULL on failure. In case on failure the err out param is set with relevant error message */
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout) {
     dictIterator *iter = NULL;
     dictEntry *entry = NULL;
-    functionLibInfo *new_li = NULL;
     functionLibInfo *old_li = NULL;
     functionsLibMetaData md = {0};
+    functionLibInfo *new_li = NULL;
+
     if (functionExtractLibMetaData(code, &md, err) != C_OK) {
         return NULL;
     }
@@ -990,9 +1139,46 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
     }
 
     new_li = engineLibraryCreate(md.name, ei, code);
-    if (engine->create(engine->engine_ctx, new_li, md.code, timeout, err) != C_OK) {
+    size_t num_compiled_functions = 0;
+    char *compile_error = NULL;
+    setupEngineModuleCtx(ei, NULL);
+    compiledFunction **compiled_functions =
+        engine->create(ei->module_ctx,
+                       engine->engine_ctx,
+                       md.code,
+                       timeout,
+                       &num_compiled_functions,
+                       &compile_error);
+    teardownEngineModuleCtx(ei);
+    if (compiled_functions == NULL) {
+        serverAssert(num_compiled_functions == 0);
+        serverAssert(compile_error != NULL);
+        *err = sdsnew(compile_error);
+        zfree(compile_error);
         goto error;
     }
+
+    for (size_t i = 0; i < num_compiled_functions; i++) {
+        compiledFunction *func = compiled_functions[i];
+        int ret = functionLibCreateFunction(func->name,
+                                            func->function,
+                                            new_li,
+                                            func->desc,
+                                            func->f_flags,
+                                            err);
+        if (ret == C_ERR) {
+            freeCompiledFunctions(ei,
+                                  compiled_functions,
+                                  num_compiled_functions,
+                                  i);
+            goto error;
+        }
+    }
+
+    freeCompiledFunctions(ei,
+                          compiled_functions,
+                          num_compiled_functions,
+                          num_compiled_functions);
 
     if (dictSize(new_li->functions) == 0) {
         *err = sdsnew("No functions registered");
@@ -1063,6 +1249,7 @@ void functionLoadCommand(client *c) {
         timeout = 0;
     }
     if (!(library_name = functionsCreateWithLibraryCtx(code->ptr, replace, &err, curr_functions_lib_ctx, timeout))) {
+        serverAssert(err != NULL);
         addReplyErrorSds(c, err);
         return;
     }
@@ -1080,7 +1267,11 @@ unsigned long functionsMemory(void) {
     while ((entry = dictNext(iter))) {
         engineInfo *ei = dictGetVal(entry);
         engine *engine = ei->engine;
-        engines_memory += engine->get_used_memory(engine->engine_ctx);
+        setupEngineModuleCtx(ei, NULL);
+        engineMemoryInfo mem_info = engine->get_memory_info(ei->module_ctx,
+                                                            engine->engine_ctx);
+        engines_memory += mem_info.used_memory;
+        teardownEngineModuleCtx(ei);
     }
     dictReleaseIterator(iter);
 
@@ -1120,12 +1311,11 @@ size_t functionsLibCtxFunctionsLen(functionsLibCtx *functions_ctx) {
 int functionsInit(void) {
     engines = dictCreate(&engineDictType);
 
+    curr_functions_lib_ctx = functionsLibCtxCreate();
+
     if (luaEngineInitEngine() != C_OK) {
         return C_ERR;
     }
-
-    /* Must be initialized after engines initialization */
-    curr_functions_lib_ctx = functionsLibCtxCreate();
 
     return C_OK;
 }
