@@ -3469,6 +3469,7 @@ void syncWithPrimary(connection *conn) {
             sdsfree(err);
             err = NULL;
             server.repl_state = REPL_STATE_SEND_HANDSHAKE;
+            /* fall through */
         case REPL_STATE_SEND_HANDSHAKE: 
             /* AUTH with the primary if required. */
             if (server.primary_auth) {
@@ -3534,6 +3535,7 @@ void syncWithPrimary(connection *conn) {
                 goto ok;
             }
             server.repl_state = REPL_STATE_RECEIVE_PORT_REPLY;
+            /* fall through */
         /* Receive REPLCONF listening-port reply. */
         case REPL_STATE_RECEIVE_PORT_REPLY: 
             err = receiveSynchronousResponse(conn);
@@ -3565,6 +3567,7 @@ void syncWithPrimary(connection *conn) {
                 goto ok;
             }
             server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
+            /* fall through */
         /* Receive CAPA reply. */
         case REPL_STATE_RECEIVE_CAPA_REPLY: 
             err = receiveSynchronousResponse(conn);
@@ -3591,6 +3594,7 @@ void syncWithPrimary(connection *conn) {
                           err);
             }
             server.repl_state = REPL_STATE_SEND_PSYNC;
+            /* fall through */
         /* Try a partial resynchronization. If we don't have a cached primary
         * replicaTryPartialResynchronization() will at least try to use PSYNC
         * to start a full resynchronization so that we get the primary replid
