@@ -213,7 +213,7 @@ static uint32_t executeHelloLangFunction(HelloFunc *func,
         case CONSTI:
             stack[sp++] = instr.param.integer;
             break;
-        case ARGS:
+        case ARGS: {
             uint32_t idx = instr.param.integer;
             ValkeyModule_Assert(idx < (uint32_t)nargs);
             size_t len;
@@ -221,10 +221,12 @@ static uint32_t executeHelloLangFunction(HelloFunc *func,
             uint32_t arg = str2int(argStr);
             stack[sp++] = arg;
             break;
-        case RETURN:
+        }
+        case RETURN: {
             uint32_t val = stack[--sp];
             ValkeyModule_Assert(sp == 0);
             return val;
+        }
         case FUNCTION:
         default:
             ValkeyModule_Assert(0);
