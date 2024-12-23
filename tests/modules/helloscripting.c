@@ -151,8 +151,9 @@ static void helloLangParseArgs(HelloFunc *func) {
 /*
  * Parses an HELLO program source code.
  */
-static HelloProgram *helloLangParseCode(const char *code,
-                                        HelloProgram *program) {
+static int helloLangParseCode(const char *code,
+                              HelloProgram *program,
+                              ValkeyModuleString **err) {
     char *_code = ValkeyModule_Alloc(sizeof(char) * strlen(code) + 1);
     strcpy(_code, code);
 
@@ -188,7 +189,9 @@ static HelloProgram *helloLangParseCode(const char *code,
             currentFunc = NULL;
             break;
         default:
-            ValkeyModule_Assert(0);
+            *err = ValkeyModule_CreateStringPrintf(NULL, "Failed to parse instruction: '%s'", token);
+            ValkeyModule_Free(_code);
+            return -1;
         }
 
         token = strtok(NULL, " \n");
@@ -196,7 +199,7 @@ static HelloProgram *helloLangParseCode(const char *code,
 
     ValkeyModule_Free(_code);
 
-    return program;
+    return 0;
 }
 
 /*
@@ -269,7 +272,7 @@ static size_t engineFunctionMemoryOverhead(ValkeyModuleCtx *module_ctx,
 }
 
 static void engineFreeFunction(ValkeyModuleCtx *module_ctx,
-	                       ValkeyModuleScriptingEngineCtx *engine_ctx,
+                               ValkeyModuleScriptingEngineCtx *engine_ctx,
                                void *compiled_function) {
     VALKEYMODULE_NOT_USED(module_ctx);
     VALKEYMODULE_NOT_USED(engine_ctx);
@@ -284,7 +287,7 @@ static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(Valke
                                                                            const char *code,
                                                                            size_t timeout,
                                                                            size_t *out_num_compiled_functions,
-                                                                           char **err) {
+                                                                           ValkeyModuleString **err) {
     VALKEYMODULE_NOT_USED(module_ctx);
     VALKEYMODULE_NOT_USED(timeout);
     VALKEYMODULE_NOT_USED(err);
@@ -298,7 +301,10 @@ static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(Valke
         ctx->program->num_functions = 0;
     }
 
-    ctx->program = helloLangParseCode(code, ctx->program);
+    int ret = helloLangParseCode(code, ctx->program, err);
+    if (ret < 0) {
+        return NULL;
+    }
 
     ValkeyModuleScriptingEngineCompiledFunction **compiled_functions =
         ValkeyModule_Alloc(sizeof(ValkeyModuleScriptingEngineCompiledFunction *) * ctx->program->num_functions);

@@ -122,7 +122,7 @@ static compiledFunction **luaEngineCreate(ValkeyModuleCtx *module_ctx,
                                           const char *code,
                                           size_t timeout,
                                           size_t *out_num_compiled_functions,
-                                          char **err) {
+                                          robj **err) {
     /* The lua engine is implemented in the core, and not in a Valkey Module */
     serverAssert(module_ctx == NULL);
 
@@ -140,7 +140,8 @@ static compiledFunction **luaEngineCreate(ValkeyModuleCtx *module_ctx,
 
     /* compile the code */
     if (luaL_loadbuffer(lua, code, strlen(code), "@user_function")) {
-        *err = valkey_asprintf("Error compiling function: %s", lua_tostring(lua, -1));
+        sds error = sdscatfmt(sdsempty(), "Error compiling function: %s", lua_tostring(lua, -1));
+        *err = createObject(OBJ_STRING, error);
         lua_pop(lua, 1); /* pops the error */
         goto done;
     }
@@ -158,7 +159,8 @@ static compiledFunction **luaEngineCreate(ValkeyModuleCtx *module_ctx,
     if (lua_pcall(lua, 0, 0, 0)) {
         errorInfo err_info = {0};
         luaExtractErrorInformation(lua, &err_info);
-        *err = valkey_asprintf("Error registering functions: %s", err_info.msg);
+        sds error = sdscatfmt(sdsempty(), "Error registering functions: %s", err_info.msg);
+        *err = createObject(OBJ_STRING, error);
         lua_pop(lua, 1); /* pops the error */
         luaErrorInformationDiscard(&err_info);
         listIter *iter = listGetIterator(load_ctx.functions, AL_START_HEAD);

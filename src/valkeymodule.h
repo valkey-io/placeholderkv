@@ -856,7 +856,7 @@ typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEng
     const char *code,
     size_t timeout,
     size_t *out_num_compiled_functions,
-    char **err);
+    ValkeyModuleString **err);
 
 /* The callback function called when `FCALL` command is called on a function
  * registered in the scripting engine.

@@ -1008,7 +1008,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
 
     new_li = engineLibraryCreate(md.name, engine, code);
     size_t num_compiled_functions = 0;
-    char *compile_error = NULL;
+    robj *compile_error = NULL;
     compiledFunction **compiled_functions =
         engineCallCreateFunctionsLibrary(engine,
                                          md.code,
@@ -1018,8 +1018,8 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
     if (compiled_functions == NULL) {
         serverAssert(num_compiled_functions == 0);
         serverAssert(compile_error != NULL);
-        *err = sdsnew(compile_error);
-        zfree(compile_error);
+        *err = sdsdup(compile_error->ptr);
+        decrRefCount(compile_error);
         goto error;
     }
 

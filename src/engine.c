@@ -217,7 +217,7 @@ compiledFunction **engineCallCreateFunctionsLibrary(engine *engine,
                                                     const char *code,
                                                     size_t timeout,
                                                     size_t *out_num_compiled_functions,
-                                                    char **err) {
+                                                    robj **err) {
     engineSetupModuleCtx(engine, NULL);
 
     compiledFunction **functions = engine->impl->methods.create_functions_library(
@@ -265,9 +265,11 @@ void engineCallFreeFunction(engine *engine,
     engineTeardownModuleCtx(engine);
 }
 
-size_t engineCallGetFunctionMemoryOverhead(engine *engine, void *compiled_function) {
+size_t engineCallGetFunctionMemoryOverhead(engine *engine,
+                                           void *compiled_function) {
     engineSetupModuleCtx(engine, NULL);
-    size_t mem = engine->impl->methods.get_function_memory_overhead(engine->module_ctx, compiled_function);
+    size_t mem = engine->impl->methods.get_function_memory_overhead(
+        engine->module_ctx, compiled_function);
     engineTeardownModuleCtx(engine);
     return mem;
 }

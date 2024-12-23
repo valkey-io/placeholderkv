@@ -51,12 +51,11 @@ ValkeyModule *engineGetModule(engine *engine);
 /*
  * API to call engine callback functions.
  */
-compiledFunction **engineCallCreateFunctionsLibrary(
-    engine *engine,
-    const char *code,
-    size_t timeout,
-    size_t *out_num_compiled_functions,
-    char **err);
+compiledFunction **engineCallCreateFunctionsLibrary(engine *engine,
+                                                    const char *code,
+                                                    size_t timeout,
+                                                    size_t *out_num_compiled_functions,
+                                                    robj **err);
 void engineCallFunction(engine *engine,
                         functionCtx *func_ctx,
                         client *caller,
