@@ -2218,6 +2218,7 @@ void initServerConfig(void) {
     server.fsynced_reploff_pending = 0;
     server.rdb_client_id = -1;
     server.loading_process_events_interval_ms = LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT;
+    server.repl_meet_disable_crc_cond = 0;
 
     /* Replication partial resync backlog */
     server.repl_backlog = NULL;
@@ -2638,6 +2639,7 @@ void resetServerStats(void) {
     server.stat_fork_rate = 0;
     server.stat_total_forks = 0;
     server.stat_rejected_conn = 0;
+    server.stat_total_crc_disabled_syncs_stated = 0;
     server.stat_sync_full = 0;
     server.stat_sync_partial_ok = 0;
     server.stat_sync_partial_err = 0;
@@ -5878,6 +5880,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "instantaneous_input_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT_REPLICATION) / 1024,
                 "instantaneous_output_repl_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT_REPLICATION) / 1024,
                 "rejected_connections:%lld\r\n", server.stat_rejected_conn,
+                "total_crc_disabled_syncs_stated:%ld\r\n", server.stat_total_crc_disabled_syncs_stated,
                 "sync_full:%lld\r\n", server.stat_sync_full,
                 "sync_partial_ok:%lld\r\n", server.stat_sync_partial_ok,
                 "sync_partial_err:%lld\r\n", server.stat_sync_partial_err,

@@ -1244,11 +1244,12 @@ void syncCommand(client *c) {
  * the primary can accurately lists replicas and their listening ports in the
  * INFO output.
  *
- * - capa <eof|psync2|dual-channel>
+ * - capa <eof|psync2|dual-channel|disable_sync_crc>
  * What is the capabilities of this instance.
  * eof: supports EOF-style RDB transfer for diskless replication.
  * psync2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
  * dual-channel: supports full sync using rdb channel.
+ * disable_sync_crc: supports disabling CRC during TLS enabled diskless sync.
  *
  * - ack <offset> [fack <aofofs>]
  * Replica informs the primary the amount of replication stream that it
@@ -1314,7 +1315,8 @@ void replconfCommand(client *c) {
                 /* If dual-channel is disable on this primary, treat this command as unrecognized
                  * replconf option. */
                 c->replica_capa |= REPLICA_CAPA_DUAL_CHANNEL;
-            }
+            } else if (!strcasecmp(c->argv[j + 1]->ptr, REPLICA_CAPA_DISABLE_SYNC_CRC_STR))
+                c->replica_capa |= REPLICA_CAPA_DISABLE_SYNC_CRC;
         } else if (!strcasecmp(c->argv[j]->ptr, "ack")) {
             /* REPLCONF ACK is used by replica to inform the primary the amount
              * of replication stream that it processed so far. It is an
@@ -2084,6 +2086,12 @@ void readSyncBulkPayload(connection *conn) {
             serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: receiving %lld bytes from primary %s",
                       (long long)server.repl_transfer_size, use_diskless_load ? "to parser" : "to disk");
         }
+
+        // Set a flag to determin later whether or not the replica will skip CRC calculations for this sync -
+        // Disable CRC on replica if: (1) TLS is enabled; (2) replica disable_sync_crc is enabled; (3) diskelss sync enabled on both replica and primary.
+        // Otherwise, CRC should be enabled/disabled as per server.rdb_checksum
+        if (connIsTLS(conn) && server.disable_sync_crc && use_diskless_load && usemark)
+            server.repl_meet_disable_crc_cond = 1;
         return;
     }
 
@@ -2251,6 +2259,7 @@ void readSyncBulkPayload(connection *conn) {
 
         serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Loading DB in memory");
         startLoading(server.repl_transfer_size, RDBFLAGS_REPLICATION, asyncLoading);
+        if (server.repl_meet_disable_crc_cond == 1) rdb.flags |= RIO_FLAG_DISABLE_CRC;
 
         int loadingFailed = 0;
         rdbLoadingCtx loadingCtx = {.dbarray = dbarray, .functions_lib_ctx = functions_lib_ctx};
@@ -2493,6 +2502,7 @@ char *sendCommand(connection *conn, ...) {
     while (1) {
         arg = va_arg(ap, char *);
         if (arg == NULL) break;
+        if (strcmp(arg, "") == 0) continue;
         cmdargs = sdscatprintf(cmdargs, "$%zu\r\n%s\r\n", strlen(arg), arg);
         argslen++;
     }
@@ -3513,11 +3523,19 @@ void syncWithPrimary(connection *conn) {
          *
          * EOF: supports EOF-style RDB transfer for diskless replication.
          * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
-         *
+         * DISABLE-SYNC-CRC: supports disabling CRC calculations during full sync.
+         *                   Inform the primary of this capa only during diskless sync with TLS enabled.
+         *                   In disk-based sync, or non-TLS, there is more concern for data corruprion
+         *                   so we keep this extra layer of detection.
+         * 
          * The primary will ignore capabilities it does not understand. */
+        server.repl_meet_disable_crc_cond = 0; // reset this value before sync starts
+        int send_disable_crc_capa = (connIsTLS(conn) && server.disable_sync_crc && useDisklessLoad());
         err = sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2",
-                          server.dual_channel_replication ? "capa" : NULL,
-                          server.dual_channel_replication ? "dual-channel" : NULL, NULL);
+                          send_disable_crc_capa ? "capa" : "",
+                          send_disable_crc_capa ? REPLICA_CAPA_DISABLE_SYNC_CRC_STR : "",
+                          server.dual_channel_replication ? "capa" : "",
+                          server.dual_channel_replication ? "dual-channel" : "", NULL);
         if (err) goto write_error;
 
         /* Inform the primary of our (replica) version. */
