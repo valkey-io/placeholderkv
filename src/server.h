@@ -1270,7 +1270,7 @@ typedef struct client {
     volatile uint8_t io_write_state;     /* Indicate the IO write state of the client */
     uint8_t cur_tid;                     /* ID of IO thread currently performing IO for this client */
     int nread;                           /* Number of bytes of the last read. */
-    int nwritten;                        /* Number of bytes of the last write. */
+    ssize_t nwritten;                    /* Number of bytes of the last write. */
     int read_flags;                      /* Client Read flags - used to communicate the client read state. */
     uint16_t write_flags;                /* Client Write flags - used to communicate the client write state. */
     struct serverCommand *cmd, *lastcmd; /* Last command executed. */
@@ -2799,7 +2799,7 @@ void dictVanillaFree(void *val);
 
 /* Write flags for various write errors and states */
 #define WRITE_FLAGS_WRITE_ERROR (1 << 0)
-
+#define WRITE_FLAGS_IS_REPLICA (1 << 1)
 
 client *createClient(connection *conn);
 void freeClient(client *c);
