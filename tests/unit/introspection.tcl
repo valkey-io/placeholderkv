@@ -991,8 +991,12 @@ start_server {tags {"introspection"}} {
     # known keywords. Might be a good idea to avoid adding tests here.
 }
 
-start_server {tags {"introspection external:skip"} overrides {enable-protected-configs {no} enable-debug-command {no}}} {
+start_server {tags {"introspection external:skip"} overrides {requirepass mypass enable-protected-configs {no} enable-debug-command {no}}} {
     test {cannot modify protected configuration - no} {
+        assert_error "NOAUTH *" {r config set dir somedir}
+        assert_error "NOAUTH *" {r DEBUG HELP}
+
+        r auth mypass
         assert_error "ERR *protected*" {r config set dir somedir}
         assert_error "ERR *DEBUG command not allowed*" {r DEBUG HELP}
     } {} {needs:debug}
