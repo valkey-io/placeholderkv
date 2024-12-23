@@ -10,7 +10,7 @@ proc latency_percentiles_usec {cmd} {
     return [latencyrstat_percentiles $cmd r]
 }
 
-start_server {tags {"info" "external:skip"}} {
+start_server {tags {"info" "external:skip" "debug_defrag:skip"}} {
     start_server {} {
 
         test {latencystats: disable/enable} {
@@ -391,7 +391,13 @@ start_server {tags {"info" "external:skip"}} {
             # set qbuf limit to minimum to test stat
             set org_qbuf_limit [lindex [r config get client-query-buffer-limit] 1]
             r config set client-query-buffer-limit 1048576
-            catch {r set key [string repeat a 1048576]}
+            catch {r set key [string repeat a 2048576]} e
+            # We might get an error on the write path of the previous command, which won't be
+            # an I/O error based on how the client is designed. We will need to manually consume
+            # the secondary I/O error.
+            if {![string match "I/O error*" $e]} {
+                catch {r read}
+            }
             set info [r info stats]
             assert_equal [getInfoProperty $info client_query_buffer_limit_disconnections] {1}
             r config set client-query-buffer-limit $org_qbuf_limit
@@ -400,10 +406,10 @@ start_server {tags {"info" "external:skip"}} {
             r config set client-output-buffer-limit "normal 10 0 0"
             r set key [string repeat a 100000] ;# to trigger output buffer limit check this needs to be big
             catch {r get key}
+            r config set client-output-buffer-limit $org_outbuf_limit
             set info [r info stats]
             assert_equal [getInfoProperty $info client_output_buffer_limit_disconnections] {1}
-            r config set client-output-buffer-limit $org_outbuf_limit
-        } {OK} {logreqres:skip} ;# same as obuf-limits.tcl, skip logreqres
+        } {} {logreqres:skip} ;# same as obuf-limits.tcl, skip logreqres
 
         test {clients: pubsub clients} {
             set info [r info clients]
@@ -515,23 +521,43 @@ start_server {tags {"info" "external:skip"}} {
         set info_mem [r info memory]
         set mem_stats [r memory stats]
         assert_equal [getInfoProperty $info_mem mem_overhead_db_hashtable_rehashing] {0}
-        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 64
+        # overhead.db.hashtable.lut = memory overhead of hashtable including hashtable struct and tables
+        set hashtable_overhead [dict get $mem_stats overhead.db.hashtable.lut]
+        if {$hashtable_overhead < 140} {
+            # 32-bit version (hashtable struct + 1 bucket of 64 bytes)
+            set bits 32
+        } else {
+            set bits 64
+        }
+        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 256
         assert_equal [dict get $mem_stats overhead.db.hashtable.rehashing] {0}
         assert_equal [dict get $mem_stats db.dict.rehashing.count] {0}
-        # set 4 more keys to trigger rehashing
+        # set 7 more keys to trigger rehashing
         # get the info within a transaction to make sure the rehashing is not completed
-        r multi 
+        r multi
         r set b c
         r set c d
         r set d e
         r set e f
+        r set f g
+        r set g h
+        r set h i
+        if {$bits == 32} {
+            # In 32-bit mode, we have 12 elements per bucket. Insert five more
+            # to trigger rehashing.
+            r set aa aa
+            r set bb bb
+            r set cc cc
+            r set dd dd
+            r set ee ee
+        }
         r info memory
         r memory stats
         set res [r exec]
-        set info_mem [lindex $res 4]
-        set mem_stats [lindex $res 5]
+        set info_mem [lindex $res end-1]
+        set mem_stats [lindex $res end]
         assert_range [getInfoProperty $info_mem mem_overhead_db_hashtable_rehashing] 1 64
-        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 192
+        assert_range [dict get $mem_stats overhead.db.hashtable.lut] 1 300
         assert_range [dict get $mem_stats overhead.db.hashtable.rehashing] 1 64
         assert_equal [dict get $mem_stats db.dict.rehashing.count] {1}
     }

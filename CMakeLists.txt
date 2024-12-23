@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.10)
 
 # Must be done first
 if (APPLE)
@@ -41,3 +41,4 @@ unset(BUILD_UNIT_TESTS CACHE)
 unset(BUILD_TEST_MODULES CACHE)
 unset(BUILD_EXAMPLE_MODULES CACHE)
 unset(USE_TLS CACHE)
+unset(DEBUG_FORCE_DEFRAG CACHE)

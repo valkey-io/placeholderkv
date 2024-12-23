@@ -221,6 +221,11 @@ proc tags_acceptable {tags err_return} {
         return 0
     }
 
+    if {$::debug_defrag && [lsearch $tags "debug_defrag:skip"] >= 0} {
+        set err "Not supported on server compiled with DEBUG_FORCE_DEFRAG option"
+        return 0
+    }
+
     if {$::singledb && [lsearch $tags "singledb:skip"] >= 0} {
         set err "Not supported on singledb"
         return 0
@@ -309,7 +314,7 @@ proc spawn_server {config_file stdout stderr args} {
     }
 
     # Tell the test server about this new instance.
-    send_data_packet $::test_server_fd server-spawned $pid
+    send_data_packet $::test_server_fd server-spawned "$pid - $::curfile"
     return $pid
 }
 

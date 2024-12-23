@@ -145,6 +145,7 @@ proc wait_for_cluster_size {cluster_size} {
 # Check that cluster nodes agree about "state", or raise an error.
 proc wait_for_cluster_state {state} {
     for {set j 0} {$j < [llength $::servers]} {incr j} {
+        if {[process_is_paused [srv -$j pid]]} continue
         wait_for_condition 1000 50 {
             [CI $j cluster_state] eq $state
         } else {
@@ -320,6 +321,15 @@ proc get_cluster_nodes {id {status "*"}} {
         }
     }
     return $nodes
+}
+
+# Returns the parsed myself node entry as a dictionary.
+proc get_myself id {
+    set nodes [get_cluster_nodes $id]
+    foreach n $nodes {
+        if {[cluster_has_flag $n myself]} {return $n}
+    }
+    return {}
 }
 
 # Returns 1 if no node knows node_id, 0 if any node knows it.

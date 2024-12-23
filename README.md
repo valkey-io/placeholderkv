@@ -37,8 +37,13 @@ To build TLS as Valkey module:
 Note that sentinel mode does not support TLS module.
 
 To build with experimental RDMA support you'll need RDMA development libraries
-(e.g. librdmacm-dev and libibverbs-dev on Debian/Ubuntu). For now, Valkey only
-supports RDMA as connection module mode. Run:
+(e.g. librdmacm-dev and libibverbs-dev on Debian/Ubuntu).
+
+To build RDMA support as Valkey built-in:
+
+    % make BUILD_RDMA=yes
+
+To build RDMA as Valkey module:
 
     % make BUILD_RDMA=module
 
@@ -203,20 +208,27 @@ Note that Valkey Over RDMA is an experimental feature.
 It may be changed or removed in any minor or major version.
 Currently, it is only supported on Linux.
 
-To manually run a Valkey server with RDMA mode:
+* RDMA built-in mode:
+    ```
+    ./src/valkey-server --protected-mode no \
+         --rdma-bind 192.168.122.100 --rdma-port 6379
+    ```
 
-    % ./src/valkey-server --protected-mode no \
-         --loadmodule src/valkey-rdma.so bind=192.168.122.100 port=6379
+* RDMA module mode:
+    ```
+    ./src/valkey-server --protected-mode no \
+         --loadmodule src/valkey-rdma.so --rdma-bind 192.168.122.100 --rdma-port 6379
+    ```
 
 It's possible to change bind address/port of RDMA by runtime command:
 
-    192.168.122.100:6379> CONFIG SET rdma.port 6380
+    192.168.122.100:6379> CONFIG SET rdma-port 6380
 
 It's also possible to have both RDMA and TCP available, and there is no
 conflict of TCP(6379) and RDMA(6379), Ex:
 
     % ./src/valkey-server --protected-mode no \
-         --loadmodule src/valkey-rdma.so bind=192.168.122.100 port=6379 \
+         --loadmodule src/valkey-rdma.so --rdma-bind 192.168.122.100 --rdma-port 6379 \
          --port 6379
 
 Note that the network card (192.168.122.100 of this example) should support
@@ -297,19 +309,19 @@ Other options supported by Valkey's `CMake` build system:
 
 ## Special build flags
 
-- `-DBUILD_TLS=<on|off|module>` enable TLS build for Valkey
-- `-DBUILD_RDMA=<off|module>` enable RDMA module build (only module mode supported)
+- `-DBUILD_TLS=<yes|no>` enable TLS build for Valkey. Default: `no`
+- `-DBUILD_RDMA=<no|module>` enable RDMA module build (only module mode supported). Default: `no`
 - `-DBUILD_MALLOC=<libc|jemalloc|tcmalloc|tcmalloc_minimal>` choose the allocator to use. Default on Linux: `jemalloc`, for other OS: `libc`
-- `-DBUILD_SANITIZER=<address|thread|undefined>` build with address sanitizer enabled
-- `-DBUILD_UNIT_TESTS=[1|0]`  when set, the build will produce the executable `valkey-unit-tests`
-- `-DBUILD_TEST_MODULES=[1|0]`  when set, the build will include the modules located under the `tests/modules` folder
-- `-DBUILD_EXAMPLE_MODULES=[1|0]`  when set, the build will include the example modules located under the `src/modules` folder
+- `-DBUILD_SANITIZER=<address|thread|undefined>` build with address sanitizer enabled. Default: disabled (no sanitizer)
+- `-DBUILD_UNIT_TESTS=[yes|no]`  when set, the build will produce the executable `valkey-unit-tests`. Default: `no`
+- `-DBUILD_TEST_MODULES=[yes|no]`  when set, the build will include the modules located under the `tests/modules` folder. Default: `no`
+- `-DBUILD_EXAMPLE_MODULES=[yes|no]`  when set, the build will include the example modules located under the `src/modules` folder. Default: `no`
 
 ## Common flags
 
 - `-DCMAKE_BUILD_TYPE=<Debug|Release...>` define the build type, see CMake manual for more details
 - `-DCMAKE_INSTALL_PREFIX=/installation/path` override this value to define a custom install prefix. Default: `/usr/local`
-- `-G<Generator Name>` generate build files for "Generator Name". By default, CMake will generate `Makefile`s.
+- `-G"<Generator Name>"` generate build files for "Generator Name". By default, CMake will generate `Makefile`s.
 
 ## Verbose build
 

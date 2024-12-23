@@ -194,12 +194,12 @@ sds sdsdup(const sds s) {
 /*
  * This method returns the minimum amount of bytes required to store the sds (header + data + NULL terminator).
  */
-static inline size_t sdsminlen(sds s) {
+static inline size_t sdsminlen(const sds s) {
     return sdslen(s) + sdsHdrSize(s[-1]) + 1;
 }
 
 /* This method copies the sds `s` into `buf` which is the target character buffer. */
-size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, sds s, uint8_t *hdr_size) {
+size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, const sds s, uint8_t *hdr_size) {
     size_t required_keylen = sdsminlen(s);
     if (buf == NULL) {
         return required_keylen;
@@ -214,6 +214,13 @@ size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, sds s, uint8_t *hdr_s
 void sdsfree(sds s) {
     if (s == NULL) return;
     s_free_with_size(sdsAllocPtr(s), sdsAllocSize(s));
+}
+
+/* This variant of sdsfree() gets its argument as void, and is useful
+ * as free method in data structures that expect a 'void free_object(void*)'
+ * prototype for the free method. */
+void sdsfreeVoid(void *s) {
+    sdsfree(s);
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so
@@ -954,23 +961,30 @@ void sdsfreesplitres(sds *tokens, int count) {
 sds sdscatrepr(sds s, const char *p, size_t len) {
     s = sdsMakeRoomFor(s, len + 2);
     s = sdscatlen(s, "\"", 1);
-    while (len--) {
-        switch (*p) {
-        case '\\':
-        case '"': s = sdscatprintf(s, "\\%c", *p); break;
-        case '\n': s = sdscatlen(s, "\\n", 2); break;
-        case '\r': s = sdscatlen(s, "\\r", 2); break;
-        case '\t': s = sdscatlen(s, "\\t", 2); break;
-        case '\a': s = sdscatlen(s, "\\a", 2); break;
-        case '\b': s = sdscatlen(s, "\\b", 2); break;
-        default:
-            if (isprint(*p))
-                s = sdscatlen(s, p, 1);
-            else
+    while (len) {
+        if (isprint(*p)) {
+            const char *start = p;
+            while (len && isprint(*p)) {
+                len--;
+                p++;
+            }
+            s = sdscatlen(s, start, p - start);
+        } else {
+            switch (*p) {
+            case '\\':
+            case '"': s = sdscatprintf(s, "\\%c", *p); break;
+            case '\n': s = sdscatlen(s, "\\n", 2); break;
+            case '\r': s = sdscatlen(s, "\\r", 2); break;
+            case '\t': s = sdscatlen(s, "\\t", 2); break;
+            case '\a': s = sdscatlen(s, "\\a", 2); break;
+            case '\b': s = sdscatlen(s, "\\b", 2); break;
+            default:
                 s = sdscatprintf(s, "\\x%02x", (unsigned char)*p);
-            break;
+                break;
+            }
+            p++;
+            len--;
         }
-        p++;
     }
     return sdscatlen(s, "\"", 1);
 }

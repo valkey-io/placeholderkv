@@ -441,8 +441,8 @@ void IOThreadFreeArgv(void *data) {
 /* This function attempts to offload the client's argv to an IO thread.
  * Returns C_OK if the client's argv were successfully offloaded to an IO thread,
  * C_ERR otherwise. */
-int tryOffloadFreeArgvToIOThreads(client *c) {
-    if (server.active_io_threads_num <= 1 || c->argc == 0) {
+int tryOffloadFreeArgvToIOThreads(client *c, int argc, robj **argv) {
+    if (server.active_io_threads_num <= 1 || argc == 0) {
         return C_ERR;
     }
 
@@ -456,11 +456,11 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
     int last_arg_to_free = -1;
 
     /* Prepare the argv */
-    for (int j = 0; j < c->argc; j++) {
-        if (c->argv[j]->refcount > 1) {
-            decrRefCount(c->argv[j]);
+    for (int j = 0; j < argc; j++) {
+        if (argv[j]->refcount > 1) {
+            decrRefCount(argv[j]);
             /* Set argv[j] to NULL to avoid double free */
-            c->argv[j] = NULL;
+            argv[j] = NULL;
         } else {
             last_arg_to_free = j;
         }
@@ -468,17 +468,17 @@ int tryOffloadFreeArgvToIOThreads(client *c) {
 
     /* If no argv to free, free the argv array at the main thread */
     if (last_arg_to_free == -1) {
-        zfree(c->argv);
+        zfree(argv);
         return C_OK;
     }
 
     /* We set the refcount of the last arg to free to 0 to indicate that
      * this is the last argument to free. With this approach, we don't need to
      * send the argc to the IO thread and we can send just the argv ptr. */
-    c->argv[last_arg_to_free]->refcount = 0;
+    argv[last_arg_to_free]->refcount = 0;
 
     /* Must succeed as we checked the free space before. */
-    IOJobQueue_push(jq, IOThreadFreeArgv, c->argv);
+    IOJobQueue_push(jq, IOThreadFreeArgv, argv);
 
     return C_OK;
 }
@@ -493,6 +493,8 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
 
     if (obj->refcount > 1) return C_ERR;
 
+    if (obj->encoding != OBJ_ENCODING_RAW || obj->type != OBJ_STRING) return C_ERR;
+
     /* We select the thread ID in a round-robin fashion. */
     size_t tid = (server.stat_io_freed_objects % (server.active_io_threads_num - 1)) + 1;
 
@@ -501,7 +503,12 @@ int tryOffloadFreeObjToIOThreads(robj *obj) {
         return C_ERR;
     }
 
-    IOJobQueue_push(jq, decrRefCountVoid, obj);
+    /* We offload only the free of the ptr that may be allocated by the I/O thread.
+     * The object itself was allocated by the main thread and will be freed by the main thread. */
+    IOJobQueue_push(jq, sdsfreeVoid, obj->ptr);
+    obj->ptr = NULL;
+    decrRefCount(obj);
+
     server.stat_io_freed_objects++;
     return C_OK;
 }
@@ -553,4 +560,56 @@ void trySendPollJobToIOThreads(void) {
     aeSetCustomPollProc(server.el, getIOThreadPollResults);
     aeSetPollProtect(server.el, 1);
     IOJobQueue_push(jq, IOThreadPoll, server.el);
+}
+
+static void ioThreadAccept(void *data) {
+    client *c = (client *)data;
+    connAccept(c->conn, NULL);
+    c->io_read_state = CLIENT_COMPLETED_IO;
+}
+
+/*
+ * Attempts to offload an Accept operation (currently used for TLS accept) for a client
+ * connection to I/O threads.
+ *
+ * Returns:
+ *   C_OK  - If the accept operation was successfully queued for processing
+ *   C_ERR - If the connection is not eligible for offloading
+ *
+ * Parameters:
+ *   conn - The connection object to perform the accept operation on
+ */
+int trySendAcceptToIOThreads(connection *conn) {
+    if (server.io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    if (!(conn->flags & CONN_FLAG_ALLOW_ACCEPT_OFFLOAD)) {
+        return C_ERR;
+    }
+
+    client *c = connGetPrivateData(conn);
+    if (c->io_read_state != CLIENT_IDLE) {
+        return C_OK;
+    }
+
+    if (server.active_io_threads_num <= 1) {
+        return C_ERR;
+    }
+
+    size_t thread_id = (c->id % (server.active_io_threads_num - 1)) + 1;
+    IOJobQueue *job_queue = &io_jobs[thread_id];
+
+    if (IOJobQueue_isFull(job_queue)) {
+        return C_ERR;
+    }
+
+    c->io_read_state = CLIENT_PENDING_IO;
+    c->flag.pending_read = 1;
+    listLinkNodeTail(server.clients_pending_io_read, &c->pending_read_list_node);
+    connSetPostponeUpdateState(c->conn, 1);
+    server.stat_io_accept_offloaded++;
+    IOJobQueue_push(job_queue, ioThreadAccept, c);
+
+    return C_OK;
 }
