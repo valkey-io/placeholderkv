@@ -248,6 +248,8 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CMD_ALLOW_BUSY ((1ULL << 26))
 #define CMD_MODULE_GETCHANNELS (1ULL << 27) /* Use the modules getchannels interface. */
 #define CMD_TOUCHES_ARBITRARY_KEYS (1ULL << 28)
+/* Command flags. Please don't forget to add command flag documentation in struct
+ * serverCommand in this file. */
 
 /* Command flags that describe ACLs categories. */
 #define ACL_CATEGORY_KEYSPACE (1ULL << 0)
@@ -2470,6 +2472,8 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  * CMD_DENYOOM:     May increase memory usage once called. Don't allow if out
  *                  of memory.
  *
+ * CMD_MODULE:      Command exported by module.
+ *
  * CMD_ADMIN:       Administrative command, like SAVE or SHUTDOWN.
  *
  * CMD_PUBSUB:      Pub/Sub related command.
@@ -2516,10 +2520,21 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  *
  * CMD_NO_MANDATORY_KEYS: This key arguments for this command are optional.
  *
+ * CMD_PROTECTED: The command is a protected command, see enable-debug-command for more details.
+ *
+ * CMD_MODULE_GETKEYS: Use the modules getkeys interface.
+ *
+ * CMD_MODULE_NO_CLUSTER: Deny on cluster.
+ *
  * CMD_NO_MULTI: The command is not allowed inside a transaction
+ *
+ * CMD_MOVABLE_KEYS: The legacy range spec doesn't cover all keys. Populated by
+ *                   populateCommandLegacyRangeSpec.
  *
  * CMD_ALLOW_BUSY: The command can run while another command is running for
  *                 a long time (timedout script, module command that yields)
+ *
+ * CMD_MODULE_GETCHANNELS: Use the modules getchannels interface.
  *
  * CMD_TOUCHES_ARBITRARY_KEYS: The command may touch (and cause lazy-expire)
  *                             arbitrary key (i.e not provided in argv)
