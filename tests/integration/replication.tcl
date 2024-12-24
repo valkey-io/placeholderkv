@@ -216,7 +216,7 @@ start_server {tags {"repl external:skip"}} {
             # get the new stats
             set info [$A info stats]
             set replica_bytes_output [getInfoProperty $info "total_net_repl_output_bytes"]
-            assert {$replica_bytes_output > 0}
+            assert_morethan $replica_bytes_output 0
         }
     }
 }
