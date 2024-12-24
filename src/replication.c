@@ -4133,6 +4133,8 @@ void replicationCachePrimary(client *c) {
     serverAssert(server.primary != NULL && server.cached_primary == NULL);
     serverLog(LL_NOTICE, "Caching the disconnected primary state.");
 
+    /* Wait for IO operations to be done before proceeding */
+    waitForClientIO(c);
     /* Unlink the client from the server structures. */
     unlinkClient(c);
 
@@ -4150,6 +4152,7 @@ void replicationCachePrimary(client *c) {
     c->reply_bytes = 0;
     c->bufpos = 0;
     resetClient(c);
+    resetClientIOState(c);
 
     /* Save the primary. Server.primary will be set to null later by
      * replicationHandlePrimaryDisconnection(). */

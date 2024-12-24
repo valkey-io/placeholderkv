@@ -321,8 +321,8 @@ int trySendReadToIOThreads(client *c) {
     if (server.active_io_threads_num <= 1) return C_ERR;
     /* If IO thread is already reading, return C_OK to make sure the main thread will not handle it. */
     if (c->io_read_state != CLIENT_IDLE) return C_OK;
-    /* Currently, replica/master writes are not offloaded and are processed synchronously. */
-    if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
+    /* For simplicity, don't offload replica clients reads as read traffic is negligible */
+    if (getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
     /* With Lua debug client we may call connWrite directly in the main thread */
     if (c->flag.lua_debug) return C_ERR;
     /* For simplicity let the main-thread handle the blocked clients */
@@ -345,6 +345,7 @@ int trySendReadToIOThreads(client *c) {
     c->cur_tid = tid;
     c->read_flags = canParseCommand(c) ? 0 : READ_FLAGS_DONT_PARSE;
     c->read_flags |= authRequired(c) ? READ_FLAGS_AUTH_REQUIRED : 0;
+    c->read_flags |= c->flag.primary ? READ_FLAGS_PRIMARY : 0;
 
     c->io_read_state = CLIENT_PENDING_IO;
     connSetPostponeUpdateState(c->conn, 1);
@@ -363,8 +364,8 @@ int trySendWriteToIOThreads(client *c) {
     if (c->io_write_state != CLIENT_IDLE) return C_OK;
     /* Nothing to write */
     if (!clientHasPendingReplies(c)) return C_ERR;
-    /* Currently, replica/master writes are not offloaded and are processed synchronously. */
-    if (c->flag.primary || getClientType(c) == CLIENT_TYPE_REPLICA) return C_ERR;
+    /* For simplicity, avoid offloading non-online replicas */
+    if (getClientType(c) == CLIENT_TYPE_REPLICA && c->repl_state != REPLICA_STATE_ONLINE) return C_ERR;
     /* We can't offload debugged clients as the main-thread may read at the same time  */
     if (c->flag.lua_debug) return C_ERR;
 
@@ -391,21 +392,29 @@ int trySendWriteToIOThreads(client *c) {
     serverAssert(c->clients_pending_write_node.prev == NULL && c->clients_pending_write_node.next == NULL);
     listLinkNodeTail(server.clients_pending_io_write, &c->clients_pending_write_node);
 
-    /* Save the last block of the reply list to io_last_reply_block and the used
-     * position to io_last_bufpos. The I/O thread will write only up to
-     * io_last_bufpos, regardless of the c->bufpos value. This is to prevent I/O
-     * threads from reading data that might be invalid in their local CPU cache. */
-    c->io_last_reply_block = listLast(c->reply);
-    if (c->io_last_reply_block) {
-        c->io_last_bufpos = ((clientReplyBlock *)listNodeValue(c->io_last_reply_block))->used;
+    int is_replica = getClientType(c) == CLIENT_TYPE_REPLICA;
+    if (is_replica) {
+        c->io_last_reply_block = listLast(server.repl_buffer_blocks);
+        replBufBlock *o = listNodeValue(c->io_last_reply_block);
+        c->io_last_bufpos = o->used;
     } else {
-        c->io_last_bufpos = (size_t)c->bufpos;
+        /* Save the last block of the reply list to io_last_reply_block and the used
+         * position to io_last_bufpos. The I/O thread will write only up to
+         * io_last_bufpos, regardless of the c->bufpos value. This is to prevent I/O
+         * threads from reading data that might be invalid in their local CPU cache. */
+        c->io_last_reply_block = listLast(c->reply);
+        if (c->io_last_reply_block) {
+            c->io_last_bufpos = ((clientReplyBlock *)listNodeValue(c->io_last_reply_block))->used;
+        } else {
+            c->io_last_bufpos = (size_t)c->bufpos;
+        }
     }
-    serverAssert(c->bufpos > 0 || c->io_last_bufpos > 0);
+
+    serverAssert(c->bufpos > 0 || c->io_last_bufpos > 0 || is_replica);
 
     /* The main-thread will update the client state after the I/O thread completes the write. */
     connSetPostponeUpdateState(c->conn, 1);
-    c->write_flags = 0;
+    c->write_flags = is_replica ? WRITE_FLAGS_IS_REPLICA : 0;
     c->io_write_state = CLIENT_PENDING_IO;
 
     IOJobQueue_push(jq, ioThreadWriteToClient, c);
