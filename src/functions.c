@@ -203,7 +203,7 @@ functionsLibCtx *functionsLibCtxGetCurrent(void) {
     return curr_functions_lib_ctx;
 }
 
-static int initializeFunctionsLibEngineStats(engine *engine, void *context) {
+static int initializeFunctionsLibEngineStats(scriptingEngine *engine, void *context) {
     functionsLibCtx *lib_ctx = (functionsLibCtx *)context;
     functionsLibEngineStats *stats = zcalloc(sizeof(*stats));
     dictAdd(lib_ctx->engines_stats, engineGetName(engine), stats);
@@ -276,7 +276,7 @@ static int functionLibCreateFunction(robj *name,
     return C_OK;
 }
 
-static functionLibInfo *engineLibraryCreate(sds name, engine *e, sds code) {
+static functionLibInfo *engineLibraryCreate(sds name, scriptingEngine *e, sds code) {
     functionLibInfo *li = zmalloc(sizeof(*li));
     *li = (functionLibInfo){
         .name = sdsdup(name),
@@ -410,7 +410,7 @@ done:
     return ret;
 }
 
-static int replyEngineStats(engine *engine, void *context) {
+static int replyEngineStats(scriptingEngine *engine, void *context) {
     client *c = (client *)context;
     addReplyBulkCString(c, engineGetName(engine));
     addReplyMapLen(c, 2);
@@ -423,7 +423,7 @@ static int replyEngineStats(engine *engine, void *context) {
     return 1;
 }
 
-void functionsRemoveLibFromEngine(engine *engine) {
+void functionsRemoveLibFromEngine(scriptingEngine *engine) {
     dictIterator *iter = dictGetSafeIterator(curr_functions_lib_ctx->libraries);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -623,7 +623,7 @@ static void fcallCommandGeneric(client *c, int ro) {
         return;
     }
     functionInfo *fi = dictGetVal(de);
-    engine *engine = fi->li->engine;
+    scriptingEngine *engine = fi->li->engine;
 
     long long numkeys;
     /* Get the number of arguments that are keys */
@@ -949,7 +949,7 @@ void functionFreeLibMetaData(functionsLibMetaData *md) {
     if (md->engine) sdsfree(md->engine);
 }
 
-static void freeCompiledFunctions(engine *engine,
+static void freeCompiledFunctions(scriptingEngine *engine,
                                   compiledFunction **compiled_functions,
                                   size_t num_compiled_functions,
                                   size_t free_function_from_idx) {
@@ -987,7 +987,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
         goto error;
     }
 
-    engine *engine = engineManagerFind(md.engine);
+    scriptingEngine *engine = engineManagerFind(md.engine);
     if (!engine) {
         *err = sdscatfmt(sdsempty(), "Engine '%S' not found", md.engine);
         goto error;
@@ -1124,7 +1124,7 @@ void functionLoadCommand(client *c) {
     addReplyBulkSds(c, library_name);
 }
 
-static int getEngineUsedMemory(engine *engine, void *context) {
+static int getEngineUsedMemory(scriptingEngine *engine, void *context) {
     size_t *engines_memory = (size_t *)context;
     engineMemoryInfo mem_info = engineCallGetMemoryInfo(engine);
     *engines_memory += mem_info.used_memory;

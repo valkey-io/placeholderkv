@@ -62,7 +62,7 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
-#include "engine.h"
+#include "scripting_engine.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>

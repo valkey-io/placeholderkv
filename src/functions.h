@@ -49,7 +49,7 @@
  */
 
 #include "server.h"
-#include "engine.h"
+#include "scripting_engine.h"
 #include "script.h"
 #include "valkeymodule.h"
 
@@ -61,7 +61,7 @@ typedef struct engineInfo {
     sds name;                    /* Name of the engine */
     ValkeyModule *engineModule;  /* the module that implements the scripting engine */
     ValkeyModuleCtx *module_ctx; /* Scripting engine module context */
-    engine *engine;              /* engine callbacks that allows to interact with the engine */
+    scriptingEngine *engine;     /* engine callbacks that allows to interact with the engine */
     client *c;                   /* Client that is used to run commands */
 } engineInfo;
 
@@ -79,10 +79,10 @@ typedef struct functionInfo {
 /* Hold information about the specific library.
  * Used on rdb.c so it must be declared here. */
 struct functionLibInfo {
-    sds name;        /* Library name */
-    dict *functions; /* Functions dictionary */
-    engine *engine;  /* Pointer to the scripting engine */
-    sds code;        /* Library code */
+    sds name;                /* Library name */
+    dict *functions;         /* Functions dictionary */
+    scriptingEngine *engine; /* Pointer to the scripting engine */
+    sds code;                /* Library code */
 };
 
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout);
@@ -99,7 +99,7 @@ void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx);
 void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *));
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
 
-void functionsRemoveLibFromEngine(engine *engine);
+void functionsRemoveLibFromEngine(scriptingEngine *engine);
 
 int luaEngineInitEngine(void);
 int functionsInit(void);

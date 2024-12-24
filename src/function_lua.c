@@ -39,7 +39,7 @@
  * Uses script_lua.c to run the Lua code.
  */
 
-#include "engine.h"
+#include "scripting_engine.h"
 #include "functions.h"
 #include "script_lua.h"
 #include <lua.h>

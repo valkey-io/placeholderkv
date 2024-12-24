@@ -42,7 +42,7 @@
 #include "fmtargs.h"
 #include "io_threads.h"
 #include "sds.h"
-#include "engine.h"
+#include "scripting_engine.h"
 
 #include <time.h>
 #include <signal.h>
