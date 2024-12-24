@@ -992,6 +992,11 @@ start_server {tags {"introspection"}} {
 }
 
 start_server {tags {"introspection external:skip"} overrides {requirepass mypass enable-protected-configs {no} enable-debug-command {no}}} {
+    test {auth check before command existence check and command arity check} {
+        assert_error "NOAUTH *" {r non-existing-command}
+        assert_error "NOAUTH *" {r set key value wrong_arg}
+    }
+
     test {cannot modify protected configuration - no} {
         assert_error "NOAUTH *" {r config set dir somedir}
         assert_error "NOAUTH *" {r DEBUG HELP}

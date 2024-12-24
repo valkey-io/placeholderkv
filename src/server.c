@@ -3997,6 +3997,16 @@ int processCommand(client *c) {
             }
         }
         c->cmd = c->lastcmd = c->realcmd = cmd;
+
+        if (authRequired(c)) {
+            /* AUTH and HELLO and no auth commands are valid even in
+             * non-authenticated state. */
+            if (!c->cmd || !(c->cmd->flags & CMD_NO_AUTH)) {
+                rejectCommand(c, shared.noautherr);
+                return C_OK;
+            }
+        }
+
         sds err;
         if (!commandCheckExistence(c, &err)) {
             rejectCommandSds(c, err);
@@ -4005,6 +4015,20 @@ int processCommand(client *c) {
         if (!commandCheckArity(c->cmd, c->argc, &err)) {
             rejectCommandSds(c, err);
             return C_OK;
+        }
+
+        /* Check if the command is marked as protected and the relevant configuration allows it */
+        if (c->cmd->flags & CMD_PROTECTED) {
+            if ((c->cmd->proc == debugCommand && !allowProtectedAction(server.enable_debug_cmd, c)) ||
+                (c->cmd->proc == moduleCommand && !allowProtectedAction(server.enable_module_cmd, c))) {
+                rejectCommandFormat(c,
+                                    "%s command not allowed. If the %s option is set to \"local\", "
+                                    "you can run it from a local connection, otherwise you need to set this option "
+                                    "in the configuration file, and then restart the server.",
+                                    c->cmd->proc == debugCommand ? "DEBUG" : "MODULE",
+                                    c->cmd->proc == debugCommand ? "enable-debug-command" : "enable-module-command");
+                return C_OK;
+            }
         }
     }
 
@@ -4026,29 +4050,6 @@ int processCommand(client *c) {
     int is_deny_async_loading_command = (cmd_flags & CMD_NO_ASYNC_LOADING) ||
                                         (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_NO_ASYNC_LOADING));
     const int obey_client = mustObeyClient(c);
-
-    if (authRequired(c)) {
-        /* AUTH and HELLO and no auth commands are valid even in
-         * non-authenticated state. */
-        if (!(c->cmd->flags & CMD_NO_AUTH)) {
-            rejectCommand(c, shared.noautherr);
-            return C_OK;
-        }
-    }
-
-    /* Check if the command is marked as protected and the relevant configuration allows it */
-    if (c->cmd->flags & CMD_PROTECTED) {
-        if ((c->cmd->proc == debugCommand && !allowProtectedAction(server.enable_debug_cmd, c)) ||
-            (c->cmd->proc == moduleCommand && !allowProtectedAction(server.enable_module_cmd, c))) {
-            rejectCommandFormat(c,
-                                "%s command not allowed. If the %s option is set to \"local\", "
-                                "you can run it from a local connection, otherwise you need to set this option "
-                                "in the configuration file, and then restart the server.",
-                                c->cmd->proc == debugCommand ? "DEBUG" : "MODULE",
-                                c->cmd->proc == debugCommand ? "enable-debug-command" : "enable-module-command");
-            return C_OK;
-        }
-    }
 
     if (c->flag.multi && c->cmd->flags & CMD_NO_MULTI) {
         rejectCommandFormat(c, "Command not allowed inside a transaction");
