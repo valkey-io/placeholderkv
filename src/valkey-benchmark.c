@@ -129,6 +129,8 @@ static struct config {
     _Atomic int is_updating_slots;
     _Atomic int slots_last_update;
     int enable_tracking;
+    int num_functions_in_script;
+    int num_keys_in_fcall;
     pthread_mutex_t liveclients_mutex;
     pthread_mutex_t is_updating_slots_mutex;
     int resp3; /* use RESP3 */
@@ -1426,6 +1428,10 @@ int parseOptions(int argc, char **argv) {
                 goto invalid;
         } else if (!strcmp(argv[i], "--enable-tracking")) {
             config.enable_tracking = 1;
+        } else if (!strcmp(argv[i], "--num-functions-in-script")) {
+            config.num_functions_in_script = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--num-keys-in-fcall")) {
+            config.num_keys_in_fcall = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--help")) {
             exit_status = 0;
             goto usage;
@@ -1552,7 +1558,12 @@ usage:
         "                    on the command line.\n"
         " -I                 Idle mode. Just open N idle connections and wait.\n"
         " -x                 Read last argument from STDIN.\n"
-        " --seed <num>       Set the seed for random number generator. Default seed is based on time.\n",
+        " --seed <num>       Set the seed for random number generator. Default seed is based on time.\n"
+        " --num-functions-in-script <num> Sets the number of functions present in the Lua script\n"
+        "                                 that is loaded when running the 'function_load' test.\n"
+        "                                 (default 10).\n"
+        " --num-keys-in-fcall <num>       Sets the number of keys passed to FCALL command when\n"
+        "                                 when running the 'fcall' test. (default 1)\n",
         tls_usage,
         " --help             Output this help and exit.\n"
         " --version          Output version and exit.\n\n"
@@ -1617,6 +1628,34 @@ long long showThroughput(struct aeEventLoop *eventLoop, long long id, void *clie
     return SHOW_THROUGHPUT_INTERVAL;
 }
 
+char *generateFunctionScript(uint32_t num_functions, int with_keys) {
+    /* 64K buffer to hold script code */
+    const size_t buffer_len = 64 * 1024;
+    char *buffer = zmalloc(buffer_len);
+    memset(buffer, 0, buffer_len);
+
+    int written = snprintf(buffer, buffer_len, "#!lua name=benchlib\n");
+    while (num_functions > 0) {
+        assert(buffer_len - written > 0);
+        if (with_keys) {
+            written += snprintf(buffer + written, buffer_len - written,
+                                "local function foo%u(keys, args)\nreturn keys[0]\nend\n",
+                                num_functions);
+        } else {
+            written += snprintf(buffer + written, buffer_len - written,
+                                "local function foo%u()\nreturn 0\nend\n",
+                                num_functions);
+        }
+        written += snprintf(buffer + written, buffer_len - written,
+                            "server.register_function('foo%u', foo%u)\n",
+                            num_functions,
+                            num_functions);
+        num_functions--;
+    }
+
+    return buffer;
+}
+
 /* Return true if the named test was selected using the -t command line
  * switch, or if all the tests are selected (no -t passed by user). */
 int test_is_selected(const char *name) {
@@ -1678,6 +1717,8 @@ int main(int argc, char **argv) {
     config.is_updating_slots = 0;
     config.slots_last_update = 0;
     config.enable_tracking = 0;
+    config.num_functions_in_script = 10;
+    config.num_keys_in_fcall = 1;
     config.resp3 = 0;
 
     i = parseOptions(argc, argv);
@@ -1956,6 +1997,47 @@ int main(int argc, char **argv) {
             len = redisFormatCommand(&cmd, "XADD mystream%s * myfield %s", tag, data);
             benchmark("XADD", cmd, len);
             free(cmd);
+        }
+
+        if (test_is_selected("function_load")) {
+            char *script = generateFunctionScript(config.num_functions_in_script, 0);
+            len = redisFormatCommand(&cmd, "function load replace %s", script);
+            benchmark("FUNCTION LOAD", cmd, len);
+            zfree(script);
+            free(cmd);
+        }
+
+        if (test_is_selected("fcall")) {
+            char *script = generateFunctionScript(1, config.num_keys_in_fcall > 0);
+
+            char *ip = config.conn_info.hostip;
+            int port = config.conn_info.hostport;
+            redisContext *conn = redisConnect(ip, port);
+            assert(conn != NULL && conn->err == 0);
+            void *reply = redisCommand(conn, "FUNCTION LOAD REPLACE %s", script);
+            assert(reply != NULL);
+            freeReplyObject(reply);
+            redisFree(conn);
+            zfree(script);
+
+            char **cmd_argv = zmalloc(sizeof(char *) * (config.num_keys_in_fcall + 3));
+            asprintf(&(cmd_argv[0]), "fcall");
+            asprintf(&(cmd_argv[1]), "foo1");
+            asprintf(&(cmd_argv[2]), "%d", config.num_keys_in_fcall);
+            for (int i = 0; i < config.num_keys_in_fcall; i++) {
+                asprintf(&(cmd_argv[3 + i]), "key%d", i + 1);
+            }
+            len = redisFormatCommandArgv(&cmd, config.num_keys_in_fcall + 3, (const char **)cmd_argv, NULL);
+            for (int i = 0; i < config.num_keys_in_fcall + 3; i++) {
+                free(cmd_argv[i]);
+            }
+            zfree(cmd_argv);
+
+            benchmark("FCALL", cmd, len);
+            free(cmd);
+        }
+
+        if (test_is_selected("fcall")) {
         }
 
         if (!config.csv) printf("\n");
