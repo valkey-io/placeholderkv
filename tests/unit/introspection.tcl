@@ -1020,6 +1020,7 @@ start_server {config "minimal.conf" tags {"introspection external:skip"} overrid
             set r2 [get_nonloopback_client]
             assert_error "ERR *protected*" {$r2 config set dir somedir}
             assert_error "ERR *DEBUG command not allowed*" {$r2 DEBUG HELP}
+            $r2 close
         }
     } {} {needs:debug}
 }
