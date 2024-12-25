@@ -194,6 +194,30 @@ start_server {tags {"repl external:skip"}} {
             }          
             assert_match {*calls=1,*,rejected_calls=0,failed_calls=1*} [cmdrstat blpop $B]
         }
+        
+        test {Replica output bytes metric} {
+            # reset stats 
+            $A config resetstat
+            
+            set info [$A info stats]
+            set replica_bytes_output [getInfoProperty $info "total_net_repl_output_bytes"]
+            assert_equal $replica_bytes_output 0
+            
+            # sent set command to primary
+            $A set key value
+            
+            # wait for command propagation
+            wait_for_condition 50 100 {
+                [$B get key] eq {value}
+            } else {
+                fail "Replica did not receive the command"
+            }
+            
+            # get the new stats
+            set info [$A info stats]
+            set replica_bytes_output [getInfoProperty $info "total_net_repl_output_bytes"]
+            assert_morethan $replica_bytes_output 0
+        }
     }
 }
 
