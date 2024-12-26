@@ -62,6 +62,7 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
+#include "functions.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -879,6 +880,15 @@ void moduleCallCommandUnblockedHandler(client *c) {
     moduleReleaseTempClient(c);
 }
 
+/* Allocates the memory necessary to hold the ValkeyModuleCtx structure, and
+ * returns the pointer to the allocated memory.
+ *
+ * Used by the scripting engines implementation to cache the context structure.
+ */
+ValkeyModuleCtx *moduleAllocateContext(void) {
+    return (ValkeyModuleCtx *)zcalloc(sizeof(ValkeyModuleCtx));
+}
+
 /* Create a module ctx and keep track of the nesting level.
  *
  * Note: When creating ctx for threads (VM_GetThreadSafeContext and
@@ -919,6 +929,16 @@ void moduleCreateContext(ValkeyModuleCtx *out_ctx, ValkeyModule *module, int ctx
     if (!(ctx_flags & (VALKEYMODULE_CTX_THREAD_SAFE | VALKEYMODULE_CTX_COMMAND))) {
         enterExecutionUnit(1, 0);
     }
+}
+
+/* Initialize a module context to be used by scripting engines callback
+ * functions.
+ */
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
+                                      ValkeyModule *module,
+                                      client *client) {
+    moduleCreateContext(out_ctx, module, VALKEYMODULE_CTX_NONE);
+    out_ctx->client = client;
 }
 
 /* This command binds the normal command invocation with commands
@@ -13074,6 +13094,60 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
     return VALKEYMODULE_OK;
 }
 
+/* Registers a new scripting engine in the server.
+ *
+ * - `module_ctx`: the module context object.
+ *
+ * - `engine_name`: the name of the scripting engine. This name will match
+ *   against the engine name specified in the script header using a shebang.
+ *
+ * - `engine_ctx`: engine specific context pointer.
+ *
+ * - `engine_methods`: the struct with the scripting engine callback functions
+ *   pointers.
+ *
+ * Returns VALKEYMODULE_OK if the engine is successfully registered, and
+ * VALKEYMODULE_ERR in case some failure occurs. In case of a failure, an error
+ * message is logged.
+ */
+int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
+                               const char *engine_name,
+                               ValkeyModuleScriptingEngineCtx *engine_ctx,
+                               ValkeyModuleScriptingEngineMethods *engine_methods) {
+    serverLog(LL_DEBUG, "Registering a new scripting engine: %s", engine_name);
+
+    if (engine_methods->version > VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION) {
+        serverLog(LL_WARNING, "The engine implementation version is greater "
+                              "than what this server supports. Server ABI "
+                              "Version: %lu, Engine ABI version: %lu",
+                  VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
+                  (unsigned long)engine_methods->version);
+        return VALKEYMODULE_ERR;
+    }
+
+    if (functionsRegisterEngine(engine_name,
+                                module_ctx->module,
+                                engine_ctx,
+                                engine_methods) != C_OK) {
+        return VALKEYMODULE_ERR;
+    }
+
+    return VALKEYMODULE_OK;
+}
+
+/* Removes the scripting engine from the server.
+ *
+ * `engine_name` is the name of the scripting engine.
+ *
+ * Returns VALKEYMODULE_OK.
+ *
+ */
+int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
+    UNUSED(ctx);
+    functionsUnregisterEngine(engine_name);
+    return VALKEYMODULE_OK;
+}
+
 /* MODULE command.
  *
  * MODULE LIST
@@ -13944,4 +14018,6 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbStreamFree);
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
+    REGISTER_API(RegisterScriptingEngine);
+    REGISTER_API(UnregisterScriptingEngine);
 }

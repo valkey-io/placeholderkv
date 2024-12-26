@@ -65,7 +65,8 @@ TEST_MODULES = \
     moduleauthtwo.so \
     rdbloadsave.so \
     crash.so \
-    cluster.so
+    cluster.so \
+    helloscripting.so
 
 .PHONY: all
 

@@ -2254,7 +2254,7 @@ void readSyncBulkPayload(connection *conn) {
 
         int loadingFailed = 0;
         rdbLoadingCtx loadingCtx = {.dbarray = dbarray, .functions_lib_ctx = functions_lib_ctx};
-        if (rdbLoadRioWithLoadingCtx(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
+        if (rdbLoadRioWithLoadingCtxScopedRdb(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
             /* RDB loading failed. */
             serverLog(LL_WARNING, "Failed trying to load the PRIMARY synchronization DB "
                                   "from socket, check server logs.");
@@ -2831,16 +2831,13 @@ typedef struct replDataBufBlock {
  * Reads replication data from primary into specified repl buffer block */
 int readIntoReplDataBlock(connection *conn, replDataBufBlock *data_block, size_t read) {
     int nread = connRead(conn, data_block->buf + data_block->used, read);
-    if (nread == -1) {
-        if (connGetState(conn) != CONN_STATE_CONNECTED) {
-            dualChannelServerLog(LL_NOTICE, "Error reading from primary: %s", connGetLastError(conn));
+    if (nread <= 0) {
+        if (nread == 0 || connGetState(conn) != CONN_STATE_CONNECTED) {
+            dualChannelServerLog(LL_WARNING, "Provisional primary closed connection");
+            /* Signal ongoing RDB load to terminate gracefully */
+            if (server.loading_rio) rioCloseASAP(server.loading_rio);
             cancelReplicationHandshake(1);
         }
-        return C_ERR;
-    }
-    if (nread == 0) {
-        dualChannelServerLog(LL_VERBOSE, "Provisional primary closed connection");
-        cancelReplicationHandshake(1);
         return C_ERR;
     }
     data_block->used += nread;
