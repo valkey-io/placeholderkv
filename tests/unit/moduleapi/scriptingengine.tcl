@@ -52,7 +52,7 @@ start_server {tags {"modules"}} {
     }
 
     test {Load script with syntax error} {
-        assert_error {ERR Failed to parse instruction: 'RETRN'} {r function load replace "#!hello name=mylib3\nFUNCTION foo\nARGS 0\nRETRN"}
+        assert_error {ERR Failed to parse instruction: 'SEND'} {r function load replace "#!hello name=mylib3\nFUNCTION foo\nARGS 0\nSEND"}
     }
 
     test {Call scripting engine function: calling foo works} {
