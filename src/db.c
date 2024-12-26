@@ -1193,7 +1193,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
      * are deep copied temporary strings. We must not free them if they are just
      * a shallow copy - a pointer to the actual data in the data structure */
     if (!shallow_copied_list_items) {
-        listSetFreeMethod(keys, (void (*)(void *))sdsfree);
+        listSetFreeMethod(keys, sdsfreeVoid);
     }
 
     /* For main hash table scan or scannable data structure. */

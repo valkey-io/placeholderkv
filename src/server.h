@@ -148,6 +148,11 @@ struct hdr_histogram;
 #define DEFAULT_WAIT_BEFORE_RDB_CLIENT_FREE 60      /* Grace period in seconds for replica main \
                                                      * channel to establish psync. */
 #define LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT 100 /* Default: 0.1 seconds */
+#if !defined(DEBUG_FORCE_DEFRAG)
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 0
+#else
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
+#endif
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -243,6 +248,8 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CMD_ALLOW_BUSY ((1ULL << 26))
 #define CMD_MODULE_GETCHANNELS (1ULL << 27) /* Use the modules getchannels interface. */
 #define CMD_TOUCHES_ARBITRARY_KEYS (1ULL << 28)
+/* Command flags. Please don't forget to add command flag documentation in struct
+ * serverCommand in this file. */
 
 /* Command flags that describe ACLs categories. */
 #define ACL_CATEGORY_KEYSPACE (1ULL << 0)
@@ -1439,7 +1446,7 @@ struct sharedObjectsStruct {
         *rpoplpush, *lmove, *blmove, *zpopmin, *zpopmax, *emptyscan, *multi, *exec, *left, *right, *hset, *srem,
         *xgroup, *xclaim, *script, *replconf, *eval, *persist, *set, *pexpireat, *pexpire, *time, *pxat, *absttl,
         *retrycount, *force, *justid, *entriesread, *lastid, *ping, *setid, *keepttl, *load, *createconsumer, *getack,
-        *special_asterick, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
+        *special_asterisk, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
         *smessagebulk, *select[PROTO_SHARED_SELECT_CMDS], *integers[OBJ_SHARED_INTEGERS],
         *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
         *bulkhdr[OBJ_SHARED_BULKHDR_LEN],  /* "$<value>\r\n" */
@@ -1864,6 +1871,7 @@ struct valkeyServer {
     long long stat_io_reads_processed;                 /* Number of read events processed by IO threads */
     long long stat_io_writes_processed;                /* Number of write events processed by IO threads */
     long long stat_io_freed_objects;                   /* Number of objects freed by IO threads */
+    long long stat_io_accept_offloaded;                /* Number of offloaded accepts */
     long long stat_poll_processed_by_io_threads;       /* Total number of poll jobs processed by IO */
     long long stat_total_reads_processed;              /* Total number of read events processed */
     long long stat_total_writes_processed;             /* Total number of write events processed */
@@ -2082,6 +2090,7 @@ struct valkeyServer {
         int dbid;
     } repl_provisional_primary;
     client *cached_primary;             /* Cached primary to be reused for PSYNC. */
+    rio *loading_rio;                   /* Pointer to the rio object currently used for loading data. */
     int repl_syncio_timeout;            /* Timeout for synchronous I/O calls */
     int repl_state;                     /* Replication status if the instance is a replica */
     int repl_rdb_channel_state;         /* State of the replica's rdb channel during dual-channel-replication */
@@ -2464,6 +2473,8 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  * CMD_DENYOOM:     May increase memory usage once called. Don't allow if out
  *                  of memory.
  *
+ * CMD_MODULE:      Command exported by module.
+ *
  * CMD_ADMIN:       Administrative command, like SAVE or SHUTDOWN.
  *
  * CMD_PUBSUB:      Pub/Sub related command.
@@ -2510,10 +2521,21 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  *
  * CMD_NO_MANDATORY_KEYS: This key arguments for this command are optional.
  *
+ * CMD_PROTECTED: The command is a protected command, see enable-debug-command for more details.
+ *
+ * CMD_MODULE_GETKEYS: Use the modules getkeys interface.
+ *
+ * CMD_MODULE_NO_CLUSTER: Deny on cluster.
+ *
  * CMD_NO_MULTI: The command is not allowed inside a transaction
+ *
+ * CMD_MOVABLE_KEYS: The legacy range spec doesn't cover all keys. Populated by
+ *                   populateCommandLegacyRangeSpec.
  *
  * CMD_ALLOW_BUSY: The command can run while another command is running for
  *                 a long time (timedout script, module command that yields)
+ *
+ * CMD_MODULE_GETCHANNELS: Use the modules getchannels interface.
  *
  * CMD_TOUCHES_ARBITRARY_KEYS: The command may touch (and cause lazy-expire)
  *                             arbitrary key (i.e not provided in argv)

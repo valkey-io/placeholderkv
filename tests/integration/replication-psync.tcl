@@ -115,6 +115,10 @@ tags {"external:skip"} {
 foreach mdl {no yes} {
     foreach sdl {disabled swapdb} {
         foreach dualchannel {yes no} {
+            # Skip dual channel test with master diskless disabled
+            if {$dualchannel == "yes" && $mdl == "no"} {
+                continue
+            }
             test_psync {no reconnection, just sync} 6 1000000 3600 0 {
             } $mdl $sdl $dualchannel 0
 

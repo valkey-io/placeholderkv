@@ -77,6 +77,12 @@ void listRelease(list *list) {
     zfree(list);
 }
 
+/* Just like listRelease, but takes the list as a (void *).
+ * Useful as generic free callback. */
+void listReleaseVoid(void *l) {
+    listRelease((list *)l);
+}
+
 /* Add a new node to the list, to head, containing the specified 'value'
  * pointer as value.
  *

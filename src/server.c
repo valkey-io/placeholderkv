@@ -1702,7 +1702,7 @@ static void sendGetackToReplicas(void) {
     robj *argv[3];
     argv[0] = shared.replconf;
     argv[1] = shared.getack;
-    argv[2] = shared.special_asterick; /* Not used argument. */
+    argv[2] = shared.special_asterisk; /* Not used argument. */
     replicationFeedReplicas(-1, argv, 3);
 }
 
@@ -2088,7 +2088,7 @@ void createSharedObjects(void) {
     shared.load = createStringObject("LOAD", 4);
     shared.createconsumer = createStringObject("CREATECONSUMER", 14);
     shared.getack = createStringObject("GETACK", 6);
-    shared.special_asterick = createStringObject("*", 1);
+    shared.special_asterisk = createStringObject("*", 1);
     shared.special_equals = createStringObject("=", 1);
     shared.redacted = makeObjectShared(createStringObject("(redacted)", 10));
 
@@ -2218,6 +2218,7 @@ void initServerConfig(void) {
     server.fsynced_reploff_pending = 0;
     server.rdb_client_id = -1;
     server.loading_process_events_interval_ms = LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT;
+    server.loading_rio = NULL;
 
     /* Replication partial resync backlog */
     server.repl_backlog = NULL;
@@ -2645,6 +2646,7 @@ void resetServerStats(void) {
     server.stat_total_reads_processed = 0;
     server.stat_io_writes_processed = 0;
     server.stat_io_freed_objects = 0;
+    server.stat_io_accept_offloaded = 0;
     server.stat_poll_processed_by_io_threads = 0;
     server.stat_total_writes_processed = 0;
     server.stat_client_qbuf_limit_disconnections = 0;
@@ -5915,6 +5917,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "io_threaded_reads_processed:%lld\r\n", server.stat_io_reads_processed,
                 "io_threaded_writes_processed:%lld\r\n", server.stat_io_writes_processed,
                 "io_threaded_freed_objects:%lld\r\n", server.stat_io_freed_objects,
+                "io_threaded_accept_processed:%lld\r\n", server.stat_io_accept_offloaded,
                 "io_threaded_poll_processed:%lld\r\n", server.stat_poll_processed_by_io_threads,
                 "io_threaded_total_prefetch_batches:%lld\r\n", server.stat_total_prefetch_batches,
                 "io_threaded_total_prefetch_entries:%lld\r\n", server.stat_total_prefetch_entries,

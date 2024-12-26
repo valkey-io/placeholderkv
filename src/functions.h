@@ -54,53 +54,68 @@
 
 typedef struct functionLibInfo functionLibInfo;
 
+/* ValkeyModule type aliases for scripting engine structs and types. */
+typedef ValkeyModuleScriptingEngineCtx engineCtx;
+typedef ValkeyModuleScriptingEngineFunctionCtx functionCtx;
+typedef ValkeyModuleScriptingEngineCompiledFunction compiledFunction;
+typedef ValkeyModuleScriptingEngineMemoryInfo engineMemoryInfo;
+typedef ValkeyModuleScriptingEngineMethods engineMethods;
+
 typedef struct engine {
     /* engine specific context */
-    void *engine_ctx;
+    engineCtx *engine_ctx;
 
-    /* Create function callback, get the engine_ctx, and function code
-     * engine_ctx - opaque struct that was created on engine initialization
-     * li - library information that need to be provided and when add functions
-     * code - the library code
-     * timeout - timeout for the library creation (0 for no timeout)
-     * err - description of error (if occurred)
-     * returns C_ERR on error and set err to be the error message */
-    int (*create)(void *engine_ctx, functionLibInfo *li, sds code, size_t timeout, sds *err);
+    /* Compiles the script code and returns an array of compiled functions
+     * registered in the script./
+     *
+     * Returns NULL on error and set err to be the error message */
+    compiledFunction **(*create)(
+        ValkeyModuleCtx *module_ctx,
+        engineCtx *engine_ctx,
+        const char *code,
+        size_t timeout,
+        size_t *out_num_compiled_functions,
+        char **err);
 
-    /* Invoking a function, r_ctx is an opaque object (from engine POV).
-     * The r_ctx should be used by the engine to interaction with the server,
+    /* Invoking a function, func_ctx is an opaque object (from engine POV).
+     * The func_ctx should be used by the engine to interaction with the server,
      * such interaction could be running commands, set resp, or set
      * replication mode
      */
-    void (*call)(scriptRunCtx *r_ctx,
-                 void *engine_ctx,
+    void (*call)(ValkeyModuleCtx *module_ctx,
+                 engineCtx *engine_ctx,
+                 functionCtx *func_ctx,
                  void *compiled_function,
                  robj **keys,
                  size_t nkeys,
                  robj **args,
                  size_t nargs);
 
-    /* get current used memory by the engine */
-    size_t (*get_used_memory)(void *engine_ctx);
+    /* free the given function */
+    void (*free_function)(ValkeyModuleCtx *module_ctx,
+                          engineCtx *engine_ctx,
+                          void *compiled_function);
 
     /* Return memory overhead for a given function,
      * such memory is not counted as engine memory but as general
      * structs memory that hold different information */
-    size_t (*get_function_memory_overhead)(void *compiled_function);
+    size_t (*get_function_memory_overhead)(ValkeyModuleCtx *module_ctx,
+                                           void *compiled_function);
 
-    /* Return memory overhead for engine (struct size holding the engine)*/
-    size_t (*get_engine_memory_overhead)(void *engine_ctx);
+    /* Get the current used memory by the engine */
+    engineMemoryInfo (*get_memory_info)(ValkeyModuleCtx *module_ctx,
+                                        engineCtx *engine_ctx);
 
-    /* free the given function */
-    void (*free_function)(void *engine_ctx, void *compiled_function);
 } engine;
 
 /* Hold information about an engine.
  * Used on rdb.c so it must be declared here. */
 typedef struct engineInfo {
-    sds name;       /* Name of the engine */
-    engine *engine; /* engine callbacks that allows to interact with the engine */
-    client *c;      /* Client that is used to run commands */
+    sds name;                    /* Name of the engine */
+    ValkeyModule *engineModule;  /* the module that implements the scripting engine */
+    ValkeyModuleCtx *module_ctx; /* Scripting engine module context */
+    engine *engine;              /* engine callbacks that allows to interact with the engine */
+    client *c;                   /* Client that is used to run commands */
 } engineInfo;
 
 /* Hold information about the specific function.
@@ -123,7 +138,12 @@ struct functionLibInfo {
     sds code;        /* Library code */
 };
 
-int functionsRegisterEngine(const char *engine_name, engine *engine_ctx);
+int functionsRegisterEngine(const char *engine_name,
+                            ValkeyModule *engine_module,
+                            void *engine_ctx,
+                            engineMethods *engine_methods);
+int functionsUnregisterEngine(const char *engine_name);
+
 sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibCtx *lib_ctx, size_t timeout);
 unsigned long functionsMemory(void);
 unsigned long functionsMemoryOverhead(void);
@@ -137,8 +157,6 @@ void functionsLibCtxClearCurrent(int async, void(callback)(dict *));
 void functionsLibCtxFree(functionsLibCtx *functions_lib_ctx);
 void functionsLibCtxClear(functionsLibCtx *lib_ctx, void(callback)(dict *));
 void functionsLibCtxSwapWithCurrent(functionsLibCtx *new_lib_ctx, int async);
-
-int functionLibCreateFunction(sds name, void *function, functionLibInfo *li, sds desc, uint64_t f_flags, sds *err);
 
 int luaEngineInitEngine(void);
 int functionsInit(void);

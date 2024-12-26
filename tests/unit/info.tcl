@@ -10,7 +10,7 @@ proc latency_percentiles_usec {cmd} {
     return [latencyrstat_percentiles $cmd r]
 }
 
-start_server {tags {"info" "external:skip"}} {
+start_server {tags {"info" "external:skip" "debug_defrag:skip"}} {
     start_server {} {
 
         test {latencystats: disable/enable} {
@@ -391,7 +391,13 @@ start_server {tags {"info" "external:skip"}} {
             # set qbuf limit to minimum to test stat
             set org_qbuf_limit [lindex [r config get client-query-buffer-limit] 1]
             r config set client-query-buffer-limit 1048576
-            catch {r set key [string repeat a 1048576]}
+            catch {r set key [string repeat a 2048576]} e
+            # We might get an error on the write path of the previous command, which won't be
+            # an I/O error based on how the client is designed. We will need to manually consume
+            # the secondary I/O error.
+            if {![string match "I/O error*" $e]} {
+                catch {r read}
+            }
             set info [r info stats]
             assert_equal [getInfoProperty $info client_query_buffer_limit_disconnections] {1}
             r config set client-query-buffer-limit $org_qbuf_limit
@@ -400,10 +406,10 @@ start_server {tags {"info" "external:skip"}} {
             r config set client-output-buffer-limit "normal 10 0 0"
             r set key [string repeat a 100000] ;# to trigger output buffer limit check this needs to be big
             catch {r get key}
+            r config set client-output-buffer-limit $org_outbuf_limit
             set info [r info stats]
             assert_equal [getInfoProperty $info client_output_buffer_limit_disconnections] {1}
-            r config set client-output-buffer-limit $org_outbuf_limit
-        } {OK} {logreqres:skip} ;# same as obuf-limits.tcl, skip logreqres
+        } {} {logreqres:skip} ;# same as obuf-limits.tcl, skip logreqres
 
         test {clients: pubsub clients} {
             set info [r info clients]

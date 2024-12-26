@@ -1,4 +1,6 @@
-add_subdirectory(jemalloc)
+if (USE_JEMALLOC)
+    add_subdirectory(jemalloc)
+endif ()
 add_subdirectory(lua)
 
 # Set hiredis options. We need to disable the defaults set in the OPTION(..) we do this by setting them in the CACHE

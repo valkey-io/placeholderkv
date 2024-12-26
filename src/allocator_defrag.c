@@ -43,11 +43,9 @@
  * the other component to ensure both are using the same allocator configuration.
  */
 
-#include <stdio.h>
+#include "server.h"
 #include "serverassert.h"
 #include "allocator_defrag.h"
-
-#define UNUSED(x) (void)(x)
 
 #if defined(HAVE_DEFRAG) && defined(USE_JEMALLOC)
 
@@ -402,8 +400,56 @@ int allocatorShouldDefrag(void *ptr) {
                               je_cb.bin_info[binind].nregs - SLAB_NFREE(out, 0));
 }
 
-#else
+/* Utility function to get the fragmentation ratio from jemalloc.
+ * It is critical to do that by comparing only heap maps that belong to
+ * jemalloc, and skip ones the jemalloc keeps as spare. Since we use this
+ * fragmentation ratio in order to decide if a defrag action should be taken
+ * or not, a false detection can cause the defragmenter to waste a lot of CPU
+ * without the possibility of getting any results. */
+float getAllocatorFragmentation(size_t *out_frag_bytes) {
+    size_t resident, active, allocated, frag_smallbins_bytes;
+    zmalloc_get_allocator_info(&allocated, &active, &resident, NULL, NULL);
+    frag_smallbins_bytes = allocatorDefragGetFragSmallbins();
+    /* Calculate the fragmentation ratio as the proportion of wasted memory in small
+     * bins (which are defraggable) relative to the total allocated memory (including large bins).
+     * This is because otherwise, if most of the memory usage is large bins, we may show high percentage,
+     * despite the fact it's not a lot of memory for the user. */
+    float frag_pct = (float)frag_smallbins_bytes / allocated * 100;
+    float rss_pct = ((float)resident / allocated) * 100 - 100;
+    size_t rss_bytes = resident - allocated;
+    if (out_frag_bytes) *out_frag_bytes = frag_smallbins_bytes;
+    serverLog(LL_DEBUG, "allocated=%zu, active=%zu, resident=%zu, frag=%.2f%% (%.2f%% rss), frag_bytes=%zu (%zu rss)",
+              allocated, active, resident, frag_pct, rss_pct, frag_smallbins_bytes, rss_bytes);
+    return frag_pct;
+}
 
+#elif defined(DEBUG_FORCE_DEFRAG)
+int allocatorDefragInit(void) {
+    return 0;
+}
+void allocatorDefragFree(void *ptr, size_t size) {
+    UNUSED(size);
+    zfree(ptr);
+}
+__attribute__((malloc)) void *allocatorDefragAlloc(size_t size) {
+    return zmalloc(size);
+    return NULL;
+}
+unsigned long allocatorDefragGetFragSmallbins(void) {
+    return 0;
+}
+
+int allocatorShouldDefrag(void *ptr) {
+    UNUSED(ptr);
+    return 1;
+}
+
+float getAllocatorFragmentation(size_t *out_frag_bytes) {
+    *out_frag_bytes = server.active_defrag_ignore_bytes + 1;
+    return server.active_defrag_threshold_upper;
+}
+
+#else
 int allocatorDefragInit(void) {
     return -1;
 }
@@ -421,6 +467,11 @@ unsigned long allocatorDefragGetFragSmallbins(void) {
 
 int allocatorShouldDefrag(void *ptr) {
     UNUSED(ptr);
+    return 0;
+}
+
+float getAllocatorFragmentation(size_t *out_frag_bytes) {
+    UNUSED(out_frag_bytes);
     return 0;
 }
 #endif
