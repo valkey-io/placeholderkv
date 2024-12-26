@@ -30,6 +30,7 @@
 #include "mt19937-64.h"
 #include "server.h"
 #include "rdb.h"
+#include "module.h"
 
 #include <stdarg.h>
 #include <sys/time.h>

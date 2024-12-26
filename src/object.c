@@ -34,6 +34,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include "zmalloc.h"
 #include "sds.h"
+#include "module.h"
 #include <math.h>
 #include <ctype.h>
 

@@ -38,6 +38,7 @@
 #include "threads_mngr.h"
 #include "io_threads.h"
 #include "sds.h"
+#include "module.h"
 
 #include <arpa/inet.h>
 #include <signal.h>

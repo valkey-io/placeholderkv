@@ -36,6 +36,7 @@
 #include "server.h"
 #include "hashtable.h"
 #include "script.h"
+#include "module.h"
 #include <stddef.h>
 
 #ifdef HAVE_DEFRAG

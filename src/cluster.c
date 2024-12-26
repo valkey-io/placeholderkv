@@ -36,6 +36,7 @@
 #include "server.h"
 #include "cluster.h"
 #include "cluster_slot_stats.h"
+#include "module.h"
 
 #include <ctype.h>
 
