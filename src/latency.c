@@ -37,8 +37,7 @@
 #include "hdr_histogram.h"
 
 /* Dictionary type for latency events. */
-int dictStringKeyCompare(dict *d, const void *key1, const void *key2) {
-    UNUSED(d);
+int dictStringKeyCompare(const void *key1, const void *key2) {
     return strcmp(key1, key2) == 0;
 }
 
@@ -527,13 +526,12 @@ void fillCommandCDF(client *c, struct hdr_histogram *histogram) {
 
 /* latencyCommand() helper to produce for all commands,
  * a per command cumulative distribution of latencies. */
-void latencyAllCommandsFillCDF(client *c, dict *commands, int *command_with_data) {
-    dictIterator *di = dictGetSafeIterator(commands);
-    dictEntry *de;
-    struct serverCommand *cmd;
-
-    while ((de = dictNext(di)) != NULL) {
-        cmd = (struct serverCommand *)dictGetVal(de);
+void latencyAllCommandsFillCDF(client *c, hashtable *commands, int *command_with_data) {
+    hashtableIterator iter;
+    hashtableInitSafeIterator(&iter, commands);
+    void *next;
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (cmd->latency_histogram) {
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
             fillCommandCDF(c, cmd->latency_histogram);
@@ -541,10 +539,10 @@ void latencyAllCommandsFillCDF(client *c, dict *commands, int *command_with_data
         }
 
         if (cmd->subcommands) {
-            latencyAllCommandsFillCDF(c, cmd->subcommands_dict, command_with_data);
+            latencyAllCommandsFillCDF(c, cmd->subcommands_ht, command_with_data);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* latencyCommand() helper to produce for a specific command set,
@@ -565,19 +563,19 @@ void latencySpecificCommandsFillCDF(client *c) {
             command_with_data++;
         }
 
-        if (cmd->subcommands_dict) {
-            dictEntry *de;
-            dictIterator *di = dictGetSafeIterator(cmd->subcommands_dict);
-
-            while ((de = dictNext(di)) != NULL) {
-                struct serverCommand *sub = dictGetVal(de);
+        if (cmd->subcommands_ht) {
+            hashtableIterator iter;
+            hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+            void *next;
+            while (hashtableNext(&iter, &next)) {
+                struct serverCommand *sub = next;
                 if (sub->latency_histogram) {
                     addReplyBulkCBuffer(c, sub->fullname, sdslen(sub->fullname));
                     fillCommandCDF(c, sub->latency_histogram);
                     command_with_data++;
                 }
             }
-            dictReleaseIterator(di);
+            hashtableResetIterator(&iter);
         }
     }
     setDeferredMapLen(c, replylen, command_with_data);
@@ -731,25 +729,23 @@ void latencyCommand(client *c) {
             latencySpecificCommandsFillCDF(c);
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "help") && c->argc == 2) {
-        /* clang-format off */
         const char *help[] = {
-"DOCTOR",
-"    Return a human readable latency analysis report.",
-"GRAPH <event>",
-"    Return an ASCII latency graph for the <event> class.",
-"HISTORY <event>",
-"    Return time-latency samples for the <event> class.",
-"LATEST",
-"    Return the latest latency samples for all events.",
-"RESET [<event> ...]",
-"    Reset latency data of one or more <event> classes.",
-"    (default: reset all data for all event classes)",
-"HISTOGRAM [COMMAND ...]",
-"    Return a cumulative distribution of latencies in the format of a histogram for the specified command names.",
-"    If no commands are specified then all histograms are replied.",
-NULL
+            "DOCTOR",
+            "    Return a human readable latency analysis report.",
+            "GRAPH <event>",
+            "    Return an ASCII latency graph for the <event> class.",
+            "HISTORY <event>",
+            "    Return time-latency samples for the <event> class.",
+            "LATEST",
+            "    Return the latest latency samples for all events.",
+            "RESET [<event> ...]",
+            "    Reset latency data of one or more <event> classes.",
+            "    (default: reset all data for all event classes)",
+            "HISTOGRAM [COMMAND ...]",
+            "    Return a cumulative distribution of latencies in the format of a histogram for the specified command names.",
+            "    If no commands are specified then all histograms are replied.",
+            NULL,
         };
-        /* clang-format on */
         addReplyHelp(c, help);
     } else {
         addReplySubcommandSyntaxError(c);

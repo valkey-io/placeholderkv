@@ -297,11 +297,6 @@ int ACLListMatchSds(void *a, void *b) {
     return sdscmp(a, b) == 0;
 }
 
-/* Method to free list elements from ACL users password/patterns lists. */
-void ACLListFreeSds(void *item) {
-    sdsfree(item);
-}
-
 /* Method to duplicate list elements from ACL users password/patterns lists. */
 void *ACLListDupSds(void *item) {
     return sdsdup(item);
@@ -374,7 +369,7 @@ aclSelector *ACLCreateSelector(int flags) {
     listSetFreeMethod(selector->patterns, ACLListFreeKeyPattern);
     listSetDupMethod(selector->patterns, ACLListDupKeyPattern);
     listSetMatchMethod(selector->channels, ACLListMatchSds);
-    listSetFreeMethod(selector->channels, ACLListFreeSds);
+    listSetFreeMethod(selector->channels, sdsfreeVoid);
     listSetDupMethod(selector->channels, ACLListDupSds);
     memset(selector->allowed_commands, 0, sizeof(selector->allowed_commands));
 
@@ -445,7 +440,7 @@ user *ACLCreateUser(const char *name, size_t namelen) {
     u->passwords = listCreate();
     u->acl_string = NULL;
     listSetMatchMethod(u->passwords, ACLListMatchSds);
-    listSetFreeMethod(u->passwords, ACLListFreeSds);
+    listSetFreeMethod(u->passwords, sdsfreeVoid);
     listSetDupMethod(u->passwords, ACLListDupSds);
 
     u->selectors = listCreate();
@@ -487,6 +482,11 @@ void ACLFreeUser(user *u) {
     listRelease(u->passwords);
     listRelease(u->selectors);
     zfree(u);
+}
+
+/* Used for generic free functions. */
+static void ACLFreeUserVoid(void *u) {
+    ACLFreeUser(u);
 }
 
 /* When a user is deleted we need to cycle the active
@@ -652,14 +652,15 @@ void ACLChangeSelectorPerm(aclSelector *selector, struct serverCommand *cmd, int
     unsigned long id = cmd->id;
     ACLSetSelectorCommandBit(selector, id, allow);
     ACLResetFirstArgsForCommand(selector, id);
-    if (cmd->subcommands_dict) {
-        dictEntry *de;
-        dictIterator *di = dictGetSafeIterator(cmd->subcommands_dict);
-        while ((de = dictNext(di)) != NULL) {
-            struct serverCommand *sub = (struct serverCommand *)dictGetVal(de);
+    if (cmd->subcommands_ht) {
+        hashtableIterator iter;
+        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        void *next;
+        while (hashtableNext(&iter, &next)) {
+            struct serverCommand *sub = next;
             ACLSetSelectorCommandBit(selector, sub->id, allow);
         }
-        dictReleaseIterator(di);
+        hashtableResetIterator(&iter);
     }
 }
 
@@ -669,19 +670,20 @@ void ACLChangeSelectorPerm(aclSelector *selector, struct serverCommand *cmd, int
  * value. Since the category passed by the user may be non existing, the
  * function returns C_ERR if the category was not found, or C_OK if it was
  * found and the operation was performed. */
-void ACLSetSelectorCommandBitsForCategory(dict *commands, aclSelector *selector, uint64_t cflag, int value) {
-    dictIterator *di = dictGetIterator(commands);
-    dictEntry *de;
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+void ACLSetSelectorCommandBitsForCategory(hashtable *commands, aclSelector *selector, uint64_t cflag, int value) {
+    hashtableIterator iter;
+    hashtableInitIterator(&iter, commands);
+    void *next;
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (cmd->acl_categories & cflag) {
             ACLChangeSelectorPerm(selector, cmd, value);
         }
-        if (cmd->subcommands_dict) {
-            ACLSetSelectorCommandBitsForCategory(cmd->subcommands_dict, selector, cflag, value);
+        if (cmd->subcommands_ht) {
+            ACLSetSelectorCommandBitsForCategory(cmd->subcommands_ht, selector, cflag, value);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* This function is responsible for recomputing the command bits for all selectors of the existing users.
@@ -732,26 +734,27 @@ int ACLSetSelectorCategory(aclSelector *selector, const char *category, int allo
     return C_OK;
 }
 
-void ACLCountCategoryBitsForCommands(dict *commands,
+void ACLCountCategoryBitsForCommands(hashtable *commands,
                                      aclSelector *selector,
                                      unsigned long *on,
                                      unsigned long *off,
                                      uint64_t cflag) {
-    dictIterator *di = dictGetIterator(commands);
-    dictEntry *de;
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+    hashtableIterator iter;
+    hashtableInitIterator(&iter, commands);
+    void *next;
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (cmd->acl_categories & cflag) {
             if (ACLGetSelectorCommandBit(selector, cmd->id))
                 (*on)++;
             else
                 (*off)++;
         }
-        if (cmd->subcommands_dict) {
-            ACLCountCategoryBitsForCommands(cmd->subcommands_dict, selector, on, off, cflag);
+        if (cmd->subcommands_ht) {
+            ACLCountCategoryBitsForCommands(cmd->subcommands_ht, selector, on, off, cflag);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* Return the number of commands allowed (on) and denied (off) for the user 'u'
@@ -1079,7 +1082,7 @@ int ACLSetSelector(aclSelector *selector, const char *op, size_t oplen) {
                     flags |= ACL_READ_PERMISSION;
                 } else if (toupper(op[offset]) == 'W' && !(flags & ACL_WRITE_PERMISSION)) {
                     flags |= ACL_WRITE_PERMISSION;
-                } else if (op[offset] == '~') {
+                } else if (op[offset] == '~' && flags) {
                     offset++;
                     break;
                 } else {
@@ -1163,7 +1166,7 @@ int ACLSetSelector(aclSelector *selector, const char *op, size_t oplen) {
                 return C_ERR;
             }
 
-            if (cmd->subcommands_dict) {
+            if (cmd->subcommands_ht) {
                 /* If user is trying to allow a valid subcommand we can just add its unique ID */
                 cmd = ACLLookupCommand(op + 1);
                 if (cmd == NULL) {
@@ -2442,12 +2445,12 @@ sds ACLLoadFromFile(const char *filename) {
             c->user = new_user;
         }
 
-        if (user_channels) raxFreeWithCallback(user_channels, (void (*)(void *))listRelease);
-        raxFreeWithCallback(old_users, (void (*)(void *))ACLFreeUser);
+        if (user_channels) raxFreeWithCallback(user_channels, listReleaseVoid);
+        raxFreeWithCallback(old_users, ACLFreeUserVoid);
         sdsfree(errors);
         return NULL;
     } else {
-        raxFreeWithCallback(Users, (void (*)(void *))ACLFreeUser);
+        raxFreeWithCallback(Users, ACLFreeUserVoid);
         Users = old_users;
         errors =
             sdscat(errors, "WARNING: ACL errors detected, no change to the previously active ACL rules was performed");
@@ -2754,23 +2757,22 @@ sds getAclErrorMessage(int acl_res, user *user, struct serverCommand *cmd, sds e
  * ==========================================================================*/
 
 /* ACL CAT category */
-void aclCatWithFlags(client *c, dict *commands, uint64_t cflag, int *arraylen) {
-    dictEntry *de;
-    dictIterator *di = dictGetIterator(commands);
-
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
-        if (cmd->flags & CMD_MODULE) continue;
+void aclCatWithFlags(client *c, hashtable *commands, uint64_t cflag, int *arraylen) {
+    hashtableIterator iter;
+    hashtableInitIterator(&iter, commands);
+    void *next;
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (cmd->acl_categories & cflag) {
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
             (*arraylen)++;
         }
 
-        if (cmd->subcommands_dict) {
-            aclCatWithFlags(c, cmd->subcommands_dict, cflag, arraylen);
+        if (cmd->subcommands_ht) {
+            aclCatWithFlags(c, cmd->subcommands_ht, cflag, arraylen);
         }
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* Add the formatted response from a single selector to the ACL GETUSER
@@ -3117,37 +3119,35 @@ void aclCommand(client *c) {
 
         addReply(c, shared.ok);
     } else if (c->argc == 2 && !strcasecmp(sub, "help")) {
-        /* clang-format off */
         const char *help[] = {
-"CAT [<category>]",
-"    List all commands that belong to <category>, or all command categories",
-"    when no category is specified.",
-"DELUSER <username> [<username> ...]",
-"    Delete a list of users.",
-"DRYRUN <username> <command> [<arg> ...]",
-"    Returns whether the user can execute the given command without executing the command.",
-"GETUSER <username>",
-"    Get the user's details.",
-"GENPASS [<bits>]",
-"    Generate a secure 256-bit user password. The optional `bits` argument can",
-"    be used to specify a different size.",
-"LIST",
-"    Show users details in config file format.",
-"LOAD",
-"    Reload users from the ACL file.",
-"LOG [<count> | RESET]",
-"    Show the ACL log entries.",
-"SAVE",
-"    Save the current config to the ACL file.",
-"SETUSER <username> <attribute> [<attribute> ...]",
-"    Create or modify a user with the specified attributes.",
-"USERS",
-"    List all the registered usernames.",
-"WHOAMI",
-"    Return the current connection username.",
-NULL
+            "CAT [<category>]",
+            "    List all commands that belong to <category>, or all command categories",
+            "    when no category is specified.",
+            "DELUSER <username> [<username> ...]",
+            "    Delete a list of users.",
+            "DRYRUN <username> <command> [<arg> ...]",
+            "    Returns whether the user can execute the given command without executing the command.",
+            "GETUSER <username>",
+            "    Get the user's details.",
+            "GENPASS [<bits>]",
+            "    Generate a secure 256-bit user password. The optional `bits` argument can",
+            "    be used to specify a different size.",
+            "LIST",
+            "    Show users details in config file format.",
+            "LOAD",
+            "    Reload users from the ACL file.",
+            "LOG [<count> | RESET]",
+            "    Show the ACL log entries.",
+            "SAVE",
+            "    Save the current config to the ACL file.",
+            "SETUSER <username> <attribute> [<attribute> ...]",
+            "    Create or modify a user with the specified attributes.",
+            "USERS",
+            "    List all the registered usernames.",
+            "WHOAMI",
+            "    Return the current connection username.",
+            NULL,
         };
-        /* clang-format on */
         addReplyHelp(c, help);
     } else {
         addReplySubcommandSyntaxError(c);

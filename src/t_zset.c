@@ -60,6 +60,8 @@
 #include "intset.h" /* Compact integer set structure */
 #include <math.h>
 
+#include "valkey_strtod.h"
+
 /*-----------------------------------------------------------------------------
  * Skiplist implementation of the low level API
  *----------------------------------------------------------------------------*/
@@ -70,12 +72,51 @@ void zsetConvertAndExpand(robj *zobj, int encoding, unsigned long cap);
 zskiplistNode *zslGetElementByRankFromNode(zskiplistNode *start_node, int start_level, unsigned long rank);
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
+static inline unsigned long zslGetNodeSpanAtLevel(zskiplistNode *x, int level) {
+    /* We use the level 0 span in order to hold the node height, so in case the span is requested on
+     * level 0 and this is not the last node we return 1 and 0 otherwise. For the rest of the levels we just return
+     * the recorded span in that level. */
+    if (level > 0) return x->level[level].span;
+    return x->level[level].forward ? 1 : 0;
+}
+
+static inline void zslSetNodeSpanAtLevel(zskiplistNode *x, int level, unsigned long span) {
+    /* We use the level 0 span in order to hold the node height, so we avoid overriding it. */
+    if (level > 0)
+        x->level[level].span = span;
+}
+
+static inline void zslIncrNodeSpanAtLevel(zskiplistNode *x, int level, unsigned long incr) {
+    /* We use the level 0 span in order to hold the node height, so we avoid overriding it. */
+    if (level > 0)
+        x->level[level].span += incr;
+}
+
+static inline void zslDecrNodeSpanAtLevel(zskiplistNode *x, int level, unsigned long decr) {
+    /* We use the level 0 span in order to hold the node height, so we avoid overriding it. */
+    if (level > 0)
+        x->level[level].span -= decr;
+}
+
+static inline unsigned long zslGetNodeHeight(zskiplistNode *x) {
+    /* Since the span at level 0 is always 1 (or 0 for the last node), this
+     * field is instead used for storing the height of the node. */
+    return x->level[0].span;
+}
+
+static inline void zslSetNodeHeight(zskiplistNode *x, int height) {
+    /* Since the span at level 0 is always 1 (or 0 for the last node), this
+     * field is instead used for storing the height of the node. */
+    x->level[0].span = height;
+}
+
 /* Create a skiplist node with the specified number of levels.
  * The SDS string 'ele' is referenced by the node after the call. */
-zskiplistNode *zslCreateNode(int level, double score, sds ele) {
-    zskiplistNode *zn = zmalloc(sizeof(*zn) + level * sizeof(struct zskiplistLevel));
+zskiplistNode *zslCreateNode(int height, double score, sds ele) {
+    zskiplistNode *zn = zmalloc(sizeof(*zn) + height * sizeof(struct zskiplistLevel));
     zn->score = score;
     zn->ele = ele;
+    zslSetNodeHeight(zn, height);
     return zn;
 }
 
@@ -145,7 +186,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         while (x->level[i].forward &&
                (x->level[i].forward->score < score ||
                 (x->level[i].forward->score == score && sdscmp(x->level[i].forward->ele, ele) < 0))) {
-            rank[i] += x->level[i].span;
+            rank[i] += zslGetNodeSpanAtLevel(x, i);
             x = x->level[i].forward;
         }
         update[i] = x;
@@ -159,9 +200,10 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         for (i = zsl->level; i < level; i++) {
             rank[i] = 0;
             update[i] = zsl->header;
-            update[i]->level[i].span = zsl->length;
+            zslSetNodeSpanAtLevel(update[i], i, zsl->length);
         }
         zsl->level = level;
+        zslSetNodeHeight(zsl->header, level);
     }
     x = zslCreateNode(level, score, ele);
     for (i = 0; i < level; i++) {
@@ -169,13 +211,13 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
         update[i]->level[i].forward = x;
 
         /* update span covered by update[i] as x is inserted here */
-        x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
-        update[i]->level[i].span = (rank[0] - rank[i]) + 1;
+        zslSetNodeSpanAtLevel(x, i, zslGetNodeSpanAtLevel(update[i], i) - (rank[0] - rank[i]));
+        zslSetNodeSpanAtLevel(update[i], i, (rank[0] - rank[i]) + 1);
     }
 
     /* increment span for untouched levels */
     for (i = level; i < zsl->level; i++) {
-        update[i]->level[i].span++;
+        zslIncrNodeSpanAtLevel(update[i], i, 1);
     }
 
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
@@ -193,10 +235,10 @@ void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **update) {
     int i;
     for (i = 0; i < zsl->level; i++) {
         if (update[i]->level[i].forward == x) {
-            update[i]->level[i].span += x->level[i].span - 1;
+            zslIncrNodeSpanAtLevel(update[i], i, zslGetNodeSpanAtLevel(x, i) - 1);
             update[i]->level[i].forward = x->level[i].forward;
         } else {
-            update[i]->level[i].span -= 1;
+            zslDecrNodeSpanAtLevel(update[i], i, 1);
         }
     }
     if (x->level[0].forward) {
@@ -334,7 +376,7 @@ zskiplistNode *zslNthInRange(zskiplist *zsl, zrangespec *range, long n) {
     x = zsl->header;
     i = zsl->level - 1;
     while (x->level[i].forward && !zslValueGteMin(x->level[i].forward->score, range)) {
-        edge_rank += x->level[i].span;
+        edge_rank += zslGetNodeSpanAtLevel(x, i);
         x = x->level[i].forward;
     }
     /* Remember the last node which has zsl->level-1 levels and its rank. */
@@ -346,7 +388,7 @@ zskiplistNode *zslNthInRange(zskiplist *zsl, zrangespec *range, long n) {
             /* Go forward while *OUT* of range. */
             while (x->level[i].forward && !zslValueGteMin(x->level[i].forward->score, range)) {
                 /* Count the rank of the last element smaller than the range. */
-                edge_rank += x->level[i].span;
+                edge_rank += zslGetNodeSpanAtLevel(x, i);
                 x = x->level[i].forward;
             }
         }
@@ -370,7 +412,7 @@ zskiplistNode *zslNthInRange(zskiplist *zsl, zrangespec *range, long n) {
             /* Go forward while *IN* range. */
             while (x->level[i].forward && zslValueLteMax(x->level[i].forward->score, range)) {
                 /* Count the rank of the last element in range. */
-                edge_rank += x->level[i].span;
+                edge_rank += zslGetNodeSpanAtLevel(x, i);
                 x = x->level[i].forward;
             }
         }
@@ -462,8 +504,8 @@ unsigned long zslDeleteRangeByRank(zskiplist *zsl, unsigned int start, unsigned 
 
     x = zsl->header;
     for (i = zsl->level - 1; i >= 0; i--) {
-        while (x->level[i].forward && (traversed + x->level[i].span) < start) {
-            traversed += x->level[i].span;
+        while (x->level[i].forward && (traversed + zslGetNodeSpanAtLevel(x, i)) < start) {
+            traversed += zslGetNodeSpanAtLevel(x, i);
             x = x->level[i].forward;
         }
         update[i] = x;
@@ -497,7 +539,7 @@ unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
         while (x->level[i].forward &&
                (x->level[i].forward->score < score ||
                 (x->level[i].forward->score == score && sdscmp(x->level[i].forward->ele, ele) <= 0))) {
-            rank += x->level[i].span;
+            rank += zslGetNodeSpanAtLevel(x, i);
             x = x->level[i].forward;
         }
 
@@ -509,6 +551,18 @@ unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
     return 0;
 }
 
+/* Find the rank for a specific skiplist node. */
+unsigned long zslGetRankByNode(zskiplist *zsl, zskiplistNode *x) {
+    int i = zslGetNodeHeight(x) - 1;
+    unsigned long rank = zslGetNodeSpanAtLevel(x, i);
+    while (x->level[zslGetNodeHeight(x) - 1].forward) {
+        x = x->level[zslGetNodeHeight(x) - 1].forward;
+        rank += zslGetNodeSpanAtLevel(x, zslGetNodeHeight(x) - 1);
+    }
+    rank = zsl->length - rank;
+    return rank;
+}
+
 /* Finds an element by its rank from start node. The rank argument needs to be 1-based. */
 zskiplistNode *zslGetElementByRankFromNode(zskiplistNode *start_node, int start_level, unsigned long rank) {
     zskiplistNode *x;
@@ -517,8 +571,8 @@ zskiplistNode *zslGetElementByRankFromNode(zskiplistNode *start_node, int start_
 
     x = start_node;
     for (i = start_level; i >= 0; i--) {
-        while (x->level[i].forward && (traversed + x->level[i].span) <= rank) {
-            traversed += x->level[i].span;
+        while (x->level[i].forward && (traversed + zslGetNodeSpanAtLevel(x, i)) <= rank) {
+            traversed += zslGetNodeSpanAtLevel(x, i);
             x = x->level[i].forward;
         }
         if (traversed == rank) {
@@ -546,11 +600,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->min = (long)min->ptr;
     } else {
         if (((char *)min->ptr)[0] == '(') {
-            spec->min = strtod((char *)min->ptr + 1, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
             spec->minex = 1;
         } else {
-            spec->min = strtod((char *)min->ptr, &eptr);
+            spec->min = valkey_strtod((char *)min->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->min)) return C_ERR;
         }
     }
@@ -558,11 +612,11 @@ static int zslParseRange(robj *min, robj *max, zrangespec *spec) {
         spec->max = (long)max->ptr;
     } else {
         if (((char *)max->ptr)[0] == '(') {
-            spec->max = strtod((char *)max->ptr + 1, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr + 1, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
             spec->maxex = 1;
         } else {
-            spec->max = strtod((char *)max->ptr, &eptr);
+            spec->max = valkey_strtod((char *)max->ptr, &eptr);
             if (eptr[0] != '\0' || isnan(spec->max)) return C_ERR;
         }
     }
@@ -688,7 +742,7 @@ zskiplistNode *zslNthInLexRange(zskiplist *zsl, zlexrangespec *range, long n) {
     x = zsl->header;
     i = zsl->level - 1;
     while (x->level[i].forward && !zslLexValueGteMin(x->level[i].forward->ele, range)) {
-        edge_rank += x->level[i].span;
+        edge_rank += zslGetNodeSpanAtLevel(x, i);
         x = x->level[i].forward;
     }
     /* Remember the last node which has zsl->level-1 levels and its rank. */
@@ -700,7 +754,7 @@ zskiplistNode *zslNthInLexRange(zskiplist *zsl, zlexrangespec *range, long n) {
             /* Go forward while *OUT* of range. */
             while (x->level[i].forward && !zslLexValueGteMin(x->level[i].forward->ele, range)) {
                 /* Count the rank of the last element smaller than the range. */
-                edge_rank += x->level[i].span;
+                edge_rank += zslGetNodeSpanAtLevel(x, i);
                 x = x->level[i].forward;
             }
         }
@@ -724,7 +778,7 @@ zskiplistNode *zslNthInLexRange(zskiplist *zsl, zlexrangespec *range, long n) {
             /* Go forward while *IN* range. */
             while (x->level[i].forward && zslLexValueLteMax(x->level[i].forward->ele, range)) {
                 /* Count the rank of the last element in range. */
-                edge_rank += x->level[i].span;
+                edge_rank += zslGetNodeSpanAtLevel(x, i);
                 x = x->level[i].forward;
             }
         }
@@ -757,7 +811,7 @@ double zzlStrtod(unsigned char *vstr, unsigned int vlen) {
     if (vlen > sizeof(buf) - 1) vlen = sizeof(buf) - 1;
     memcpy(buf, vstr, vlen);
     buf[vlen] = '\0';
-    return strtod(buf, NULL);
+    return valkey_strtod(buf, NULL);
 }
 
 double zzlGetScore(unsigned char *sptr) {
@@ -1170,6 +1224,13 @@ unsigned char *zzlDeleteRangeByRank(unsigned char *zl, unsigned int start, unsig
 /*-----------------------------------------------------------------------------
  * Common sorted set API
  *----------------------------------------------------------------------------*/
+
+/* Utility function used for mapping the hashtable entry to the matching skiplist node.
+ * For example, this is used in case of ZRANK query. */
+static inline zskiplistNode *zsetGetSLNodeByEntry(dictEntry *de) {
+    char *score_ref = ((char *)dictGetVal(de));
+    return (zskiplistNode *)(score_ref - offsetof(zskiplistNode, score));
+}
 
 unsigned long zsetLength(const robj *zobj) {
     unsigned long length = 0;
@@ -1601,8 +1662,9 @@ long zsetRank(robj *zobj, sds ele, int reverse, double *output_score) {
 
         de = dictFind(zs->dict, ele);
         if (de != NULL) {
-            score = *(double *)dictGetVal(de);
-            rank = zslGetRank(zsl, score, ele);
+            zskiplistNode *n = zsetGetSLNodeByEntry(de);
+            score = n->score;
+            rank = zslGetRankByNode(zsl, n);
             /* Existing elements always have a rank. */
             serverAssert(rank != 0);
             if (output_score) *output_score = score;
@@ -1803,7 +1865,7 @@ void zaddGenericCommand(client *c, int flags) {
     if (zobj == NULL) {
         if (xx) goto reply_to_client; /* No key + XX option: nothing to do. */
         zobj = zsetTypeCreate(elements, maxelelen);
-        dbAdd(c->db, key, zobj);
+        dbAdd(c->db, key, &zobj);
     } else {
         zsetTypeMaybeConvert(zobj, elements, maxelelen);
     }
@@ -2007,9 +2069,7 @@ typedef struct {
                 int ii;
             } is;
             struct {
-                dict *dict;
-                dictIterator *di;
-                dictEntry *de;
+                hashtableIterator *iter;
             } ht;
             struct {
                 unsigned char *lp;
@@ -2064,10 +2124,8 @@ void zuiInitIterator(zsetopsrc *op) {
         if (op->encoding == OBJ_ENCODING_INTSET) {
             it->is.is = op->subject->ptr;
             it->is.ii = 0;
-        } else if (op->encoding == OBJ_ENCODING_HT) {
-            it->ht.dict = op->subject->ptr;
-            it->ht.di = dictGetIterator(op->subject->ptr);
-            it->ht.de = dictNext(it->ht.di);
+        } else if (op->encoding == OBJ_ENCODING_HASHTABLE) {
+            it->ht.iter = hashtableCreateIterator(op->subject->ptr);
         } else if (op->encoding == OBJ_ENCODING_LISTPACK) {
             it->lp.lp = op->subject->ptr;
             it->lp.p = lpFirst(it->lp.lp);
@@ -2104,8 +2162,8 @@ void zuiClearIterator(zsetopsrc *op) {
         iterset *it = &op->iter.set;
         if (op->encoding == OBJ_ENCODING_INTSET) {
             UNUSED(it); /* skip */
-        } else if (op->encoding == OBJ_ENCODING_HT) {
-            dictReleaseIterator(it->ht.di);
+        } else if (op->encoding == OBJ_ENCODING_HASHTABLE) {
+            hashtableReleaseIterator(it->ht.iter);
         } else if (op->encoding == OBJ_ENCODING_LISTPACK) {
             UNUSED(it);
         } else {
@@ -2173,13 +2231,11 @@ int zuiNext(zsetopsrc *op, zsetopval *val) {
 
             /* Move to next element. */
             it->is.ii++;
-        } else if (op->encoding == OBJ_ENCODING_HT) {
-            if (it->ht.de == NULL) return 0;
-            val->ele = dictGetKey(it->ht.de);
+        } else if (op->encoding == OBJ_ENCODING_HASHTABLE) {
+            void *next;
+            if (!hashtableNext(it->ht.iter, &next)) return 0;
+            val->ele = next;
             val->score = 1.0;
-
-            /* Move to next element. */
-            it->ht.de = dictNext(it->ht.di);
         } else if (op->encoding == OBJ_ENCODING_LISTPACK) {
             if (it->lp.p == NULL) return 0;
             val->estr = lpGetValue(it->lp.p, &val->elen, &val->ell);
@@ -2782,7 +2838,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
     if (dstkey) {
         if (dstzset->zsl->length) {
             zsetConvertToListpackIfNeeded(dstobj, maxelelen, totelelen);
-            setKey(c, c->db, dstkey, dstobj, 0);
+            setKey(c, c->db, dstkey, &dstobj, 0);
             addReplyLongLong(c, zsetLength(dstobj));
             notifyKeyspaceEvent(
                 NOTIFY_ZSET, (op == SET_OP_UNION) ? "zunionstore" : (op == SET_OP_INTER ? "zinterstore" : "zdiffstore"),
@@ -2795,8 +2851,8 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                 notifyKeyspaceEvent(NOTIFY_GENERIC, "del", dstkey, c->db->id);
                 server.dirty++;
             }
+            decrRefCount(dstobj);
         }
-        decrRefCount(dstobj);
     } else if (cardinality_only) {
         addReplyLongLong(c, cardinality);
     } else {
@@ -2857,9 +2913,16 @@ void zdiffCommand(client *c) {
     zunionInterDiffGenericCommand(c, NULL, 1, SET_OP_DIFF, 0);
 }
 
-typedef enum { ZRANGE_DIRECTION_AUTO = 0, ZRANGE_DIRECTION_FORWARD, ZRANGE_DIRECTION_REVERSE } zrange_direction;
+typedef enum {
+    ZRANGE_DIRECTION_AUTO = 0,
+    ZRANGE_DIRECTION_FORWARD,
+    ZRANGE_DIRECTION_REVERSE
+} zrange_direction;
 
-typedef enum { ZRANGE_CONSUMER_TYPE_CLIENT = 0, ZRANGE_CONSUMER_TYPE_INTERNAL } zrange_consumer_type;
+typedef enum {
+    ZRANGE_CONSUMER_TYPE_CLIENT = 0,
+    ZRANGE_CONSUMER_TYPE_INTERNAL
+} zrange_consumer_type;
 
 typedef struct zrange_result_handler zrange_result_handler;
 
@@ -2978,7 +3041,7 @@ static void zrangeResultEmitLongLongForStore(zrange_result_handler *handler, lon
 
 static void zrangeResultFinalizeStore(zrange_result_handler *handler, size_t result_count) {
     if (result_count) {
-        setKey(handler->client, handler->client->db, handler->dstkey, handler->dstobj, 0);
+        setKey(handler->client, handler->client->db, handler->dstkey, &handler->dstobj, 0);
         addReplyLongLong(handler->client, result_count);
         notifyKeyspaceEvent(NOTIFY_ZSET, "zrangestore", handler->dstkey, handler->client->db->id);
         server.dirty++;
@@ -2989,8 +3052,8 @@ static void zrangeResultFinalizeStore(zrange_result_handler *handler, size_t res
             notifyKeyspaceEvent(NOTIFY_GENERIC, "del", handler->dstkey, handler->client->db->id);
             server.dirty++;
         }
+        decrRefCount(handler->dstobj);
     }
-    decrRefCount(handler->dstobj);
 }
 
 /* Initialize the consumer interface type with the requested type. */

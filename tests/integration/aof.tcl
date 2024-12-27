@@ -4,8 +4,8 @@ set server_path [tmpdir server.aof]
 set aof_dirname "appendonlydir"
 set aof_basename "appendonly.aof"
 set aof_dirpath "$server_path/$aof_dirname"
-set aof_base_file "$server_path/$aof_dirname/${aof_basename}.1$::base_aof_sufix$::aof_format_suffix"
-set aof_file "$server_path/$aof_dirname/${aof_basename}.1$::incr_aof_sufix$::aof_format_suffix"
+set aof_base_file "$server_path/$aof_dirname/${aof_basename}.1$::base_aof_suffix$::aof_format_suffix"
+set aof_file "$server_path/$aof_dirname/${aof_basename}.1$::incr_aof_suffix$::aof_format_suffix"
 set aof_manifest_file "$server_path/$aof_dirname/$aof_basename$::manifest_suffix"
 
 tags {"aof external:skip"} {
@@ -673,3 +673,26 @@ tags {"aof external:skip"} {
         }
     }
 }
+
+# make sure the test infra won't use SELECT
+set old_singledb $::singledb
+set ::singledb 1
+
+tags {"aof cluster external:skip"} {
+    test {Test cluster slots / cluster shards in aof won't crash} {
+        create_aof $aof_dirpath $aof_file {
+            append_to_aof [formatCommand cluster slots]
+            append_to_aof [formatCommand cluster shards]
+        }
+
+        create_aof_manifest $aof_dirpath $aof_manifest_file {
+            append_to_manifest "file appendonly.aof.1.incr.aof seq 1 type i\n"
+        }
+
+        start_server_aof [list dir $server_path cluster-enabled yes] {
+            assert_equal [r ping] {PONG}
+        }
+    }
+}
+
+set ::singledb $old_singledb

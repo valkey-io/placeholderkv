@@ -499,10 +499,10 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         assert_equal 1000 [llength [split [run_cli --scan]]]
 
         # pattern
-        assert_equal {key:2} [run_cli --scan --pattern "*:2"]
+        assert_equal {key:2} [split [run_cli --scan --pattern "*:2"]]
 
         # pattern matching with a quoted string
-        assert_equal {key:2} [run_cli --scan --quoted-pattern {"*:\x32"}]
+        assert_equal {key:2} [split [run_cli --scan --quoted-pattern {"*:\x32"}]]
     }
 
     proc test_valkey_cli_repl {} {

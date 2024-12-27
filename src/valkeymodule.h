@@ -79,8 +79,8 @@ typedef long long ustime_t;
 /* Mask of all VALKEYMODULE_OPEN_KEY_* values. Any new mode should be added to this list.
  * Should not be used directly by the module, use RM_GetOpenKeyModesAll instead.
  * Located here so when we will add new modes we will not forget to update it. */
-#define _VALKEYMODULE_OPEN_KEY_ALL                                                                                     \
-    VALKEYMODULE_READ | VALKEYMODULE_WRITE | VALKEYMODULE_OPEN_KEY_NOTOUCH | VALKEYMODULE_OPEN_KEY_NONOTIFY |          \
+#define _VALKEYMODULE_OPEN_KEY_ALL                                                                            \
+    VALKEYMODULE_READ | VALKEYMODULE_WRITE | VALKEYMODULE_OPEN_KEY_NOTOUCH | VALKEYMODULE_OPEN_KEY_NONOTIFY | \
         VALKEYMODULE_OPEN_KEY_NOSTATS | VALKEYMODULE_OPEN_KEY_NOEXPIRE | VALKEYMODULE_OPEN_KEY_NOEFFECTS
 
 /* List push and pop */
@@ -137,11 +137,10 @@ typedef long long ustime_t;
 #define VALKEYMODULE_HASH_EXISTS (1 << 3)
 #define VALKEYMODULE_HASH_COUNT_ALL (1 << 4)
 
-#define VALKEYMODULE_CONFIG_DEFAULT 0             /* This is the default for a module config. */
-#define VALKEYMODULE_CONFIG_IMMUTABLE (1ULL << 0) /* Can this value only be set at startup? */
-#define VALKEYMODULE_CONFIG_SENSITIVE (1ULL << 1) /* Does this value contain sensitive information */
-#define VALKEYMODULE_CONFIG_HIDDEN                                                                                     \
-    (1ULL << 4) /* This config is hidden in `config get <pattern>` (used for tests/debugging) */
+#define VALKEYMODULE_CONFIG_DEFAULT 0                /* This is the default for a module config. */
+#define VALKEYMODULE_CONFIG_IMMUTABLE (1ULL << 0)    /* Can this value only be set at startup? */
+#define VALKEYMODULE_CONFIG_SENSITIVE (1ULL << 1)    /* Does this value contain sensitive information */
+#define VALKEYMODULE_CONFIG_HIDDEN (1ULL << 4)       /* This config is hidden in `config get <pattern>` (used for tests/debugging) */
 #define VALKEYMODULE_CONFIG_PROTECTED (1ULL << 5)    /* Becomes immutable if enable-protected-configs is enabled. */
 #define VALKEYMODULE_CONFIG_DENY_LOADING (1ULL << 6) /* This config is forbidden during loading. */
 
@@ -231,22 +230,21 @@ This flag should not be used directly by the module.
 /* Keyspace changes notification classes. Every class is associated with a
  * character for configuration purposes.
  * NOTE: These have to be in sync with NOTIFY_* in server.h */
-#define VALKEYMODULE_NOTIFY_KEYSPACE (1 << 0) /* K */
-#define VALKEYMODULE_NOTIFY_KEYEVENT (1 << 1) /* E */
-#define VALKEYMODULE_NOTIFY_GENERIC (1 << 2)  /* g */
-#define VALKEYMODULE_NOTIFY_STRING (1 << 3)   /* $ */
-#define VALKEYMODULE_NOTIFY_LIST (1 << 4)     /* l */
-#define VALKEYMODULE_NOTIFY_SET (1 << 5)      /* s */
-#define VALKEYMODULE_NOTIFY_HASH (1 << 6)     /* h */
-#define VALKEYMODULE_NOTIFY_ZSET (1 << 7)     /* z */
-#define VALKEYMODULE_NOTIFY_EXPIRED (1 << 8)  /* x */
-#define VALKEYMODULE_NOTIFY_EVICTED (1 << 9)  /* e */
-#define VALKEYMODULE_NOTIFY_STREAM (1 << 10)  /* t */
-#define VALKEYMODULE_NOTIFY_KEY_MISS                                                                                   \
-    (1 << 11) /* m (Note: This one is excluded from VALKEYMODULE_NOTIFY_ALL on purpose) */
-#define VALKEYMODULE_NOTIFY_LOADED (1 << 12) /* module only key space notification, indicate a key loaded from rdb */
-#define VALKEYMODULE_NOTIFY_MODULE (1 << 13) /* d, module key space notification */
-#define VALKEYMODULE_NOTIFY_NEW (1 << 14)    /* n, new key notification */
+#define VALKEYMODULE_NOTIFY_KEYSPACE (1 << 0)  /* K */
+#define VALKEYMODULE_NOTIFY_KEYEVENT (1 << 1)  /* E */
+#define VALKEYMODULE_NOTIFY_GENERIC (1 << 2)   /* g */
+#define VALKEYMODULE_NOTIFY_STRING (1 << 3)    /* $ */
+#define VALKEYMODULE_NOTIFY_LIST (1 << 4)      /* l */
+#define VALKEYMODULE_NOTIFY_SET (1 << 5)       /* s */
+#define VALKEYMODULE_NOTIFY_HASH (1 << 6)      /* h */
+#define VALKEYMODULE_NOTIFY_ZSET (1 << 7)      /* z */
+#define VALKEYMODULE_NOTIFY_EXPIRED (1 << 8)   /* x */
+#define VALKEYMODULE_NOTIFY_EVICTED (1 << 9)   /* e */
+#define VALKEYMODULE_NOTIFY_STREAM (1 << 10)   /* t */
+#define VALKEYMODULE_NOTIFY_KEY_MISS (1 << 11) /* m (Note: This one is excluded from VALKEYMODULE_NOTIFY_ALL on purpose) */
+#define VALKEYMODULE_NOTIFY_LOADED (1 << 12)   /* module only key space notification, indicate a key loaded from rdb */
+#define VALKEYMODULE_NOTIFY_MODULE (1 << 13)   /* d, module key space notification */
+#define VALKEYMODULE_NOTIFY_NEW (1 << 14)      /* n, new key notification */
 
 /* Next notification flag, must be updated when adding new flags above!
 This flag should not be used directly by the module.
@@ -347,10 +345,9 @@ typedef enum {
 } ValkeyModuleCommandArgType;
 
 #define VALKEYMODULE_CMD_ARG_NONE (0)
-#define VALKEYMODULE_CMD_ARG_OPTIONAL (1 << 0) /* The argument is optional (like GET in SET command) */
-#define VALKEYMODULE_CMD_ARG_MULTIPLE (1 << 1) /* The argument may repeat itself (like key in DEL) */
-#define VALKEYMODULE_CMD_ARG_MULTIPLE_TOKEN                                                                            \
-    (1 << 2) /* The argument may repeat itself, and so does its token (like `GET pattern` in SORT) */
+#define VALKEYMODULE_CMD_ARG_OPTIONAL (1 << 0)       /* The argument is optional (like GET in SET command) */
+#define VALKEYMODULE_CMD_ARG_MULTIPLE (1 << 1)       /* The argument may repeat itself (like key in DEL) */
+#define VALKEYMODULE_CMD_ARG_MULTIPLE_TOKEN (1 << 2) /* The argument may repeat itself, and so does its token (like `GET pattern` in SORT) */
 #define _VALKEYMODULE_CMD_ARG_NEXT (1 << 3)
 
 typedef enum {
@@ -786,6 +783,7 @@ typedef enum {
 } ValkeyModuleACLLogEntryReason;
 
 /* Incomplete structures needed by both the core and modules. */
+typedef struct ValkeyModuleCtx ValkeyModuleCtx;
 typedef struct ValkeyModuleIO ValkeyModuleIO;
 typedef struct ValkeyModuleDigest ValkeyModuleDigest;
 typedef struct ValkeyModuleInfoCtx ValkeyModuleInfoCtx;
@@ -796,6 +794,93 @@ typedef struct ValkeyModuleDefragCtx ValkeyModuleDefragCtx;
 typedef void (*ValkeyModuleInfoFunc)(ValkeyModuleInfoCtx *ctx, int for_crash_report);
 typedef void (*ValkeyModuleDefragFunc)(ValkeyModuleDefragCtx *ctx);
 typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
+
+/* Current ABI version for scripting engine modules. */
+#define VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION 1UL
+
+/* Type definitions for implementing scripting engines modules. */
+typedef void ValkeyModuleScriptingEngineCtx;
+typedef void ValkeyModuleScriptingEngineFunctionCtx;
+
+/* This struct represents a scripting engine function that results from the
+ * compilation of a script by the engine implementation.
+ *
+ * IMPORTANT: If we ever need to add/remove fields from this struct, we need
+ * to bump the version number defined in the
+ * `VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION` constant.
+ */
+typedef struct ValkeyModuleScriptingEngineCompiledFunction {
+    ValkeyModuleString *name; /* Function name */
+    void *function;           /* Opaque object representing a function, usually it'
+                                 the function compiled code. */
+    ValkeyModuleString *desc; /* Function description */
+    uint64_t f_flags;         /* Function flags */
+} ValkeyModuleScriptingEngineCompiledFunction;
+
+/* This struct is used to return the memory information of the scripting
+ * engine. */
+typedef struct ValkeyModuleScriptingEngineMemoryInfo {
+    /* The memory used by the scripting engine runtime. */
+    size_t used_memory;
+    /* The memory used by the scripting engine data structures. */
+    size_t engine_memory_overhead;
+} ValkeyModuleScriptingEngineMemoryInfo;
+
+typedef ValkeyModuleScriptingEngineCompiledFunction **(*ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    const char *code,
+    size_t timeout,
+    size_t *out_num_compiled_functions,
+    char **err);
+
+typedef void (*ValkeyModuleScriptingEngineCallFunctionFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    ValkeyModuleScriptingEngineFunctionCtx *func_ctx,
+    void *compiled_function,
+    ValkeyModuleString **keys,
+    size_t nkeys,
+    ValkeyModuleString **args,
+    size_t nargs);
+
+typedef size_t (*ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc)(
+    ValkeyModuleCtx *module_ctx,
+    void *compiled_function);
+
+typedef void (*ValkeyModuleScriptingEngineFreeFunctionFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx,
+    void *compiled_function);
+
+typedef ValkeyModuleScriptingEngineMemoryInfo (*ValkeyModuleScriptingEngineGetMemoryInfoFunc)(
+    ValkeyModuleCtx *module_ctx,
+    ValkeyModuleScriptingEngineCtx *engine_ctx);
+
+typedef struct ValkeyModuleScriptingEngineMethodsV1 {
+    uint64_t version; /* Version of this structure for ABI compat. */
+
+    /* Library create function callback. When a new script is loaded, this
+     * callback will be called with the script code, and returns a list of
+     * ValkeyModuleScriptingEngineCompiledFunc objects. */
+    ValkeyModuleScriptingEngineCreateFunctionsLibraryFunc create_functions_library;
+
+    /* Function callback to free the memory of a registered engine function. */
+    ValkeyModuleScriptingEngineFreeFunctionFunc free_function;
+
+    /* The callback function called when `FCALL` command is called on a function
+     * registered in this engine. */
+    ValkeyModuleScriptingEngineCallFunctionFunc call_function;
+
+    /* Function callback to return memory overhead for a given function. */
+    ValkeyModuleScriptingEngineGetFunctionMemoryOverheadFunc get_function_memory_overhead;
+
+    /* Function callback to get the used memory by the engine. */
+    ValkeyModuleScriptingEngineGetMemoryInfoFunc get_memory_info;
+
+} ValkeyModuleScriptingEngineMethodsV1;
+
+#define ValkeyModuleScriptingEngineMethods ValkeyModuleScriptingEngineMethodsV1
 
 /* ------------------------- End of common defines ------------------------ */
 
@@ -829,7 +914,6 @@ typedef void (*ValkeyModuleUserChangedFunc)(uint64_t client_id, void *privdata);
 #endif
 
 /* Incomplete structures for compiler checks but opaque access. */
-typedef struct ValkeyModuleCtx ValkeyModuleCtx;
 typedef struct ValkeyModuleCommand ValkeyModuleCommand;
 typedef struct ValkeyModuleCallReply ValkeyModuleCallReply;
 typedef struct ValkeyModuleType ValkeyModuleType;
@@ -970,6 +1054,7 @@ VALKEYMODULE_API void (*ValkeyModule_SetModuleAttribs)(ValkeyModuleCtx *ctx, con
     VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_IsModuleNameBusy)(const char *name) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_WrongArity)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
+VALKEYMODULE_API int (*ValkeyModule_UpdateRuntimeArgs)(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_ReplyWithLongLong)(ValkeyModuleCtx *ctx, long long ll) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_GetSelectedDb)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_SelectDb)(ValkeyModuleCtx *ctx, int newid) VALKEYMODULE_ATTR;
@@ -1652,6 +1737,14 @@ VALKEYMODULE_API int (*ValkeyModule_RdbSave)(ValkeyModuleCtx *ctx,
                                              ValkeyModuleRdbStream *stream,
                                              int flags) VALKEYMODULE_ATTR;
 
+VALKEYMODULE_API int (*ValkeyModule_RegisterScriptingEngine)(ValkeyModuleCtx *module_ctx,
+                                                             const char *engine_name,
+                                                             ValkeyModuleScriptingEngineCtx *engine_ctx,
+                                                             ValkeyModuleScriptingEngineMethods *engine_methods) VALKEYMODULE_ATTR;
+
+VALKEYMODULE_API int (*ValkeyModule_UnregisterScriptingEngine)(ValkeyModuleCtx *module_ctx,
+                                                               const char *engine_name) VALKEYMODULE_ATTR;
+
 #define ValkeyModule_IsAOFClient(id) ((id) == UINT64_MAX)
 
 /* This is included inline inside each Valkey module. */
@@ -1676,6 +1769,7 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(SetModuleAttribs);
     VALKEYMODULE_GET_API(IsModuleNameBusy);
     VALKEYMODULE_GET_API(WrongArity);
+    VALKEYMODULE_GET_API(UpdateRuntimeArgs);
     VALKEYMODULE_GET_API(ReplyWithLongLong);
     VALKEYMODULE_GET_API(ReplyWithError);
     VALKEYMODULE_GET_API(ReplyWithErrorFormat);
@@ -2018,6 +2112,8 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(RdbStreamFree);
     VALKEYMODULE_GET_API(RdbLoad);
     VALKEYMODULE_GET_API(RdbSave);
+    VALKEYMODULE_GET_API(RegisterScriptingEngine);
+    VALKEYMODULE_GET_API(UnregisterScriptingEngine);
 
     if (ValkeyModule_IsModuleNameBusy && ValkeyModule_IsModuleNameBusy(name)) return VALKEYMODULE_ERR;
     ValkeyModule_SetModuleAttribs(ctx, name, ver, apiver);

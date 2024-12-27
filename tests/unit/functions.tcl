@@ -246,6 +246,8 @@ start_server {tags {"scripting"}} {
         r function kill
         after 200 ; # Give some time to Lua to call the hook again...
         assert_equal [r ping] "PONG"
+        assert_error {ERR Script killed by user with FUNCTION KILL*} {$rd read}
+        $rd close
     }
 
     test {FUNCTION - test script kill not working on function} {
@@ -261,6 +263,8 @@ start_server {tags {"scripting"}} {
         r function kill
         after 200 ; # Give some time to Lua to call the hook again...
         assert_equal [r ping] "PONG"
+        assert_error {ERR Script killed by user with FUNCTION KILL*} {$rd read}
+        $rd close
     }
 
     test {FUNCTION - test function kill not working on eval} {
@@ -275,6 +279,8 @@ start_server {tags {"scripting"}} {
         r script kill
         after 200 ; # Give some time to Lua to call the hook again...
         assert_equal [r ping] "PONG"
+        assert_error {ERR Script killed by user with SCRIPT KILL*} {$rd read}
+        $rd close
     }
 
     test {FUNCTION - test function flush} {
@@ -598,7 +604,7 @@ start_server {tags {"scripting"}} {
             }
         } e
         set _ $e
-    } {*Library names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
+    } {*Function names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
 
     test {LIBRARIES - test registration with empty name} {
         catch {
@@ -607,7 +613,7 @@ start_server {tags {"scripting"}} {
             }
         } e
         set _ $e
-    } {*Library names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
+    } {*Function names can only contain letters, numbers, or underscores(_) and must be at least one character long*}
 
     test {LIBRARIES - math.random from function load} {
         catch {

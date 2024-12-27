@@ -79,9 +79,8 @@
 #define RDB_TYPE_HASH 4
 #define RDB_TYPE_ZSET_2 5        /* ZSET version 2 with doubles stored in binary. */
 #define RDB_TYPE_MODULE_PRE_GA 6 /* Used in 4.0 release candidates */
-#define RDB_TYPE_MODULE_2                                                                                              \
-    7 /* Module value with annotations for parsing without                                                             \
-         the generating module being loaded. */
+#define RDB_TYPE_MODULE_2 7      /* Module value with annotations for parsing without \
+                                    the generating module being loaded. */
 #define RDB_TYPE_HASH_ZIPMAP 9
 #define RDB_TYPE_LIST_ZIPLIST 10
 #define RDB_TYPE_SET_INTSET 11
@@ -173,7 +172,7 @@ int rdbLoadBinaryDoubleValue(rio *rdb, double *val);
 int rdbSaveBinaryFloatValue(rio *rdb, float val);
 int rdbLoadBinaryFloatValue(rio *rdb, float *val);
 int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi);
-int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx);
+int rdbLoadRioWithLoadingCtxScopedRdb(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx);
 int rdbFunctionLoad(rio *rdb, int ver, functionsLibCtx *lib_ctx, int rdbflags, sds *err);
 int rdbSaveRio(int req, rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi);
 ssize_t rdbSaveFunctions(rio *rdb);
