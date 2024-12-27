@@ -4538,7 +4538,7 @@ int clusterGetFailedPrimaryRank(void) {
                 continue;
         }
 
-        if (memcmp(node->name, myself->replicaof->name, CLUSTER_NAMELEN) < 0) rank++;
+        if (memcmp(node->shard_id, myself->replicaof->shard_id, CLUSTER_NAMELEN) < 0) rank++;
     }
     dictReleaseIterator(di);
 
