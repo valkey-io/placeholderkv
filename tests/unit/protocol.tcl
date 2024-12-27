@@ -255,6 +255,14 @@ start_server {tags {"protocol hello"}} {
 
         set reply [r HELLO 2]
         assert_equal [dict get $reply availability_zone] myzone
+
+        r CONFIG SET availability-zone ""
+
+        set reply [r HELLO 3]
+        assert_equal [dict exists $reply availability_zone] 0
+
+        set reply [r HELLO 2]
+        assert_equal [dict exists $reply availability_zone] 0
     }
 }
 
