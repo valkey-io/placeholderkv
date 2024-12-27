@@ -154,37 +154,6 @@ start_server {tags {"tracking network logreqres:skip"}} {
         assert_equal [dict get $reply proto] 3
     }
 
-    test {HELLO without protover} {
-        set reply [r HELLO 3]
-        assert_equal [dict get $reply proto] 3
-
-        set reply [r HELLO]
-        assert_equal [dict get $reply proto] 3
-
-        set reply [r HELLO 2]
-        assert_equal [dict get $reply proto] 2
-
-        set reply [r HELLO]
-        assert_equal [dict get $reply proto] 2
-
-        # restore RESP3 for next test
-        r HELLO 3
-    }
-
-    test {HELLO with availability-zone} {
-        r CONFIG SET availability-zone myzone
-
-        set reply [r HELLO 3]
-        assert_equal [dict get $reply availability_zone] myzone
-
-        set reply [r HELLO 2]
-        assert_equal [dict get $reply availability_zone] myzone
-
-        # restore for next test
-        r HELLO 3
-        r CONFIG SET availability-zone ""
-    }
-
     test {RESP3 based basic invalidation} {
         r CLIENT TRACKING off
         r CLIENT TRACKING on

@@ -232,6 +232,32 @@ start_server {tags {"protocol network"}} {
 
 }
 
+start_server {tags {"protocol hello"}} {
+    test {HELLO without protover} {
+        set reply [r HELLO 3]
+        assert_equal [dict get $reply proto] 3
+
+        set reply [r HELLO]
+        assert_equal [dict get $reply proto] 3
+
+        set reply [r HELLO 2]
+        assert_equal [dict get $reply proto] 2
+
+        set reply [r HELLO]
+        assert_equal [dict get $reply proto] 2
+    }
+
+    test {HELLO and availability-zone} {
+        r CONFIG SET availability-zone myzone
+
+        set reply [r HELLO 3]
+        assert_equal [dict get $reply availability_zone] myzone
+
+        set reply [r HELLO 2]
+        assert_equal [dict get $reply availability_zone] myzone
+    }
+}
+
 start_server {tags {"regression"}} {
     test "Regression for a crash with blocking ops and pipelining" {
         set rd [valkey_deferring_client]
