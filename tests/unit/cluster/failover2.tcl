@@ -86,6 +86,11 @@ start_cluster 7 3 {tags {external:skip cluster} overrides {cluster-ping-interval
             fail "No failover detected"
         }
 
+        # Make sure there is no false epoch 0.
+        verify_no_log_message -7 "*Failover election in progress for epoch 0*" 0
+        verify_no_log_message -8 "*Failover election in progress for epoch 0*" 0
+        verify_no_log_message -9 "*Failover election in progress for epoch 0*" 0
+
         # Make sure there is no failover timeout.
         verify_no_log_message -7 "*Failover attempt expired*" 0
         verify_no_log_message -8 "*Failover attempt expired*" 0

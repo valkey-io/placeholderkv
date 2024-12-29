@@ -77,10 +77,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-      - name: make
+      - name: prepare-development-libraries
+        run: sudo apt-get install librdmacm-dev libibverbs-dev
+      - name: make-rdma-module
+        run: make -j4 BUILD_RDMA=module
+      - name: make-rdma-builtin
         run: |
-          sudo apt-get install librdmacm-dev libibverbs-dev
-          make -j4 BUILD_RDMA=module
+          make distclean
+          make -j4 BUILD_RDMA=yes
       - name: clone-rxe-kmod
         run: |
           mkdir -p tests/rdma/rxe

@@ -1258,15 +1258,15 @@ static void luaLoadLibraries(lua_State *lua) {
 
 /* Return sds of the string value located on stack at the given index.
  * Return NULL if the value is not a string. */
-sds luaGetStringSds(lua_State *lua, int index) {
+robj *luaGetStringObject(lua_State *lua, int index) {
     if (!lua_isstring(lua, index)) {
         return NULL;
     }
 
     size_t len;
     const char *str = lua_tolstring(lua, index, &len);
-    sds str_sds = sdsnewlen(str, len);
-    return str_sds;
+    robj *str_obj = createStringObject(str, len);
+    return str_obj;
 }
 
 static int luaProtectedTableError(lua_State *lua) {

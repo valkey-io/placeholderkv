@@ -9,65 +9,16 @@
 
 #include "memory_prefetch.h"
 #include "server.h"
-#include "dict.h"
-
-/* Forward declarations of dict.c functions */
-dictEntry *dictGetNext(const dictEntry *de);
-
-/* Forward declarations of kvstore.c functions */
-dict *kvstoreGetDict(kvstore *kvs, int didx);
 
 typedef enum {
-    HT_IDX_FIRST = 0,
-    HT_IDX_SECOND = 1,
-    HT_IDX_INVALID = -1
-} HashTableIndex;
-
-typedef enum {
-    PREFETCH_BUCKET,     /* Initial state, determines which hash table to use and prefetch the table's bucket */
-    PREFETCH_ENTRY,      /* prefetch entries associated with the given key's hash */
-    PREFETCH_VALUE,      /* prefetch the value object of the entry found in the previous step */
-    PREFETCH_VALUE_DATA, /* prefetch the value object's data (if applicable) */
-    PREFETCH_DONE        /* Indicates that prefetching for this key is complete */
+    PREFETCH_ENTRY, /* Initial state, prefetch entries associated with the given key's hash */
+    PREFETCH_VALUE, /* prefetch the value object of the entry found in the previous step */
+    PREFETCH_DONE   /* Indicates that prefetching for this key is complete */
 } PrefetchState;
 
-
-/************************************ State machine diagram for the prefetch operation. ********************************
-                                                           │
-                                                         start
-                                                           │
-                                                  ┌────────▼─────────┐
-                                       ┌─────────►│  PREFETCH_BUCKET ├────►────────┐
-                                       │          └────────┬─────────┘            no more tables -> done
-                                       |             bucket|found                  |
-                                       │                   |                       │
-        entry not found - goto next table         ┌────────▼────────┐              │
-                                       └────◄─────┤ PREFETCH_ENTRY  |              ▼
-                                    ┌────────────►└────────┬────────┘              │
-                                    |                 Entry│found                  │
-                                    │                      |                       │
-       value not found - goto next entry           ┌───────▼────────┐              |
-                                    └───────◄──────┤ PREFETCH_VALUE |              ▼
-                                                   └───────┬────────┘              │
-                                                      Value│found                  │
-                                                           |                       |
-                                               ┌───────────▼──────────────┐        │
-                                               │    PREFETCH_VALUE_DATA   │        ▼
-                                               └───────────┬──────────────┘        │
-                                                           |                       │
-                                                 ┌───────-─▼─────────────┐         │
-                                                 │     PREFETCH_DONE     │◄────────┘
-                                                 └───────────────────────┘
-**********************************************************************************************************************/
-
-typedef void *(*GetValueDataFunc)(const void *val);
-
 typedef struct KeyPrefetchInfo {
-    PrefetchState state;      /* Current state of the prefetch operation */
-    HashTableIndex ht_idx;    /* Index of the current hash table (0 or 1 for rehashing) */
-    uint64_t bucket_idx;      /* Index of the bucket in the current hash table */
-    uint64_t key_hash;        /* Hash value of the key being prefetched */
-    dictEntry *current_entry; /* Pointer to the current entry being processed */
+    PrefetchState state; /* Current state of the prefetch operation */
+    hashtableIncrementalFindState hashtab_state;
 } KeyPrefetchInfo;
 
 /* PrefetchCommandsBatch structure holds the state of the current batch of client commands being processed. */
@@ -81,9 +32,7 @@ typedef struct PrefetchCommandsBatch {
     int *slots;                     /* Array of slots for each key */
     void **keys;                    /* Array of keys to prefetch in the current batch */
     client **clients;               /* Array of clients in the current batch */
-    dict **keys_dicts;              /* Main dict for each key */
-    dict **expire_dicts;            /* Expire dict for each key */
-    dict **current_dicts;           /* Points to either keys_dicts or expire_dicts */
+    hashtable **keys_tables;        /* Main table for each key */
     KeyPrefetchInfo *prefetch_info; /* Prefetch info for each key */
 } PrefetchCommandsBatch;
 
@@ -96,8 +45,7 @@ void freePrefetchCommandsBatch(void) {
 
     zfree(batch->clients);
     zfree(batch->keys);
-    zfree(batch->keys_dicts);
-    zfree(batch->expire_dicts);
+    zfree(batch->keys_tables);
     zfree(batch->slots);
     zfree(batch->prefetch_info);
     zfree(batch);
@@ -116,8 +64,7 @@ void prefetchCommandsBatchInit(void) {
     batch->max_prefetch_size = max_prefetch_size;
     batch->clients = zcalloc(max_prefetch_size * sizeof(client *));
     batch->keys = zcalloc(max_prefetch_size * sizeof(void *));
-    batch->keys_dicts = zcalloc(max_prefetch_size * sizeof(dict *));
-    batch->expire_dicts = zcalloc(max_prefetch_size * sizeof(dict *));
+    batch->keys_tables = zcalloc(max_prefetch_size * sizeof(hashtable *));
     batch->slots = zcalloc(max_prefetch_size * sizeof(int));
     batch->prefetch_info = zcalloc(max_prefetch_size * sizeof(KeyPrefetchInfo));
 }
@@ -132,10 +79,8 @@ void onMaxBatchSizeChange(void) {
     prefetchCommandsBatchInit();
 }
 
-/* Prefetch the given pointer and move to the next key in the batch. */
-static void prefetchAndMoveToNextKey(void *addr) {
-    valkey_prefetch(addr);
-    /* While the prefetch is in progress, we can continue to the next key */
+/* Move to the next key in the batch. */
+static void moveToNextKey(void) {
     batch->cur_idx = (batch->cur_idx + 1) % batch->key_count;
 }
 
@@ -156,142 +101,62 @@ static KeyPrefetchInfo *getNextPrefetchInfo(void) {
     return NULL;
 }
 
-static void initBatchInfo(dict **dicts) {
-    batch->current_dicts = dicts;
-
+static void initBatchInfo(hashtable **tables) {
     /* Initialize the prefetch info */
     for (size_t i = 0; i < batch->key_count; i++) {
         KeyPrefetchInfo *info = &batch->prefetch_info[i];
-        if (!batch->current_dicts[i] || dictSize(batch->current_dicts[i]) == 0) {
+        if (!tables[i] || hashtableSize(tables[i]) == 0) {
             info->state = PREFETCH_DONE;
             batch->keys_done++;
             continue;
         }
-        info->ht_idx = HT_IDX_INVALID;
-        info->current_entry = NULL;
-        info->state = PREFETCH_BUCKET;
-        info->key_hash = dictHashKey(batch->current_dicts[i], batch->keys[i]);
-    }
-}
-
-/* Prefetch the bucket of the next hash table index.
- * If no tables are left, move to the PREFETCH_DONE state. */
-static void prefetchBucket(KeyPrefetchInfo *info) {
-    size_t i = batch->cur_idx;
-
-    /* Determine which hash table to use */
-    if (info->ht_idx == HT_IDX_INVALID) {
-        info->ht_idx = HT_IDX_FIRST;
-    } else if (info->ht_idx == HT_IDX_FIRST && dictIsRehashing(batch->current_dicts[i])) {
-        info->ht_idx = HT_IDX_SECOND;
-    } else {
-        /* No more tables left - mark as done. */
-        markKeyAsdone(info);
-        return;
-    }
-
-    /* Prefetch the bucket */
-    info->bucket_idx = info->key_hash & DICTHT_SIZE_MASK(batch->current_dicts[i]->ht_size_exp[info->ht_idx]);
-    prefetchAndMoveToNextKey(&batch->current_dicts[i]->ht_table[info->ht_idx][info->bucket_idx]);
-    info->current_entry = NULL;
-    info->state = PREFETCH_ENTRY;
-}
-
-/* Prefetch the next entry in the bucket and move to the PREFETCH_VALUE state.
- * If no more entries in the bucket, move to the PREFETCH_BUCKET state to look at the next table. */
-static void prefetchEntry(KeyPrefetchInfo *info) {
-    size_t i = batch->cur_idx;
-
-    if (info->current_entry) {
-        /* We already found an entry in the bucket - move to the next entry */
-        info->current_entry = dictGetNext(info->current_entry);
-    } else {
-        /* Go to the first entry in the bucket */
-        info->current_entry = batch->current_dicts[i]->ht_table[info->ht_idx][info->bucket_idx];
-    }
-
-    if (info->current_entry) {
-        prefetchAndMoveToNextKey(info->current_entry);
-        info->state = PREFETCH_VALUE;
-    } else {
-        /* No entry found in the bucket - try the bucket in the next table */
-        info->state = PREFETCH_BUCKET;
-    }
-}
-
-/* Prefetch the entry's value. If the value is found, move to the PREFETCH_VALUE_DATA state.
- * If the value is not found, move to the PREFETCH_ENTRY state to look at the next entry in the bucket. */
-static void prefetchValue(KeyPrefetchInfo *info) {
-    size_t i = batch->cur_idx;
-    void *value = dictGetVal(info->current_entry);
-
-    if (dictGetNext(info->current_entry) == NULL && !dictIsRehashing(batch->current_dicts[i])) {
-        /* If this is the last element, we assume a hit and don't compare the keys */
-        prefetchAndMoveToNextKey(value);
-        info->state = PREFETCH_VALUE_DATA;
-        return;
-    }
-
-    void *current_entry_key = dictGetKey(info->current_entry);
-    if (batch->keys[i] == current_entry_key ||
-        dictCompareKeys(batch->current_dicts[i], batch->keys[i], current_entry_key)) {
-        /* If the key is found, prefetch the value */
-        prefetchAndMoveToNextKey(value);
-        info->state = PREFETCH_VALUE_DATA;
-    } else {
-        /* Move to the next entry */
         info->state = PREFETCH_ENTRY;
+        hashtableIncrementalFindInit(&info->hashtab_state, tables[i], batch->keys[i]);
     }
 }
 
-/* Prefetch the value data if available. */
-static void prefetchValueData(KeyPrefetchInfo *info, GetValueDataFunc get_val_data_func) {
-    if (get_val_data_func) {
-        void *value_data = get_val_data_func(dictGetVal(info->current_entry));
-        if (value_data) prefetchAndMoveToNextKey(value_data);
+static void prefetchEntry(KeyPrefetchInfo *info) {
+    if (hashtableIncrementalFindStep(&info->hashtab_state) == 1) {
+        /* Not done yet */
+        moveToNextKey();
+    } else {
+        info->state = PREFETCH_VALUE;
     }
+}
+
+/* Prefetch the entry's value. If the value is found.*/
+static void prefetchValue(KeyPrefetchInfo *info) {
+    void *entry;
+    if (hashtableIncrementalFindGetResult(&info->hashtab_state, &entry)) {
+        robj *val = entry;
+        if (val->encoding == OBJ_ENCODING_RAW && val->type == OBJ_STRING) {
+            valkey_prefetch(val->ptr);
+        }
+    }
+
     markKeyAsdone(info);
 }
 
-/* Prefetch dictionary data for an array of keys.
+/* Prefetch hashtable data for an array of keys.
  *
- * This function takes an array of dictionaries and keys, attempting to bring
- * data closer to the L1 cache that might be needed for dictionary operations
+ * This function takes an array of tables and keys, attempting to bring
+ * data closer to the L1 cache that might be needed for hashtable operations
  * on those keys.
  *
- * The dictFind algorithm:
- * 1. Evaluate the hash of the key
- * 2. Access the index in the first table
- * 3. Walk the entries linked list until the key is found
- *    If the key hasn't been found and the dictionary is in the middle of rehashing,
- *    access the index on the second table and repeat step 3
- *
- * dictPrefetch executes the same algorithm as dictFind, but one step at a time
- * for each key. Instead of waiting for data to be read from memory, it prefetches
- * the data and then moves on to execute the next prefetch for another key.
- *
- * dicts - An array of dictionaries to prefetch data from.
- * get_val_data_func - A callback function that dictPrefetch can invoke
+ * tables - An array of hashtables to prefetch data from.
+ * prefetch_value - If true, we prefetch the value data for each key.
  * to bring the key's value data closer to the L1 cache as well.
  */
-static void dictPrefetch(dict **dicts, GetValueDataFunc get_val_data_func) {
-    initBatchInfo(dicts);
+static void hashtablePrefetch(hashtable **tables) {
+    initBatchInfo(tables);
     KeyPrefetchInfo *info;
     while ((info = getNextPrefetchInfo())) {
         switch (info->state) {
-        case PREFETCH_BUCKET: prefetchBucket(info); break;
         case PREFETCH_ENTRY: prefetchEntry(info); break;
         case PREFETCH_VALUE: prefetchValue(info); break;
-        case PREFETCH_VALUE_DATA: prefetchValueData(info, get_val_data_func); break;
         default: serverPanic("Unknown prefetch state %d", info->state);
         }
     }
-}
-
-/* Helper function to get the value pointer of an object. */
-static void *getObjectValuePtr(const void *val) {
-    robj *o = (robj *)val;
-    return (o->type == OBJ_STRING && o->encoding == OBJ_ENCODING_RAW) ? o->ptr : NULL;
 }
 
 static void resetCommandsBatch(void) {
@@ -304,7 +169,7 @@ static void resetCommandsBatch(void) {
 
 /* Prefetch command-related data:
  * 1. Prefetch the command arguments allocated by the I/O thread to bring them closer to the L1 cache.
- * 2. Prefetch the keys and values for all commands in the current batch from the main and expires dictionaries. */
+ * 2. Prefetch the keys and values for all commands in the current batch from the main hashtable. */
 static void prefetchCommands(void) {
     /* Prefetch argv's for all clients */
     for (size_t i = 0; i < batch->client_count; i++) {
@@ -332,13 +197,11 @@ static void prefetchCommands(void) {
         batch->keys[i] = ((robj *)batch->keys[i])->ptr;
     }
 
-    /* Prefetch dict keys for all commands. Prefetching is beneficial only if there are more than one key. */
+    /* Prefetch hashtable keys for all commands. Prefetching is beneficial only if there are more than one key. */
     if (batch->key_count > 1) {
         server.stat_total_prefetch_batches++;
-        /* Prefetch keys from the main dict */
-        dictPrefetch(batch->keys_dicts, getObjectValuePtr);
-        /* Prefetch keys from the expires dict - no value data to prefetch */
-        dictPrefetch(batch->expire_dicts, NULL);
+        /* Prefetch keys from the main hashtable */
+        hashtablePrefetch(batch->keys_tables);
     }
 }
 
@@ -388,8 +251,7 @@ int addCommandToBatchAndProcessIfFull(client *c) {
         for (int i = 0; i < num_keys && batch->key_count < batch->max_prefetch_size; i++) {
             batch->keys[batch->key_count] = c->argv[result.keys[i].pos];
             batch->slots[batch->key_count] = c->slot > 0 ? c->slot : 0;
-            batch->keys_dicts[batch->key_count] = kvstoreGetDict(c->db->keys, batch->slots[batch->key_count]);
-            batch->expire_dicts[batch->key_count] = kvstoreGetDict(c->db->expires, batch->slots[batch->key_count]);
+            batch->keys_tables[batch->key_count] = kvstoreGetHashtable(c->db->keys, batch->slots[batch->key_count]);
             batch->key_count++;
         }
         getKeysFreeResult(&result);

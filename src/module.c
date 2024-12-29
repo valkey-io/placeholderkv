@@ -62,6 +62,7 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
+#include "functions.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -718,7 +719,7 @@ int moduleCreateEmptyKey(ValkeyModuleKey *key, int type) {
     case VALKEYMODULE_KEYTYPE_STREAM: obj = createStreamObject(); break;
     default: return VALKEYMODULE_ERR;
     }
-    dbAdd(key->db, key->key, obj);
+    dbAdd(key->db, key->key, &obj);
     key->value = obj;
     moduleInitKeyTypeSpecific(key);
     return VALKEYMODULE_OK;
@@ -879,6 +880,15 @@ void moduleCallCommandUnblockedHandler(client *c) {
     moduleReleaseTempClient(c);
 }
 
+/* Allocates the memory necessary to hold the ValkeyModuleCtx structure, and
+ * returns the pointer to the allocated memory.
+ *
+ * Used by the scripting engines implementation to cache the context structure.
+ */
+ValkeyModuleCtx *moduleAllocateContext(void) {
+    return (ValkeyModuleCtx *)zcalloc(sizeof(ValkeyModuleCtx));
+}
+
 /* Create a module ctx and keep track of the nesting level.
  *
  * Note: When creating ctx for threads (VM_GetThreadSafeContext and
@@ -919,6 +929,16 @@ void moduleCreateContext(ValkeyModuleCtx *out_ctx, ValkeyModule *module, int ctx
     if (!(ctx_flags & (VALKEYMODULE_CTX_THREAD_SAFE | VALKEYMODULE_CTX_COMMAND))) {
         enterExecutionUnit(1, 0);
     }
+}
+
+/* Initialize a module context to be used by scripting engines callback
+ * functions.
+ */
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
+                                      ValkeyModule *module,
+                                      client *client) {
+    moduleCreateContext(out_ctx, module, VALKEYMODULE_CTX_NONE);
+    out_ctx->client = client;
 }
 
 /* This command binds the normal command invocation with commands
@@ -1298,8 +1318,8 @@ int VM_CreateCommand(ValkeyModuleCtx *ctx,
     cp->serverCmd->arity = cmdfunc ? -1 : -2; /* Default value, can be changed later via dedicated API */
     /* Drain IO queue before modifying commands dictionary to prevent concurrent access while modifying it. */
     drainIOThreadsQueue();
-    serverAssert(dictAdd(server.commands, sdsdup(declared_name), cp->serverCmd) == DICT_OK);
-    serverAssert(dictAdd(server.orig_commands, sdsdup(declared_name), cp->serverCmd) == DICT_OK);
+    serverAssert(hashtableAdd(server.commands, cp->serverCmd));
+    serverAssert(hashtableAdd(server.orig_commands, cp->serverCmd));
     cp->serverCmd->id = ACLGetCommandID(declared_name); /* ID used for ACL. */
     return VALKEYMODULE_OK;
 }
@@ -1431,7 +1451,7 @@ int VM_CreateSubcommand(ValkeyModuleCommand *parent,
 
     /* Check if the command name is busy within the parent command. */
     sds declared_name = sdsnew(name);
-    if (parent_cmd->subcommands_dict && lookupSubcommand(parent_cmd, declared_name) != NULL) {
+    if (parent_cmd->subcommands_ht && lookupSubcommand(parent_cmd, declared_name) != NULL) {
         sdsfree(declared_name);
         return VALKEYMODULE_ERR;
     }
@@ -1441,7 +1461,7 @@ int VM_CreateSubcommand(ValkeyModuleCommand *parent,
         moduleCreateCommandProxy(parent->module, declared_name, fullname, cmdfunc, flags, firstkey, lastkey, keystep);
     cp->serverCmd->arity = -2;
 
-    commandAddSubcommand(parent_cmd, cp->serverCmd, name);
+    commandAddSubcommand(parent_cmd, cp->serverCmd);
     return VALKEYMODULE_OK;
 }
 
@@ -2253,6 +2273,27 @@ int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd) {
     if (module_handle == NULL) return 0;
     ValkeyModuleCommand *cp = cmd->module_cmd;
     return (cp->module == module_handle);
+}
+
+/* ValkeyModule_UpdateRuntimeArgs can be used to update the module argument values.
+ * The function parameter 'argc' indicates the number of updated arguments, and 'argv'
+ * represents the values of the updated arguments.
+ * Once 'CONFIG REWRITE' command is called, the updated argument values can be saved into conf file.
+ *
+ * The function always returns VALKEYMODULE_OK. */
+int VM_UpdateRuntimeArgs(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc) {
+    struct moduleLoadQueueEntry *loadmod = ctx->module->loadmod;
+    for (int i = 0; i < loadmod->argc; i++) {
+        decrRefCount(loadmod->argv[i]);
+    }
+    zfree(loadmod->argv);
+    loadmod->argv = argc - 1 ? zmalloc(sizeof(robj *) * (argc - 1)) : NULL;
+    loadmod->argc = argc - 1;
+    for (int i = 1; i < argc; i++) {
+        loadmod->argv[i - 1] = argv[i];
+        incrRefCount(loadmod->argv[i - 1]);
+    }
+    return VALKEYMODULE_OK;
 }
 
 /* --------------------------------------------------------------------------
@@ -4175,7 +4216,7 @@ int VM_SetExpire(ValkeyModuleKey *key, mstime_t expire) {
         return VALKEYMODULE_ERR;
     if (expire != VALKEYMODULE_NO_EXPIRE) {
         expire += commandTimeSnapshot();
-        setExpire(key->ctx->client, key->db, key->key, expire);
+        key->value = setExpire(key->ctx->client, key->db, key->key, expire);
     } else {
         removeExpire(key->db, key->key);
     }
@@ -4204,7 +4245,7 @@ int VM_SetAbsExpire(ValkeyModuleKey *key, mstime_t expire) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->value == NULL || (expire < 0 && expire != VALKEYMODULE_NO_EXPIRE))
         return VALKEYMODULE_ERR;
     if (expire != VALKEYMODULE_NO_EXPIRE) {
-        setExpire(key->ctx->client, key->db, key->key, expire);
+        key->value = setExpire(key->ctx->client, key->db, key->key, expire);
     } else {
         removeExpire(key->db, key->key);
     }
@@ -4265,7 +4306,9 @@ int VM_GetToDbIdFromOptCtx(ValkeyModuleKeyOptCtx *ctx) {
 int VM_StringSet(ValkeyModuleKey *key, ValkeyModuleString *str) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->iter) return VALKEYMODULE_ERR;
     VM_DeleteKey(key);
-    setKey(key->ctx->client, key->db, key->key, str, SETKEY_NO_SIGNAL);
+    /* Retain str so setKey copies it to db rather than reallocating it. */
+    incrRefCount(str);
+    setKey(key->ctx->client, key->db, key->key, &str, SETKEY_NO_SIGNAL);
     key->value = str;
     return VALKEYMODULE_OK;
 }
@@ -4345,9 +4388,8 @@ int VM_StringTruncate(ValkeyModuleKey *key, size_t newlen) {
     if (key->value == NULL) {
         /* Empty key: create it with the new size. */
         robj *o = createObject(OBJ_STRING, sdsnewlen(NULL, newlen));
-        setKey(key->ctx->client, key->db, key->key, o, SETKEY_NO_SIGNAL);
+        setKey(key->ctx->client, key->db, key->key, &o, SETKEY_NO_SIGNAL);
         key->value = o;
-        decrRefCount(o);
     } else {
         /* Unshare and resize. */
         key->value = dbUnshareStringValue(key->db, key->key, key->value);
@@ -6912,8 +6954,7 @@ int VM_ModuleTypeSetValue(ValkeyModuleKey *key, moduleType *mt, void *value) {
     if (!(key->mode & VALKEYMODULE_WRITE) || key->iter) return VALKEYMODULE_ERR;
     VM_DeleteKey(key);
     robj *o = createModuleObject(mt, value);
-    setKey(key->ctx->client, key->db, key->key, o, SETKEY_NO_SIGNAL);
-    decrRefCount(o);
+    setKey(key->ctx->client, key->db, key->key, &o, SETKEY_NO_SIGNAL);
     key->value = o;
     return VALKEYMODULE_OK;
 }
@@ -10378,7 +10419,7 @@ ValkeyModuleServerInfoData *VM_GetServerInfo(ValkeyModuleCtx *ctx, const char *s
  * context instead of passing NULL. */
 void VM_FreeServerInfo(ValkeyModuleCtx *ctx, ValkeyModuleServerInfoData *data) {
     if (ctx != NULL) autoMemoryFreed(ctx, VALKEYMODULE_AM_INFO, data);
-    raxFreeWithCallback(data->rax, (void (*)(void *))sdsfree);
+    raxFreeWithCallback(data->rax, sdsfreeVoid);
     zfree(data);
 }
 
@@ -10879,10 +10920,10 @@ typedef struct ValkeyModuleScanCursor {
     int done;
 } ValkeyModuleScanCursor;
 
-static void moduleScanCallback(void *privdata, const dictEntry *de) {
+static void moduleScanCallback(void *privdata, void *element) {
     ScanCBData *data = privdata;
-    sds key = dictGetKey(de);
-    robj *val = dictGetVal(de);
+    robj *val = element;
+    sds key = objectGetKey(val);
     ValkeyModuleString *keyname = createObject(OBJ_STRING, sdsdup(key));
 
     /* Setup the key handle. */
@@ -10996,25 +11037,36 @@ typedef struct {
     ValkeyModuleScanKeyCB fn;
 } ScanKeyCBData;
 
-static void moduleScanKeyCallback(void *privdata, const dictEntry *de) {
+static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
     ScanKeyCBData *data = privdata;
     sds key = dictGetKey(de);
     robj *o = data->key->value;
     robj *field = createStringObject(key, sdslen(key));
     robj *value = NULL;
-    if (o->type == OBJ_SET) {
-        value = NULL;
-    } else if (o->type == OBJ_HASH) {
+    if (o->type == OBJ_HASH) {
         sds val = dictGetVal(de);
         value = createStringObject(val, sdslen(val));
     } else if (o->type == OBJ_ZSET) {
         double *val = (double *)dictGetVal(de);
         value = createStringObjectFromLongDouble(*val, 0);
+    } else {
+        serverPanic("unexpected object type");
     }
 
     data->fn(data->key, field, value, data->user_data);
     decrRefCount(field);
     if (value) decrRefCount(value);
+}
+
+static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
+    ScanKeyCBData *data = privdata;
+    robj *o = data->key->value;
+    serverAssert(o->type == OBJ_SET);
+    sds key = entry;
+    robj *field = createStringObject(key, sdslen(key));
+
+    data->fn(data->key, field, NULL, data->user_data);
+    decrRefCount(field);
 }
 
 /* Scan api that allows a module to scan the elements in a hash, set or sorted set key
@@ -11070,14 +11122,15 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         errno = EINVAL;
         return 0;
     }
-    dict *ht = NULL;
+    dict *d = NULL;
+    hashtable *ht = NULL;
     robj *o = key->value;
     if (o->type == OBJ_SET) {
-        if (o->encoding == OBJ_ENCODING_HT) ht = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_HT) ht = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
     } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->dict;
+        if (o->encoding == OBJ_ENCODING_SKIPLIST) d = ((zset *)o->ptr)->dict;
     } else {
         errno = EINVAL;
         return 0;
@@ -11087,9 +11140,16 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         return 0;
     }
     int ret = 1;
-    if (ht) {
+    if (d) {
         ScanKeyCBData data = {key, privdata, fn};
-        cursor->cursor = dictScan(ht, cursor->cursor, moduleScanKeyCallback, &data);
+        cursor->cursor = dictScan(d, cursor->cursor, moduleScanKeyDictCallback, &data);
+        if (cursor->cursor == 0) {
+            cursor->done = 1;
+            ret = 0;
+        }
+    } else if (ht) {
+        ScanKeyCBData data = {key, privdata, fn};
+        cursor->cursor = hashtableScan(ht, cursor->cursor, moduleScanKeyHashtableCallback, &data);
         if (cursor->cursor == 0) {
             cursor->done = 1;
             ret = 0;
@@ -12059,20 +12119,21 @@ int moduleFreeCommand(struct ValkeyModule *module, struct serverCommand *cmd) {
     moduleFreeArgs(cmd->args, cmd->num_args);
     zfree(cp);
 
-    if (cmd->subcommands_dict) {
-        dictEntry *de;
-        dictIterator *di = dictGetSafeIterator(cmd->subcommands_dict);
-        while ((de = dictNext(di)) != NULL) {
-            struct serverCommand *sub = dictGetVal(de);
+    if (cmd->subcommands_ht) {
+        hashtableIterator iter;
+        void *next;
+        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        while (hashtableNext(&iter, &next)) {
+            struct serverCommand *sub = next;
             if (moduleFreeCommand(module, sub) != C_OK) continue;
 
-            serverAssert(dictDelete(cmd->subcommands_dict, sub->declared_name) == DICT_OK);
+            serverAssert(hashtableDelete(cmd->subcommands_ht, sub->declared_name));
             sdsfree((sds)sub->declared_name);
             sdsfree(sub->fullname);
             zfree(sub);
         }
-        dictReleaseIterator(di);
-        dictRelease(cmd->subcommands_dict);
+        hashtableResetIterator(&iter);
+        hashtableRelease(cmd->subcommands_ht);
     }
 
     return C_OK;
@@ -12082,19 +12143,20 @@ void moduleUnregisterCommands(struct ValkeyModule *module) {
     /* Drain IO queue before modifying commands dictionary to prevent concurrent access while modifying it. */
     drainIOThreadsQueue();
     /* Unregister all the commands registered by this module. */
-    dictIterator *di = dictGetSafeIterator(server.commands);
-    dictEntry *de;
-    while ((de = dictNext(di)) != NULL) {
-        struct serverCommand *cmd = dictGetVal(de);
+    hashtableIterator iter;
+    void *next;
+    hashtableInitSafeIterator(&iter, server.commands);
+    while (hashtableNext(&iter, &next)) {
+        struct serverCommand *cmd = next;
         if (moduleFreeCommand(module, cmd) != C_OK) continue;
 
-        serverAssert(dictDelete(server.commands, cmd->fullname) == DICT_OK);
-        serverAssert(dictDelete(server.orig_commands, cmd->fullname) == DICT_OK);
+        serverAssert(hashtableDelete(server.commands, cmd->fullname));
+        serverAssert(hashtableDelete(server.orig_commands, cmd->fullname));
         sdsfree((sds)cmd->declared_name);
         sdsfree(cmd->fullname);
         zfree(cmd);
     }
-    dictReleaseIterator(di);
+    hashtableResetIterator(&iter);
 }
 
 /* We parse argv to add sds "NAME VALUE" pairs to the server.module_configs_queue list of configs.
@@ -13032,6 +13094,60 @@ int VM_RdbSave(ValkeyModuleCtx *ctx, ValkeyModuleRdbStream *stream, int flags) {
     return VALKEYMODULE_OK;
 }
 
+/* Registers a new scripting engine in the server.
+ *
+ * - `module_ctx`: the module context object.
+ *
+ * - `engine_name`: the name of the scripting engine. This name will match
+ *   against the engine name specified in the script header using a shebang.
+ *
+ * - `engine_ctx`: engine specific context pointer.
+ *
+ * - `engine_methods`: the struct with the scripting engine callback functions
+ *   pointers.
+ *
+ * Returns VALKEYMODULE_OK if the engine is successfully registered, and
+ * VALKEYMODULE_ERR in case some failure occurs. In case of a failure, an error
+ * message is logged.
+ */
+int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
+                               const char *engine_name,
+                               ValkeyModuleScriptingEngineCtx *engine_ctx,
+                               ValkeyModuleScriptingEngineMethods *engine_methods) {
+    serverLog(LL_DEBUG, "Registering a new scripting engine: %s", engine_name);
+
+    if (engine_methods->version > VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION) {
+        serverLog(LL_WARNING, "The engine implementation version is greater "
+                              "than what this server supports. Server ABI "
+                              "Version: %lu, Engine ABI version: %lu",
+                  VALKEYMODULE_SCRIPTING_ENGINE_ABI_VERSION,
+                  (unsigned long)engine_methods->version);
+        return VALKEYMODULE_ERR;
+    }
+
+    if (functionsRegisterEngine(engine_name,
+                                module_ctx->module,
+                                engine_ctx,
+                                engine_methods) != C_OK) {
+        return VALKEYMODULE_ERR;
+    }
+
+    return VALKEYMODULE_OK;
+}
+
+/* Removes the scripting engine from the server.
+ *
+ * `engine_name` is the name of the scripting engine.
+ *
+ * Returns VALKEYMODULE_OK.
+ *
+ */
+int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
+    UNUSED(ctx);
+    functionsUnregisterEngine(engine_name);
+    return VALKEYMODULE_OK;
+}
+
 /* MODULE command.
  *
  * MODULE LIST
@@ -13344,7 +13460,7 @@ const char *VM_GetCurrentCommandName(ValkeyModuleCtx *ctx) {
  * defrag callback.
  */
 struct ValkeyModuleDefragCtx {
-    long long int endtime;
+    monotime endtime;
     unsigned long *cursor;
     struct serverObject *key; /* Optional name of key processed, NULL when unknown. */
     int dbid;                 /* The dbid of the key being processed, -1 when unknown. */
@@ -13373,7 +13489,7 @@ int VM_RegisterDefragFunc(ValkeyModuleCtx *ctx, ValkeyModuleDefragFunc cb) {
  * so it generally makes sense to do small batches of work in between calls.
  */
 int VM_DefragShouldStop(ValkeyModuleDefragCtx *ctx) {
-    return (ctx->endtime != 0 && ctx->endtime < ustime());
+    return (ctx->endtime != 0 && ctx->endtime <= getMonotonicUs());
 }
 
 /* Store an arbitrary cursor value for future re-use.
@@ -13455,7 +13571,7 @@ ValkeyModuleString *VM_DefragValkeyModuleString(ValkeyModuleDefragCtx *ctx, Valk
  * Returns a zero value (and initializes the cursor) if no more needs to be done,
  * or a non-zero value otherwise.
  */
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid) {
+int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid) {
     moduleValue *mv = value->ptr;
     moduleType *mt = mv->type;
 
@@ -13560,6 +13676,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(SetModuleAttribs);
     REGISTER_API(IsModuleNameBusy);
     REGISTER_API(WrongArity);
+    REGISTER_API(UpdateRuntimeArgs);
     REGISTER_API(ReplyWithLongLong);
     REGISTER_API(ReplyWithError);
     REGISTER_API(ReplyWithErrorFormat);
@@ -13901,4 +14018,6 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(RdbStreamFree);
     REGISTER_API(RdbLoad);
     REGISTER_API(RdbSave);
+    REGISTER_API(RegisterScriptingEngine);
+    REGISTER_API(UnregisterScriptingEngine);
 }

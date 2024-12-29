@@ -282,7 +282,7 @@ void removeReplicaFromPsyncWait(client *replica_main_client) {
 void resetReplicationBuffer(void) {
     server.repl_buffer_mem = 0;
     server.repl_buffer_blocks = listCreate();
-    listSetFreeMethod(server.repl_buffer_blocks, (void (*)(void *))zfree);
+    listSetFreeMethod(server.repl_buffer_blocks, zfree);
 }
 
 int canFeedReplicaReplBuffer(client *replica) {
@@ -1886,7 +1886,7 @@ void replicationSendNewlineToPrimary(void) {
 /* Callback used by emptyData() while flushing away old data to load
  * the new dataset received by the primary and by discardTempDb()
  * after loading succeeded or failed. */
-void replicationEmptyDbCallback(dict *d) {
+void replicationEmptyDbCallback(hashtable *d) {
     UNUSED(d);
     if (server.repl_state == REPL_STATE_TRANSFER) replicationSendNewlineToPrimary();
 }
@@ -2254,7 +2254,7 @@ void readSyncBulkPayload(connection *conn) {
 
         int loadingFailed = 0;
         rdbLoadingCtx loadingCtx = {.dbarray = dbarray, .functions_lib_ctx = functions_lib_ctx};
-        if (rdbLoadRioWithLoadingCtx(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
+        if (rdbLoadRioWithLoadingCtxScopedRdb(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
             /* RDB loading failed. */
             serverLog(LL_WARNING, "Failed trying to load the PRIMARY synchronization DB "
                                   "from socket, check server logs.");
@@ -2405,10 +2405,10 @@ void readSyncBulkPayload(connection *conn) {
     } else {
         replicationCreatePrimaryClient(server.repl_transfer_s, rsi.repl_stream_db);
         server.repl_state = REPL_STATE_CONNECTED;
+        server.repl_down_since = 0;
         /* Send the initial ACK immediately to put this replica in online state. */
         replicationSendAck();
     }
-    server.repl_down_since = 0;
 
     /* Fire the primary link modules event. */
     moduleFireServerEvent(VALKEYMODULE_EVENT_PRIMARY_LINK_CHANGE, VALKEYMODULE_SUBEVENT_PRIMARY_LINK_UP, NULL);
@@ -2831,16 +2831,13 @@ typedef struct replDataBufBlock {
  * Reads replication data from primary into specified repl buffer block */
 int readIntoReplDataBlock(connection *conn, replDataBufBlock *data_block, size_t read) {
     int nread = connRead(conn, data_block->buf + data_block->used, read);
-    if (nread == -1) {
-        if (connGetState(conn) != CONN_STATE_CONNECTED) {
-            dualChannelServerLog(LL_NOTICE, "Error reading from primary: %s", connGetLastError(conn));
+    if (nread <= 0) {
+        if (nread == 0 || connGetState(conn) != CONN_STATE_CONNECTED) {
+            dualChannelServerLog(LL_WARNING, "Provisional primary closed connection");
+            /* Signal ongoing RDB load to terminate gracefully */
+            if (server.loading_rio) rioCloseASAP(server.loading_rio);
             cancelReplicationHandshake(1);
         }
-        return C_ERR;
-    }
-    if (nread == 0) {
-        dualChannelServerLog(LL_VERBOSE, "Provisional primary closed connection");
-        cancelReplicationHandshake(1);
         return C_ERR;
     }
     data_block->used += nread;
