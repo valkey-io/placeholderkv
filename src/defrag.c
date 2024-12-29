@@ -1112,6 +1112,9 @@ static void endDefragCycle(bool normal_termination) {
     server.stat_total_active_defrag_time += elapsedUs(server.stat_last_active_defrag_time);
     server.stat_last_active_defrag_time = 0;
     server.active_defrag_cpu_percent = 0;
+
+    /* Immediately check to see if we should start another defrag cycle. */
+    monitorActiveDefrag();
 }
 
 
