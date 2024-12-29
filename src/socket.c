@@ -437,6 +437,9 @@ static ConnectionType CT_Socket = {
     .process_pending_data = NULL,
     .postpone_update_state = NULL,
     .update_state = NULL,
+
+    /* Miselenious */
+    .connIntegrityChecked = NULL,
 };
 
 int connBlock(connection *conn) {

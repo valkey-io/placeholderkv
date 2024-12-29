@@ -3010,7 +3010,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
     int error;
     long long empty_keys_skipped = 0;
 
-    if (rdb->flags & RIO_FLAG_DISABLE_CRC) server.stat_total_crc_disabled_syncs_stated++;
+    if (rdb->flags & RIO_FLAG_BYPASS_CRC) server.stat_total_sync_bypass_crc++;
     rdb->update_cksum = rdbLoadProgressCallback;
     rdb->max_processing_chunk = server.loading_process_events_interval_bytes;
     if (rioRead(rdb, buf, 9) == 0) goto eoferr;
@@ -3355,7 +3355,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
         if (rioRead(rdb, &cksum, 8) == 0) goto eoferr;
         if (server.rdb_checksum && !server.skip_checksum_validation) {
             memrev64ifbe(&cksum);
-            if (cksum == 0 || (rdb->flags & RIO_FLAG_DISABLE_CRC) != 0) {
+            if (cksum == 0 || (rdb->flags & RIO_FLAG_BYPASS_CRC)) {
                 serverLog(LL_NOTICE, "RDB file was saved with checksum disabled: no check performed.");
             } else if (cksum != expected) {
                 serverLog(LL_WARNING,
@@ -3548,9 +3548,9 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
     }
     /*
      * For replicas with repl_state == REPLICA_STATE_WAIT_BGSAVE_END and replica_req == req:
-     * Check replica capabilities, if every replica supports disabled CRC, run with CRC disabled, otherwise, use CRC.
+     * Check replica capabilities, if every replica supports bypassing CRC, primary should also bypass CRC, otherwise, use CRC.
      */
-    int disable_sync_crc_capa = server.disable_sync_crc;
+    int bypass_crc_capa = server.bypass_crc;
     /* Collect the connections of the replicas we want to transfer
      * the RDB to, which are in WAIT_BGSAVE_START state. */
     int connsnum = 0;
@@ -3585,9 +3585,9 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             replicationSetupReplicaForFullResync(replica, getPsyncInitialOffset());
         }
 
-        // do not disable CRC on the primary if TLS is disabled or if the replica doesn't support it
-        if (!connIsTLS(replica->conn) || (replica->replica_capa & REPLICA_CAPA_DISABLE_SYNC_CRC) == 0) 
-            disable_sync_crc_capa = 0;
+        // do not bypass CRC on the primary if TLS is disabled or if the replica doesn't support it
+        if (!connIsIntegrityChecked(replica->conn) || !(replica->replica_capa & REPLICA_CAPA_BYPASS_CRC)) 
+            bypass_crc_capa = 0;
         
     }
 
@@ -3612,10 +3612,10 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
         }
         serverSetCpuAffinity(server.bgsave_cpulist);
 
-        if (disable_sync_crc_capa == 1) {
+        if (bypass_crc_capa) {
             serverLog(LL_NOTICE, "CRC checksum is disabled for this RDB transfer");
             // mark rdb object to skip CRC checksum calculations
-            rdb.flags |= RIO_FLAG_DISABLE_CRC;
+            rdb.flags |= RIO_FLAG_BYPASS_CRC;
         }
 
         retval = rdbSaveRioWithEOFMark(req, &rdb, NULL, rsi);
@@ -3683,7 +3683,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             }
         }
         if (!dual_channel) close(safe_to_exit_pipe);
-        if (disable_sync_crc_capa) server.stat_total_crc_disabled_syncs_stated++;
+        if (bypass_crc_capa) server.stat_total_sync_bypass_crc++;
         return (childpid == -1) ? C_ERR : C_OK;
     }
     return C_OK; /* Unreached. */

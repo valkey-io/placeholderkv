@@ -438,10 +438,10 @@ typedef enum {
 #define REPLICA_CAPA_EOF (1 << 0)               /* Can parse the RDB EOF streaming format. */
 #define REPLICA_CAPA_PSYNC2 (1 << 1)            /* Supports PSYNC2 protocol. */
 #define REPLICA_CAPA_DUAL_CHANNEL (1 << 2)      /* Supports dual channel replication sync */
-#define REPLICA_CAPA_DISABLE_SYNC_CRC (1 << 3)  /* Disable CRC checks for sync requests. */
+#define REPLICA_CAPA_BYPASS_CRC (1 << 3)        /* Supports bypassing CRC checks for sync requests. */
 
 /* Replica capability strings */
-#define REPLICA_CAPA_DISABLE_SYNC_CRC_STR "disable-sync-crc"    /* Disable CRC calculations during full sync */
+#define REPLICA_CAPA_BYPASS_CRC_STR "bypass-crc" /* Supports bypassing CRC checks for sync requests. */
 
 /* Replica requirements */
 #define REPLICA_REQ_NONE 0
@@ -1842,7 +1842,7 @@ struct valkeyServer {
     double stat_fork_rate;                         /* Fork rate in GB/sec. */
     long long stat_total_forks;                    /* Total count of fork. */
     long long stat_rejected_conn;                  /* Clients rejected because of maxclients */
-    size_t stat_total_crc_disabled_syncs_stated;   /* Total number of full syncs stated with CRC checksum disabled */   // AMZN
+    size_t stat_total_sync_bypass_crc;             /* Total number of full syncs stated with CRC checksum bypassed */
     long long stat_sync_full;                      /* Number of full resyncs with replicas. */
     long long stat_sync_partial_ok;                /* Number of accepted PSYNC requests. */
     long long stat_sync_partial_err;               /* Number of unaccepted PSYNC requests. */
@@ -1991,7 +1991,7 @@ struct valkeyServer {
     char *rdb_filename;                   /* Name of RDB file */
     int rdb_compression;                  /* Use compression in RDB? */
     int rdb_checksum;                     /* Use RDB checksum? */
-    int disable_sync_crc;                 /* Use RDB checksum during sync? Applicable only for TLS enabled diskless sync */
+    int bypass_crc;                       /* Skip RDB checksum? Applicable only for TLS enabled diskless full sync */
     int rdb_del_sync_files;               /* Remove RDB files used only for SYNC if
                                              the instance does not use persistence. */
     time_t lastsave;                      /* Unix time of last successful save */
@@ -2118,7 +2118,6 @@ struct valkeyServer {
                                          * when it receives an error on the replication stream */
     int repl_ignore_disk_write_error;   /* Configures whether replicas panic when unable to
                                          * persist writes to AOF. */
-    int repl_meet_disable_crc_cond;     /* Set to true only when replica meets all conditions for disabling CRC */
 
     /* The following two fields is where we store primary PSYNC replid/offset
      * while the PSYNC is in progress. At the end we'll copy the fields into
