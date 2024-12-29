@@ -117,7 +117,7 @@ start_cluster 2 2 {tags {external:skip cluster}} {
             $replica2 eval "redis.call('set', 'foo', 'bar')" 0
         } e
 
-        assert_match {*MOVED*} $e
+        assert_match {*Script attempted to access a non local ke*} $e
     }
 
     test "Read-only client that sends lua script which has write command on replica get ASK error during migration" {
@@ -130,6 +130,6 @@ start_cluster 2 2 {tags {external:skip cluster}} {
             $replica2 eval "redis.call('set', 'foo', 'bar')" 0
         } e
 
-        assert_match {*ASK*} $e
+        assert_match {*Script attempted to access a non local ke*} $e
     }
 }
