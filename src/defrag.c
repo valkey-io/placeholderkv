@@ -315,13 +315,13 @@ static void activeDefragZsetNode(void *privdata, void *entry_ref) {
      * skiplist node. */
     zskiplistNode *update[ZSKIPLIST_MAXLEVEL];
     zskiplistNode *x = zsl->header;
-for (int i = zsl->level - 1; i >= 0; i--) {
+    for (int i = zsl->level - 1; i >= 0; i--) {
         /* stop when we've reached the end of this level or the next node comes
          * after our target in sorted order */
         zskiplistNode *next = x->level[i].forward;
         while (next &&
-            (next->score < score ||
-            (next->score == score && sdscmp(next->ele, ele) < 0))) {
+               (next->score < score ||
+                (next->score == score && sdscmp(next->ele, ele) < 0))) {
             x = next;
             next = x->level[i].forward;
         }
