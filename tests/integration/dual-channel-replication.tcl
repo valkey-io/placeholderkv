@@ -1256,7 +1256,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
 
     $primary config set repl-diskless-sync yes
     $primary config set dual-channel-replication-enabled yes
-    $primary config set repl-diskless-sync-delay 5; # allow catch failed sync before retry
+    $primary config set repl-diskless-sync-delay 0
 
     # Generating RDB will take 100 sec to generate
     $primary debug populate 1000000 primary 1
@@ -1270,8 +1270,17 @@ start_server {tags {"dual-channel-replication external:skip"}} {
         
         $replica config set dual-channel-replication-enabled yes
         $replica config set loglevel debug
-        $replica config set repl-timeout 10
         $replica config set repl-diskless-load flush-before-load
+
+        if {$::valgrind} {
+            $primary config set repl-timeout 100
+            $replica config set repl-timeout 100
+            set max_tries 5000
+        } else {
+            $primary config set repl-timeout 10
+            $replica config set repl-timeout 10
+            set max_tries 500
+        }
 
         test "Replica notice main-connection killed during rdb load callback" {; # https://github.com/valkey-io/valkey/issues/1152
             set loglines [count_log_lines 0]
@@ -1287,6 +1296,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             wait_for_log_messages 0 {"*Loading RDB produced by Valkey version*"} $loglines 1000 10
             $primary set key val
             set replica_main_conn_id [get_client_id_by_last_cmd $primary "psync"]
+            $primary config set repl-diskless-sync-delay 5; # allow catch failed sync before retry
             $primary debug log "killing replica main connection $replica_main_conn_id"
             assert {$replica_main_conn_id != ""}
             set loglines [count_log_lines 0]
@@ -1298,8 +1308,8 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             } else {
                 fail "Primary did not free repl buf block after sync failure"
             }
-            wait_for_log_messages 0 {"*Failed trying to load the PRIMARY synchronization DB from socket*"} $loglines 1000 10
-            verify_replica_online $primary 0 500
+            wait_for_log_messages 0 {"*Failed trying to load the PRIMARY synchronization DB from socket*"} $loglines $max_tries 10
+            verify_replica_online $primary 0 $max_tries
         }
     }
 }
