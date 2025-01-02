@@ -35,6 +35,7 @@
 #include "fpconv_dtoa.h"
 #include "fmtargs.h"
 #include "io_threads.h"
+#include "module.h"
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/uio.h>

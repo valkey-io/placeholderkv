@@ -38,6 +38,7 @@
 #include "cluster_slot_stats.h"
 #include "endianconv.h"
 #include "connection.h"
+#include "module.h"
 
 #include <stdlib.h>
 #include <sys/types.h>

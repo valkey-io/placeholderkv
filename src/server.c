@@ -42,6 +42,7 @@
 #include "fmtargs.h"
 #include "io_threads.h"
 #include "sds.h"
+#include "module.h"
 
 #include <time.h>
 #include <signal.h>

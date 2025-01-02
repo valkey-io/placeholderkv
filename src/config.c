@@ -32,6 +32,7 @@
 #include "cluster.h"
 #include "connection.h"
 #include "bio.h"
+#include "module.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -371,20 +372,6 @@ void resetServerSaveParams(void) {
     server.saveparamslen = 0;
 }
 
-void queueLoadModule(sds path, sds *argv, int argc) {
-    int i;
-    struct moduleLoadQueueEntry *loadmod;
-
-    loadmod = zmalloc(sizeof(struct moduleLoadQueueEntry));
-    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
-    loadmod->path = sdsnew(path);
-    loadmod->argc = argc;
-    for (i = 0; i < argc; i++) {
-        loadmod->argv[i] = createRawStringObject(argv[i], sdslen(argv[i]));
-    }
-    listAddNodeTail(server.loadmodule_queue, loadmod);
-}
-
 /* Parse an array of `arg_len` sds strings, validate and populate
  * server.client_obuf_limits if valid.
  * Used in CONFIG SET and configuration file parsing. */
@@ -567,7 +554,7 @@ void loadServerConfigFromString(char *config) {
                 goto loaderr;
             }
         } else if (!strcasecmp(argv[0], "loadmodule") && argc >= 2) {
-            queueLoadModule(argv[1], &argv[2], argc - 2);
+            moduleEnqueueLoadModule(argv[1], &argv[2], argc - 2);
         } else if (strchr(argv[0], '.')) {
             if (argc < 2) {
                 err = "Module config specified without value";
@@ -1583,12 +1570,7 @@ void rewriteConfigLoadmoduleOption(struct rewriteConfigState *state) {
     dictEntry *de;
     while ((de = dictNext(di)) != NULL) {
         struct ValkeyModule *module = dictGetVal(de);
-        line = sdsnew("loadmodule ");
-        line = sdscatsds(line, module->loadmod->path);
-        for (int i = 0; i < module->loadmod->argc; i++) {
-            line = sdscatlen(line, " ", 1);
-            line = sdscatsds(line, module->loadmod->argv[i]->ptr);
-        }
+        line = moduleLoadQueueEntryToLoadmoduleOptionStr(module, "loadmodule");
         rewriteConfigRewriteLine(state, "loadmodule", line, 1);
     }
     dictReleaseIterator(di);

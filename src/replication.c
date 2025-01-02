@@ -35,6 +35,7 @@
 #include "bio.h"
 #include "functions.h"
 #include "connection.h"
+#include "module.h"
 
 #include <memory.h>
 #include <sys/time.h>
