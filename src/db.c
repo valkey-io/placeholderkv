@@ -33,6 +33,7 @@
 #include "script.h"
 #include "functions.h"
 #include "io_threads.h"
+#include "module.h"
 
 #include <signal.h>
 #include <ctype.h>
