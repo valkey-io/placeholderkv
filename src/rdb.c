@@ -3696,7 +3696,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             }
         }
         if (!dual_channel) close(safe_to_exit_pipe);
-        if (bypass_crc_capa) server.stat_total_sync_bypass_crc++;
+        if (bypass_crc) server.stat_total_sync_bypass_crc++;
         return (childpid == -1) ? C_ERR : C_OK;
     }
     return C_OK; /* Unreached. */
