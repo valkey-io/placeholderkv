@@ -1036,6 +1036,9 @@ void syncCommand(client *c) {
     /* ignore SYNC if already replica or in monitor mode */
     if (c->flag.replica) return;
 
+    /* Wait for any IO pending operation to finish before changing the client state to replica */
+    waitForClientIO(c);
+
     /* Check if this is a failover request to a replica with the same replid and
      * become a primary if so. */
     if (c->argc > 3 && !strcasecmp(c->argv[0]->ptr, "psync") && !strcasecmp(c->argv[3]->ptr, "failover")) {
@@ -1148,8 +1151,6 @@ void syncCommand(client *c) {
     c->repl_state = REPLICA_STATE_WAIT_BGSAVE_START;
     if (server.repl_disable_tcp_nodelay) connDisableTcpNoDelay(c->conn); /* Non critical if it fails. */
     c->repldbfd = -1;
-    /* Wait for any IO pending operation to finish before changing the client state */
-    waitForClientIO(c);
     c->flag.replica = 1;
     listAddNodeTail(server.replicas, c);
 
