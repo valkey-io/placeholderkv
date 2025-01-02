@@ -3801,13 +3801,11 @@ static void clientCommandKill(client *c) {
         if (parseClientFiltersOrReply(c, i, &client_filter) != C_OK) {
             /* Free the intset on error */
             goto client_kill_done;
-            return;
         }
     } else {
         addReplyErrorObject(c, shared.syntaxerr);
         /* Free the intset on error */
         goto client_kill_done;
-        return;
     }
 
     /* Iterate clients killing all the matching clients. */
