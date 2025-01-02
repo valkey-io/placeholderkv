@@ -171,17 +171,20 @@ static int zslRandomLevel(void) {
 }
 
 /* Compares node and score/ele; defines zset ordering. Return value:
- *     positive if node comes after score/ele.
- *     negative if node comes before score/ele.
- *     0 if node's score and ele are both equal to those provided. */
-static int compareNodeScoreEle(const zskiplistNode *node, const double score, const sds ele) {
+ *     positive if a comes after b.
+ *     negative if a comes before b.
+ *     0 if a's score and ele are both equal to b's. */
+static int zslCompareNodes(const zskiplistNode *a, const zskiplistNode *b) {
+    if (a == b) return 0;
+
     /* null indicates end of list - ordered after any score/ele */
-    if (node == NULL) return 1;
+    if (a == NULL) return 1;
+    if (b == NULL) return -1;
 
-    if (node->score > score) return 1;
-    if (node->score < score) return -1;
+    if (a->score > b->score) return 1;
+    if (a->score < b->score) return -1;
 
-    return sdscmp(node->ele, ele);
+    return sdscmp(a->ele, b->ele);
 }
 
 /* Insert a node in the skiplist. Assumes the element does not already exist in
@@ -197,7 +200,7 @@ static zskiplistNode *zslInsertNode(zskiplist *zsl, zskiplistNode *node) {
     for (int i = zsl->level - 1; i >= 0; i--) {
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level - 1) ? 0 : rank[i + 1];
-        while (compareNodeScoreEle(x->level[i].forward, node->score, node->ele) < 0) {
+        while (zslCompareNodes(x->level[i].forward, node) < 0) {
             rank[i] += zslGetNodeSpanAtLevel(x, i);
             x = x->level[i].forward;
         }
@@ -270,87 +273,62 @@ static void zslDeleteNode(zskiplist *zsl, zskiplistNode *x, zskiplistNode **upda
     zsl->length--;
 }
 
-/* Delete an element with matching score/element from the skiplist.
- * The function returns 1 if the node was found and deleted, otherwise
- * 0 is returned.
- *
- * If 'node' is NULL the deleted node is freed by zslFreeNode(), otherwise
- * it is not freed (but just unlinked) and *node is set to the node pointer,
- * so that it is possible for the caller to reuse the node (including the
- * referenced SDS string at node->ele). */
-int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node) {
-    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
-    int i;
-
-    x = zsl->header;
-    for (i = zsl->level - 1; i >= 0; i--) {
-        while (compareNodeScoreEle(x->level[i].forward, score, ele) < 0) {
+/* Delete specified node from the skiplist. */
+static void zslDelete(zskiplist *zsl, zskiplistNode *node) {
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL];
+    zskiplistNode *x = zsl->header;
+    for (int i = zsl->level - 1; i >= 0; i--) {
+        while (zslCompareNodes(x->level[i].forward, node) < 0) {
             x = x->level[i].forward;
         }
         update[i] = x;
     }
-    /* We may have multiple elements with the same score, what we need
-     * is to find the element with both the right score and object. */
-    x = x->level[0].forward;
-    if (x && score == x->score && sdscmp(x->ele, ele) == 0) {
-        zslDeleteNode(zsl, x, update);
-        if (!node)
-            zslFreeNode(x);
-        else
-            *node = x;
-        return 1;
-    }
-    return 0; /* not found */
+
+    /* We should have arrived at the correct node */
+    serverAssert(x->level[0].forward == node);
+
+    zslDeleteNode(zsl, node, update);
+    zslFreeNode(node);
 }
 
 /* Update the score of an element inside the sorted set skiplist.
- * Note that the element must exist and must match 'score'.
- * This function does not update the score in the hash table side, the
- * caller should take care of it.
+ * Note that the element must exist in the skiplist.
  *
  * Note that this function attempts to just update the node, in case after
  * the score update, the node would be exactly at the same position.
  * Otherwise the skiplist is modified by removing and re-adding a new
- * element, which is more costly.
- *
- * The function returns the updated element skiplist node pointer. */
-static zskiplistNode *zslUpdateScore(zskiplist *zsl, double curscore, sds ele, double newscore) {
-    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
-    int i;
+ * element, which is more costly. In this case, it updates the pointer stored
+ * in the hashtable using node_ref. */
+static void zslUpdateScore(zskiplist *zsl, zskiplistNode **node_ref, double newscore) {
+    /* If the node, after the score update, would be still exactly
+     * at the same position, we can just update the score without
+     * actually removing and re-inserting the element in the skiplist. */
+    zskiplistNode *node = *node_ref;
+    if ((node->backward == NULL || node->backward->score < newscore) &&
+        (node->level[0].forward == NULL || node->level[0].forward->score > newscore)) {
+        node->score = newscore;
+        return;
+    }
 
-    /* We need to seek to element to update to start: this is useful anyway,
-     * we'll have to update or remove it. */
-    x = zsl->header;
-    for (i = zsl->level - 1; i >= 0; i--) {
-        while (compareNodeScoreEle(x->level[i].forward, curscore, ele) < 0) {
+    /* We need to remove the node from the skiplist and insert a new one */
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL];
+    zskiplistNode *x = zsl->header;
+    for (int i = zsl->level - 1; i >= 0; i--) {
+        while (zslCompareNodes(x->level[i].forward, node) < 0) {
             x = x->level[i].forward;
         }
         update[i] = x;
     }
+    /* We assume that the node exists in the skiplist */
+    serverAssert(x->level[0].forward == node);
 
-    /* Jump to our element: note that this function assumes that the
-     * element with the matching score exists. */
-    x = x->level[0].forward;
-    serverAssert(x && curscore == x->score && sdscmp(x->ele, ele) == 0);
-
-    /* If the node, after the score update, would be still exactly
-     * at the same position, we can just update the score without
-     * actually removing and re-inserting the element in the skiplist. */
-    if ((x->backward == NULL || x->backward->score < newscore) &&
-        (x->level[0].forward == NULL || x->level[0].forward->score > newscore)) {
-        x->score = newscore;
-        return x;
-    }
-
-    /* No way to reuse the old node: we need to remove and insert a new
-     * one at a different place. */
-    zslDeleteNode(zsl, x, update);
-    zskiplistNode *newnode = zslInsert(zsl, newscore, x->ele);
-    /* We reused the old node x->ele SDS string, free the node now
-     * since zslInsert created a new one. */
-    x->ele = NULL;
-    zslFreeNode(x);
-    return newnode;
+    zslDeleteNode(zsl, node, update);
+    /* update pointer inside hashtable with new node */
+    *node_ref = zslInsert(zsl, newscore, node->ele);
+    /* We reused the old node->ele SDS string, free the node now
+     * since zslInsert created a new node */
+    node->ele = NULL;
+    zslFreeNode(node);
 }
 
 int zslValueGteMin(double value, zrangespec *spec) {
@@ -539,30 +517,6 @@ static unsigned long zslDeleteRangeByRank(zskiplist *zsl, unsigned int start, un
         x = next;
     }
     return removed;
-}
-
-/* Find the rank for an element by both score and key.
- * Returns 0 when the element cannot be found, rank otherwise.
- * Note that the rank is 1-based due to the span of zsl->header to the
- * first element. */
-static unsigned long zslGetRank(zskiplist *zsl, double score, sds ele) {
-    zskiplistNode *x;
-    unsigned long rank = 0;
-    int i;
-
-    x = zsl->header;
-    for (i = zsl->level - 1; i >= 0; i--) {
-        while (compareNodeScoreEle(x->level[i].forward, score, ele) <= 0) {
-            rank += zslGetNodeSpanAtLevel(x, i);
-            x = x->level[i].forward;
-        }
-
-        /* x might be equal to zsl->header, so test if obj is non-NULL */
-        if (x->ele && x->score == score && sdscmp(x->ele, ele) == 0) {
-            return rank;
-        }
-    }
-    return 0;
 }
 
 /* Find the rank for a specific skiplist node. */
@@ -1545,7 +1499,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
             if (score != curscore) {
                 /* Note that this assignment updates the node pointer stored in
                  * the hashtable */
-                *node_ref_in_hashtable = zslUpdateScore(zs->zsl, curscore, ele, score);
+                zslUpdateScore(zs->zsl, (zskiplistNode **)node_ref_in_hashtable, score);
                 *out_flags |= ZADD_OUT_UPDATED;
             }
             return 1;
@@ -1577,8 +1531,7 @@ static int zsetRemoveFromSkiplist(zset *zs, sds ele) {
     /* hashtable only contains pointers to skiplist nodes. Nothing to free. */
 
     /* Delete from skiplist. */
-    int retval = zslDelete(zs->zsl, node->score, ele, NULL);
-    serverAssert(retval);
+    zslDelete(zs->zsl, node);
 
     return 1;
 }
@@ -3327,7 +3280,7 @@ void zcountCommand(client *c) {
 
         /* Use rank of first element, if any, to determine preliminary count */
         if (zn != NULL) {
-            rank = zslGetRank(zsl, zn->score, zn->ele);
+            rank = zslGetRankByNode(zsl, zn);
             count = (zsl->length - (rank - 1));
 
             /* Find last element in range */
@@ -3335,7 +3288,7 @@ void zcountCommand(client *c) {
 
             /* Use rank of last element, if any, to determine the actual count */
             if (zn != NULL) {
-                rank = zslGetRank(zsl, zn->score, zn->ele);
+                rank = zslGetRankByNode(zsl, zn);
                 count -= (zsl->length - rank);
             }
         }
@@ -3403,7 +3356,7 @@ void zlexcountCommand(client *c) {
 
         /* Use rank of first element, if any, to determine preliminary count */
         if (zn != NULL) {
-            rank = zslGetRank(zsl, zn->score, zn->ele);
+            rank = zslGetRankByNode(zsl, zn);
             count = (zsl->length - (rank - 1));
 
             /* Find last element in range */
@@ -3411,7 +3364,7 @@ void zlexcountCommand(client *c) {
 
             /* Use rank of last element, if any, to determine the actual count */
             if (zn != NULL) {
-                rank = zslGetRank(zsl, zn->score, zn->ele);
+                rank = zslGetRankByNode(zsl, zn);
                 count -= (zsl->length - rank);
             }
         }
