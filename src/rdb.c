@@ -3600,7 +3600,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
 
         // do not bypass CRC on the primary if connection doesn't have integrity check or if the replica doesn't support it
         if (!connIsIntegrityChecked(replica->conn) || !(replica->replica_capa & REPLICA_CAPA_BYPASS_CRC)) 
-            bypass_crc_capa = 0;
+            bypass_crc = 0;
         
     }
 
