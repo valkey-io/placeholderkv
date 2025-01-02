@@ -670,6 +670,7 @@ sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module,
     sds line;
 
     line = sdsnew(config_option_str);
+    line = sdscatlen(line, " ", 1);
     line = sdscatsds(line, module->loadmod->path);
     for (int i = 0; i < module->loadmod->argc; i++) {
         line = sdscatlen(line, " ", 1);
