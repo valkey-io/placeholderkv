@@ -3625,7 +3625,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
         }
         serverSetCpuAffinity(server.bgsave_cpulist);
 
-        if (bypass_crc_capa) {
+        if (bypass_crc) {
             serverLog(LL_NOTICE, "CRC checksum is disabled for this RDB transfer");
             // mark rdb object to skip CRC checksum calculations
             rdb.flags |= RIO_FLAG_BYPASS_CRC;
