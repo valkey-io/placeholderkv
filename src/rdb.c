@@ -3563,7 +3563,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
      * For replicas with repl_state == REPLICA_STATE_WAIT_BGSAVE_END and replica_req == req:
      * Check replica capabilities, if every replica supports bypassing CRC, primary should also bypass CRC, otherwise, use CRC.
      */
-    int bypass_crc_capa = server.bypass_crc;
+    int bypass_crc_capa = 1;
     /* Collect the connections of the replicas we want to transfer
      * the RDB to, which are in WAIT_BGSAVE_START state. */
     int connsnum = 0;
@@ -3598,7 +3598,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             replicationSetupReplicaForFullResync(replica, getPsyncInitialOffset());
         }
 
-        // do not bypass CRC on the primary if TLS is disabled or if the replica doesn't support it
+        // do not bypass CRC on the primary if connection doesn't have integrity check or if the replica doesn't support it
         if (!connIsIntegrityChecked(replica->conn) || !(replica->replica_capa & REPLICA_CAPA_BYPASS_CRC)) 
             bypass_crc_capa = 0;
         

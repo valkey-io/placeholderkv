@@ -1250,7 +1250,8 @@ void syncCommand(client *c) {
  * eof: supports EOF-style RDB transfer for diskless replication.
  * psync2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
  * dual-channel: supports full sync using rdb channel.
- * bypass-crc: supports skipping CRC calculations during TLS enabled diskless sync.
+ * bypass-crc: supports skipping CRC calculations during diskless sync using 
+ *             a connection that has integrity checks (such as TLS).
  *
  * - ack <offset> [fack <aofofs>]
  * Replica informs the primary the amount of replication stream that it
@@ -1976,8 +1977,8 @@ static int useDisklessLoad(void) {
 }
 
 /* Returns 1 if the replica can skip CRC calculations during full sync */
-int replicationBypassCRC(connection *conn, int is_replica_diskless_load, int is_primary_diskless_sync) {
-    return server.bypass_crc && is_replica_diskless_load && is_primary_diskless_sync && connIsIntegrityChecked(conn);
+int replicationSupportBypassCRC(connection *conn, int is_replica_diskless_load, int is_primary_diskless_sync) {
+    return is_replica_diskless_load && is_primary_diskless_sync && connIsIntegrityChecked(conn);
 }
 
 /* Helper function for readSyncBulkPayload() to initialize tempDb
@@ -2092,7 +2093,6 @@ void readSyncBulkPayload(connection *conn) {
             serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: receiving %lld bytes from primary %s",
                       (long long)server.repl_transfer_size, use_diskless_load ? "to parser" : "to disk");
         }
-
         return;
     }
 
@@ -2260,8 +2260,14 @@ void readSyncBulkPayload(connection *conn) {
 
         serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Loading DB in memory");
         startLoading(server.repl_transfer_size, RDBFLAGS_REPLICATION, asyncLoading);
-        if (replicationBypassCRC(conn, use_diskless_load, usemark)) rdb.flags |= RIO_FLAG_BYPASS_CRC;
-
+        if (replicationSupportBypassCRC(conn, use_diskless_load, usemark)) {
+            /* We can bypass CRC checks when data is transmitted through a verified stream. 
+             * The usemark flag indicates that the primary is streaming the data directly without 
+             * writing it to storage. 
+             * Similarly, the use_diskless_load flag indicates that the 
+             * replica will load the payload directly into memory without first writing it to disk. */
+            rdb.flags |= RIO_FLAG_BYPASS_CRC;
+        }
         int loadingFailed = 0;
         rdbLoadingCtx loadingCtx = {.dbarray = dbarray, .functions_lib_ctx = functions_lib_ctx};
         if (rdbLoadRioWithLoadingCtxScopedRdb(&rdb, RDBFLAGS_REPLICATION, &rsi, &loadingCtx) != C_OK) {
@@ -3522,12 +3528,13 @@ void syncWithPrimary(connection *conn) {
          * EOF: supports EOF-style RDB transfer for diskless replication.
          * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
          * BYPASS-CRC: supports skipping CRC calculations during full sync.
-         *             Inform the primary of this capa only during diskless sync with TLS enabled.
-         *             In disk-based sync, or non-TLS, there is more concern for data corruprion
-         *             so we keep this extra layer of detection.
+         *             Inform the primary of this capa only during diskless sync using a  
+         *             connection that has integrity checks (such as TLS).
+         *             In disk-based sync, or non-integrity-checked connection, there is more  
+         *             concern for data corruprion so we keep this extra layer of detection.
          *
          * The primary will ignore capabilities it does not understand. */
-        int send_bypass_crc_capa = replicationBypassCRC(conn, useDisklessLoad(), 1);
+        int send_bypass_crc_capa = replicationSupportBypassCRC(conn, useDisklessLoad(), 1);
         err = sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2",
                           send_bypass_crc_capa ? "capa" : "",
                           send_bypass_crc_capa ? REPLICA_CAPA_BYPASS_CRC_STR : "",

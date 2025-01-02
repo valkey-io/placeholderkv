@@ -1993,7 +1993,6 @@ struct valkeyServer {
     char *rdb_filename;                   /* Name of RDB file */
     int rdb_compression;                  /* Use compression in RDB? */
     int rdb_checksum;                     /* Use RDB checksum? */
-    int bypass_crc;                       /* Skip RDB checksum? Applicable only for TLS enabled diskless full sync */
     int rdb_del_sync_files;               /* Remove RDB files used only for SYNC if
                                              the instance does not use persistence. */
     time_t lastsave;                      /* Unix time of last successful save */
