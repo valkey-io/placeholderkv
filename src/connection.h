@@ -123,7 +123,7 @@ typedef struct ConnectionType {
     sds (*get_peer_cert)(struct connection *conn);
 
     /* Miselenious */
-    int (*connIntegrityChecked)(void);  // return 1 if connection type has built-in integrity checks
+    int (*connIntegrityChecked)(void); // return 1 if connection type has built-in integrity checks
 } ConnectionType;
 
 struct connection {

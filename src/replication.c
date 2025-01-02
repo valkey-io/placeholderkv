@@ -1250,7 +1250,7 @@ void syncCommand(client *c) {
  * eof: supports EOF-style RDB transfer for diskless replication.
  * psync2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
  * dual-channel: supports full sync using rdb channel.
- * bypass-crc: supports skipping CRC calculations during diskless sync using 
+ * bypass-crc: supports skipping CRC calculations during diskless sync using
  *             a connection that has integrity checks (such as TLS).
  *
  * - ack <offset> [fack <aofofs>]
@@ -2261,10 +2261,10 @@ void readSyncBulkPayload(connection *conn) {
         serverLog(LL_NOTICE, "PRIMARY <-> REPLICA sync: Loading DB in memory");
         startLoading(server.repl_transfer_size, RDBFLAGS_REPLICATION, asyncLoading);
         if (replicationSupportBypassCRC(conn, use_diskless_load, usemark)) {
-            /* We can bypass CRC checks when data is transmitted through a verified stream. 
-             * The usemark flag indicates that the primary is streaming the data directly without 
-             * writing it to storage. 
-             * Similarly, the use_diskless_load flag indicates that the 
+            /* We can bypass CRC checks when data is transmitted through a verified stream.
+             * The usemark flag indicates that the primary is streaming the data directly without
+             * writing it to storage.
+             * Similarly, the use_diskless_load flag indicates that the
              * replica will load the payload directly into memory without first writing it to disk. */
             rdb.flags |= RIO_FLAG_BYPASS_CRC;
         }
@@ -3528,9 +3528,9 @@ void syncWithPrimary(connection *conn) {
          * EOF: supports EOF-style RDB transfer for diskless replication.
          * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
          * BYPASS-CRC: supports skipping CRC calculations during full sync.
-         *             Inform the primary of this capa only during diskless sync using a  
+         *             Inform the primary of this capa only during diskless sync using a
          *             connection that has integrity checks (such as TLS).
-         *             In disk-based sync, or non-integrity-checked connection, there is more  
+         *             In disk-based sync, or non-integrity-checked connection, there is more
          *             concern for data corruprion so we keep this extra layer of detection.
          *
          * The primary will ignore capabilities it does not understand. */
