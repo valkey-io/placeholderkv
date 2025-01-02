@@ -3563,7 +3563,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
      * For replicas with repl_state == REPLICA_STATE_WAIT_BGSAVE_END and replica_req == req:
      * Check replica capabilities, if every replica supports bypassing CRC, primary should also bypass CRC, otherwise, use CRC.
      */
-    int bypass_crc_capa = 1;
+    int bypass_crc = 1;
     /* Collect the connections of the replicas we want to transfer
      * the RDB to, which are in WAIT_BGSAVE_START state. */
     int connsnum = 0;
