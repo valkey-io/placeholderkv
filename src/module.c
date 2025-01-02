@@ -665,10 +665,11 @@ void moduleEnqueueLoadModule(sds path, sds *argv, int argc) {
     listAddNodeTail(server.loadmodule_queue, loadmod);
 }
 
-sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module) {
+sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module,
+                                              const char *config_option_str) {
     sds line;
 
-    line = sdsnew("loadmodule ");
+    line = sdsnew(config_option_str);
     line = sdscatsds(line, module->loadmod->path);
     for (int i = 0; i < module->loadmod->argc; i++) {
         line = sdscatlen(line, " ", 1);
@@ -7435,7 +7436,7 @@ void *VM_LoadDataTypeFromStringEncver(const ValkeyModuleString *str, const modul
     void *ret;
 
     rioInitWithBuffer(&payload, str->ptr);
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
 
     /* All VM_Save*() calls always write a version 2 compatible format, so we
      * need to make sure we read the same.
@@ -7467,7 +7468,7 @@ ValkeyModuleString *VM_SaveDataTypeToString(ValkeyModuleCtx *ctx, void *data, co
     ValkeyModuleIO io;
 
     rioInitWithBuffer(&payload, sdsempty());
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
     mt->rdb_save(&io, data);
     if (io.ctx) {
         moduleFreeContext(io.ctx);

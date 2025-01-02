@@ -264,7 +264,7 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
         ValkeyModuleDigest md = {{0}, {0}, keyobj, db->id};
         moduleValue *mv = o->ptr;
         moduleType *mt = mv->type;
-        moduleInitDigestContext(md);
+        moduleInitDigestContext(&md);
         if (mt->digest) {
             mt->digest(&md, mv->value);
             xorDigest(digest, md.x, sizeof(md.x));

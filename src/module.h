@@ -96,7 +96,7 @@ typedef struct moduleValue {
 } moduleValue;
 
 /* This structure represents a module inside the system. */
-struct ValkeyModule {
+typedef struct ValkeyModule {
     void *handle;                         /* Module dlopen() handle. */
     char *name;                           /* Module name. */
     int ver;                              /* Module version. We use just progressive integers. */
@@ -117,64 +117,66 @@ struct ValkeyModule {
     int num_commands_with_acl_categories; /* Number of commands in this module included in acl categories */
     int onload;                           /* Flag to identify if the call is being made from Onload (0 or 1) */
     size_t num_acl_categories_added;      /* Number of acl categories added by this module. */
-};
-typedef struct ValkeyModule ValkeyModule;
+} ValkeyModule;
 
 /* This is a wrapper for the 'rio' streams used inside rdb.c in the server, so that
  * the user does not have to take the total count of the written bytes nor
  * to care about error conditions. */
-struct ValkeyModuleIO {
-    size_t bytes;                /* Bytes read / written so far. */
-    rio *rio;                    /* Rio stream. */
-    moduleType *type;            /* Module type doing the operation. */
-    int error;                   /* True if error condition happened. */
-    struct ValkeyModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
-    struct serverObject *key;    /* Optional name of key processed */
-    int dbid;                    /* The dbid of the key being processed, -1 when unknown. */
-    sds pre_flush_buffer;        /* A buffer that should be flushed before next write operation
-                                  * See rdbSaveSingleModuleAux for more details */
-};
+typedef struct ValkeyModuleIO {
+    size_t bytes;         /* Bytes read / written so far. */
+    rio *rio;             /* Rio stream. */
+    moduleType *type;     /* Module type doing the operation. */
+    int error;            /* True if error condition happened. */
+    ValkeyModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
+    robj *key;            /* Optional name of key processed */
+    int dbid;             /* The dbid of the key being processed, -1 when unknown. */
+    sds pre_flush_buffer; /* A buffer that should be flushed before next write operation
+                           * See rdbSaveSingleModuleAux for more details */
+} ValkeyModuleIO;
 
 /* Macro to initialize an IO context. Note that the 'ver' field is populated
  * inside rdb.c according to the version of the value to load. */
-#define moduleInitIOContext(iovar, mtype, rioptr, keyptr, db) \
-    do {                                                      \
-        iovar.rio = rioptr;                                   \
-        iovar.type = mtype;                                   \
-        iovar.bytes = 0;                                      \
-        iovar.error = 0;                                      \
-        iovar.key = keyptr;                                   \
-        iovar.dbid = db;                                      \
-        iovar.ctx = NULL;                                     \
-        iovar.pre_flush_buffer = NULL;                        \
-    } while (0)
+static inline void moduleInitIOContext(ValkeyModuleIO *iovar,
+                                       moduleType *mtype,
+                                       rio *rioptr,
+                                       robj *keyptr,
+                                       int db) {
+    iovar->rio = rioptr;
+    iovar->type = mtype;
+    iovar->bytes = 0;
+    iovar->error = 0;
+    iovar->key = keyptr;
+    iovar->dbid = db;
+    iovar->ctx = NULL;
+    iovar->pre_flush_buffer = NULL;
+}
 
 /* This is a structure used to export DEBUG DIGEST capabilities to
  * modules. We want to capture both the ordered and unordered elements of
  * a data structure, so that a digest can be created in a way that correctly
  * reflects the values. See the DEBUG DIGEST command implementation for more
  * background. */
-struct ValkeyModuleDigest {
-    unsigned char o[20];      /* Ordered elements. */
-    unsigned char x[20];      /* Xored elements. */
-    struct serverObject *key; /* Optional name of key processed */
-    int dbid;                 /* The dbid of the key being processed */
-};
+typedef struct ValkeyModuleDigest {
+    unsigned char o[20]; /* Ordered elements. */
+    unsigned char x[20]; /* Xored elements. */
+    robj *key;           /* Optional name of key processed */
+    int dbid;            /* The dbid of the key being processed */
+} ValkeyModuleDigest;
 
 /* Just start with a digest composed of all zero bytes. */
-#define moduleInitDigestContext(mdvar)       \
-    do {                                     \
-        memset(mdvar.o, 0, sizeof(mdvar.o)); \
-        memset(mdvar.x, 0, sizeof(mdvar.x)); \
-    } while (0)
+static inline void moduleInitDigestContext(ValkeyModuleDigest *mdvar) {
+    memset(mdvar->o, 0, sizeof(mdvar->o));
+    memset(mdvar->x, 0, sizeof(mdvar->x));
+}
 
 void moduleEnqueueLoadModule(sds path, sds *argv, int argc);
-sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module);
-struct ValkeyModuleCtx *moduleAllocateContext(void);
-void moduleScriptingEngineInitContext(struct ValkeyModuleCtx *out_ctx,
+sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module,
+                                              const char *config_option_str);
+ValkeyModuleCtx *moduleAllocateContext(void);
+void moduleScriptingEngineInitContext(ValkeyModuleCtx *out_ctx,
                                       ValkeyModule *module,
                                       client *client);
-void moduleFreeContext(struct ValkeyModuleCtx *ctx);
+void moduleFreeContext(ValkeyModuleCtx *ctx);
 void moduleInitModulesSystem(void);
 void moduleInitModulesSystemLast(void);
 void modulesCron(void);
@@ -189,7 +191,7 @@ moduleType *moduleTypeLookupModuleByNameIgnoreCase(const char *name);
 void moduleTypeNameByID(char *name, uint64_t moduleid);
 const char *moduleTypeModuleName(moduleType *mt);
 const char *moduleNameFromCommand(struct serverCommand *cmd);
-void moduleFreeContext(struct ValkeyModuleCtx *ctx);
+void moduleFreeContext(ValkeyModuleCtx *ctx);
 void moduleCallCommandUnblockedHandler(client *c);
 int isModuleClientUnblocked(client *c);
 void unblockClientFromModule(client *c);
