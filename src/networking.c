@@ -66,25 +66,6 @@ typedef struct {
     int skipme;
 } clientFilter;
 
-static void clientCommandHelp(client *c);
-static void clientCommandID(client *c);
-static void clientCommandInfo(client *c);
-static void clientCommandList(client *c);
-static void clientCommandReply(client *c);
-static void clientCommandNoEvict(client *c);
-static void clientCommandKill(client *c);
-static void clientCommandUnblock(client *c);
-static void clientCommandSetName(client *c);
-static void clientCommandGetName(client *c);
-static void clientCommandUnpause(client *c);
-static void clientCommandPause(client *c);
-static void clientCommandTracking(client *c);
-static void clientCommandCaching(client *c);
-static void clientCommandGetredir(client *c);
-static void clientCommandTrackingInfo(client *c);
-static void clientCommandNoTouch(client *c);
-static void clientCommandCapa(client *c);
-static void clientCommandImportSource(client *c);
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
@@ -92,6 +73,27 @@ char *getClientSockname(client *c);
 static int parseClientFiltersOrReply(client *c, int index, clientFilter *filter);
 static int clientMatchesFilter(client *client, clientFilter client_filter);
 static sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
+
+#define IS_CLIENT_SUBCOMMAND(cmd)        \
+    (cmd == clientCommandHelp ||         \
+     cmd == clientCommandID ||           \
+     cmd == clientCommandInfo ||         \
+     cmd == clientCommandList ||         \
+     cmd == clientCommandReply ||        \
+     cmd == clientCommandNoEvict ||      \
+     cmd == clientCommandKill ||         \
+     cmd == clientCommandUnblock ||      \
+     cmd == clientCommandSetName ||      \
+     cmd == clientCommandGetName ||      \
+     cmd == clientCommandUnpause ||      \
+     cmd == clientCommandPause ||        \
+     cmd == clientCommandTracking ||     \
+     cmd == clientCommandCaching ||      \
+     cmd == clientCommandGetredir ||     \
+     cmd == clientCommandTrackingInfo || \
+     cmd == clientCommandNoTouch ||      \
+     cmd == clientCommandCapa ||         \
+     cmd == clientCommandImportSource)
 
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_shared_qb = NULL;
@@ -2525,7 +2527,9 @@ void resetClient(client *c) {
     /* We do the same for the CACHING command as well. It also affects
      * the next command or transaction executed, in a way very similar
      * to ASKING. */
-    if (!c->flag.multi && prevcmd != clientCommand) c->flag.tracking_caching = 0;
+    if (!c->flag.multi && !IS_CLIENT_SUBCOMMAND(prevcmd)) {
+        c->flag.tracking_caching = 0;
+    }
 
     /* Remove the CLIENT_REPLY_SKIP flag if any so that the reply
      * to the next command will be sent, but set the flag if the command
@@ -3625,7 +3629,7 @@ static int clientMatchesFilter(client *client, clientFilter client_filter) {
     return 1;
 }
 
-static void clientCommandHelp(client *c) {
+void clientCommandHelp(client *c) {
     const char *help[] = {
         "CACHING (YES|NO)",
         "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
@@ -3706,18 +3710,18 @@ static void clientCommandHelp(client *c) {
     addReplyHelp(c, help);
 }
 
-static void clientCommandID(client *c) {
+void clientCommandID(client *c) {
     addReplyLongLong(c, c->id);
 }
 
-static void clientCommandInfo(client *c) {
+void clientCommandInfo(client *c) {
     sds info = catClientInfoString(sdsempty(), c, 0);
     info = sdscatlen(info, "\n", 1);
     addReplyVerbatim(c, info, sdslen(info), "txt");
     sdsfree(info);
 }
 
-static void clientCommandList(client *c) {
+void clientCommandList(client *c) {
     int type = -1;
     sds response = NULL;
 
@@ -3741,7 +3745,7 @@ static void clientCommandList(client *c) {
     sdsfree(response);
 }
 
-static void clientCommandReply(client *c) {
+void clientCommandReply(client *c) {
     /* CLIENT REPLY ON|OFF|SKIP */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.reply_skip = 0;
@@ -3757,7 +3761,7 @@ static void clientCommandReply(client *c) {
     }
 }
 
-static void clientCommandNoEvict(client *c) {
+void clientCommandNoEvict(client *c) {
     /* CLIENT NO-EVICT ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_evict = 1;
@@ -3773,7 +3777,7 @@ static void clientCommandNoEvict(client *c) {
     }
 }
 
-static void clientCommandKill(client *c) {
+void clientCommandKill(client *c) {
     /* CLIENT KILL <ip:port>
      * CLIENT KILL <option> [value] ... <option> [value] */
 
@@ -3841,7 +3845,7 @@ client_kill_done:
 }
 
 
-static void clientCommandUnblock(client *c) {
+void clientCommandUnblock(client *c) {
     /* CLIENT UNBLOCK <id> [timeout|error] */
     long long id;
     int unblock_error = 0;
@@ -3874,13 +3878,13 @@ static void clientCommandUnblock(client *c) {
     }
 }
 
-static void clientCommandSetName(client *c) {
+void clientCommandSetName(client *c) {
     /* CLIENT SETNAME */
     if (clientSetNameOrReply(c, c->argv[2]) == C_OK)
         addReply(c, shared.ok);
 }
 
-static void clientCommandGetName(client *c) {
+void clientCommandGetName(client *c) {
     /* CLIENT GETNAME */
     if (c->name)
         addReplyBulk(c, c->name);
@@ -3888,13 +3892,13 @@ static void clientCommandGetName(client *c) {
         addReplyNull(c);
 }
 
-static void clientCommandUnpause(client *c) {
+void clientCommandUnpause(client *c) {
     /* CLIENT UNPAUSE */
     unpauseActions(PAUSE_BY_CLIENT_COMMAND);
     addReply(c, shared.ok);
 }
 
-static void clientCommandPause(client *c) {
+void clientCommandPause(client *c) {
     /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
     mstime_t end;
     int isPauseClientAll = 1;
@@ -3912,7 +3916,7 @@ static void clientCommandPause(client *c) {
     addReply(c, shared.ok);
 }
 
-static void clientCommandTracking(client *c) {
+void clientCommandTracking(client *c) {
     /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
      *                          [PREFIX second] [OPTIN] [OPTOUT] [NOLOOP]... */
     long long redir = 0;
@@ -4028,7 +4032,7 @@ static void clientCommandTracking(client *c) {
     addReply(c, shared.ok);
 }
 
-static void clientCommandCaching(client *c) {
+void clientCommandCaching(client *c) {
     if (!c->flag.tracking) {
         addReplyError(c, "CLIENT CACHING can be called only when the "
                          "client is in tracking mode with OPTIN or "
@@ -4060,7 +4064,7 @@ static void clientCommandCaching(client *c) {
     addReply(c, shared.ok);
 }
 
-static void clientCommandGetredir(client *c) {
+void clientCommandGetredir(client *c) {
     /* CLIENT GETREDIR */
     if (c->flag.tracking) {
         addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
@@ -4069,7 +4073,7 @@ static void clientCommandGetredir(client *c) {
     }
 }
 
-static void clientCommandTrackingInfo(client *c) {
+void clientCommandTrackingInfo(client *c) {
     addReplyMapLen(c, 3);
 
     /* Flags */
@@ -4132,7 +4136,7 @@ static void clientCommandTrackingInfo(client *c) {
     }
 }
 
-static void clientCommandNoTouch(client *c) {
+void clientCommandNoTouch(client *c) {
     /* CLIENT NO-TOUCH ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_touch = 1;
@@ -4145,7 +4149,7 @@ static void clientCommandNoTouch(client *c) {
     }
 }
 
-static void clientCommandCapa(client *c) {
+void clientCommandCapa(client *c) {
     for (int i = 2; i < c->argc; i++) {
         if (!strcasecmp(c->argv[i]->ptr, "redirect")) {
             c->capa |= CLIENT_CAPA_REDIRECT;
@@ -4154,7 +4158,7 @@ static void clientCommandCapa(client *c) {
     addReply(c, shared.ok);
 }
 
-static void clientCommandImportSource(client *c) {
+void clientCommandImportSource(client *c) {
     /* CLIENT IMPORT-SOURCE ON|OFF */
     if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
         addReplyError(c, "Server is not in import mode");
@@ -4169,50 +4173,6 @@ static void clientCommandImportSource(client *c) {
     } else {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
-    }
-}
-
-void clientCommand(client *c) {
-    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help")) {
-        clientCommandHelp(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
-        clientCommandID(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "info") && c->argc == 2) {
-        clientCommandInfo(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "list")) {
-        clientCommandList(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "reply") && c->argc == 3) {
-        clientCommandReply(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "no-evict") && c->argc == 3) {
-        clientCommandNoEvict(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "kill")) {
-        clientCommandKill(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "unblock") && (c->argc == 3 || c->argc == 4)) {
-        clientCommandUnblock(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "setname") && c->argc == 3) {
-        clientCommandSetName(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "getname") && c->argc == 2) {
-        clientCommandGetName(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "unpause") && c->argc == 2) {
-        clientCommandUnpause(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "pause") && (c->argc == 3 || c->argc == 4)) {
-        clientCommandPause(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "tracking") && c->argc >= 3) {
-        clientCommandTracking(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "caching") && c->argc >= 3) {
-        clientCommandCaching(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "getredir") && c->argc == 2) {
-        clientCommandGetredir(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "trackinginfo") && c->argc == 2) {
-        clientCommandTrackingInfo(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "no-touch")) {
-        clientCommandNoTouch(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "capa") && c->argc >= 3) {
-        clientCommandCapa(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
-        clientCommandImportSource(c);
-    } else {
-        addReplySubcommandSyntaxError(c);
     }
 }
 
