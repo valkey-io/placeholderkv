@@ -35,6 +35,7 @@
 #include "fpconv_dtoa.h"
 #include "fmtargs.h"
 #include "io_threads.h"
+#include "module.h"
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -2231,6 +2232,8 @@ int postWriteToClient(client *c) {
     server.stat_total_writes_processed++;
     if (getClientType(c) != CLIENT_TYPE_REPLICA) {
         _postWriteToClient(c);
+    } else {
+        server.stat_net_repl_output_bytes += c->nwritten > 0 ? c->nwritten : 0;
     }
 
     if (c->write_flags & WRITE_FLAGS_WRITE_ERROR) {
@@ -2588,6 +2591,16 @@ void resetClient(client *c) {
         c->flag.reply_skip = 1;
         c->flag.reply_skip_next = 0;
     }
+}
+
+void resetClientIOState(client *c) {
+    c->nwritten = 0;
+    c->nread = 0;
+    c->io_read_state = c->io_write_state = CLIENT_IDLE;
+    c->io_parsed_cmd = NULL;
+    c->flag.pending_command = 0;
+    c->io_last_bufpos = 0;
+    c->io_last_reply_block = NULL;
 }
 
 /* Initializes the shared query buffer to a new sds with the default capacity.
@@ -4960,7 +4973,11 @@ void ioThreadReadQueryFromClient(void *data) {
     }
 
 done:
-    trimClientQueryBuffer(c);
+    /* Only trim query buffer for non-primary clients
+     * Primary client's buffer is handled by main thread using repl_applied position */
+    if (!(c->read_flags & READ_FLAGS_PRIMARY)) {
+        trimClientQueryBuffer(c);
+    }
     atomic_thread_fence(memory_order_release);
     c->io_read_state = CLIENT_COMPLETED_IO;
 }

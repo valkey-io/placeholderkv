@@ -37,6 +37,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include "bio.h"
 #include "zmalloc.h"
+#include "module.h"
 
 #include <math.h>
 #include <fcntl.h>
@@ -64,6 +65,7 @@ char *rdbFileBeingLoaded = NULL; /* used for rdb checking on read error */
 extern int rdbCheckMode;
 void rdbCheckError(const char *fmt, ...);
 void rdbCheckSetError(const char *fmt, ...);
+int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx);
 
 #ifdef __GNUC__
 void rdbReportError(int corruption_error, int linenum, char *reason, ...) __attribute__((format(printf, 3, 4)));
@@ -1097,7 +1099,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
          * to call the right module during loading. */
         int retval = rdbSaveLen(rdb, mt->id);
         if (retval == -1) return -1;
-        moduleInitIOContext(io, mt, rdb, key, dbid);
+        moduleInitIOContext(&io, mt, rdb, key, dbid);
         io.bytes += retval;
 
         /* Then write the module-specific representation + EOF marker. */
@@ -1241,7 +1243,7 @@ ssize_t rdbSaveSingleModuleAux(rio *rdb, int when, moduleType *mt) {
     /* Save a module-specific aux value. */
     ValkeyModuleIO io;
     int retval = 0;
-    moduleInitIOContext(io, mt, rdb, NULL, -1);
+    moduleInitIOContext(&io, mt, rdb, NULL, -1);
 
     /* We save the AUX field header in a temporary buffer so we can support aux_save2 API.
      * If aux_save2 is used the buffer will be flushed at the first time the module will perform
@@ -2794,7 +2796,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
         ValkeyModuleIO io;
         robj keyobj;
         initStaticStringObject(keyobj, key);
-        moduleInitIOContext(io, mt, rdb, &keyobj, dbid);
+        moduleInitIOContext(&io, mt, rdb, &keyobj, dbid);
         /* Call the rdb_load method of the module providing the 10 bit
          * encoding version in the lower 10 bits of the module ID. */
         void *ptr = mt->rdb_load(&io, moduleid & 1023);
@@ -2991,7 +2993,19 @@ done:
 int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
     functionsLibCtx *functions_lib_ctx = functionsLibCtxGetCurrent();
     rdbLoadingCtx loading_ctx = {.dbarray = server.db, .functions_lib_ctx = functions_lib_ctx};
-    int retval = rdbLoadRioWithLoadingCtx(rdb, rdbflags, rsi, &loading_ctx);
+    int retval = rdbLoadRioWithLoadingCtxScopedRdb(rdb, rdbflags, rsi, &loading_ctx);
+    return retval;
+}
+
+/* Wrapper for rdbLoadRioWithLoadingCtx that manages a scoped RDB context.
+ * This method wraps the rdbLoadRioWithLoadingCtx function, providing temporary
+ * RDB context management. It sets a new current loading RDB, calls the wrapped
+ * function, and then restores the previous loading RDB context. */
+int rdbLoadRioWithLoadingCtxScopedRdb(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx) {
+    rio *prev_rio = server.loading_rio;
+    server.loading_rio = rdb;
+    int retval = rdbLoadRioWithLoadingCtx(rdb, rdbflags, rsi, rdb_loading_ctx);
+    server.loading_rio = prev_rio;
     return retval;
 }
 
@@ -3208,7 +3222,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
                 }
 
                 ValkeyModuleIO io;
-                moduleInitIOContext(io, mt, rdb, NULL, -1);
+                moduleInitIOContext(&io, mt, rdb, NULL, -1);
                 /* Call the rdb_load method of the module providing the 10 bit
                  * encoding version in the lower 10 bits of the module ID. */
                 int rc = mt->aux_load(&io, moduleid & 1023, when);

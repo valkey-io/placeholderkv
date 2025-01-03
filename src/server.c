@@ -42,6 +42,7 @@
 #include "fmtargs.h"
 #include "io_threads.h"
 #include "sds.h"
+#include "module.h"
 #include "scripting_engine.h"
 
 #include <time.h>
@@ -2219,6 +2220,7 @@ void initServerConfig(void) {
     server.fsynced_reploff_pending = 0;
     server.rdb_client_id = -1;
     server.loading_process_events_interval_ms = LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT;
+    server.loading_rio = NULL;
 
     /* Replication partial resync backlog */
     server.repl_backlog = NULL;
