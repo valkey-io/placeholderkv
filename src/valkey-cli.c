@@ -2226,7 +2226,7 @@ static int cliReadReply(int output_raw_strings) {
         fflush(stdout);
         sdsfree(out);
     }
-
+    
     return REDIS_OK;
 }
 
@@ -2247,7 +2247,32 @@ static void cliWaitForMessagesOrStdin(void) {
                 sds out = cliFormatReply(reply, config.output, 0);
                 fwrite(out, sdslen(out), 1, stdout);
                 fflush(stdout);
+
+                // Handle unsubscribe responses
+                if (isPubsubPush(reply) && reply->elements >= 3) {
+                    char *cmd = reply->element[0]->str;
+                    int count = reply->element[2]->integer;
+                    
+                    if (strcmp(cmd, "unsubscribe") == 0 || 
+                        strcmp(cmd, "punsubscribe") == 0 ||
+                        strcmp(cmd, "sunsubscribe") == 0) {
+                        
+                        if (strcmp(cmd, "unsubscribe") == 0) {
+                            config.pubsub_unsharded_count = count;
+                        } else if (strcmp(cmd, "sunsubscribe") == 0) {
+                            config.pubsub_sharded_count = count;
+                        }
+                                                
+                        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+                            config.pubsub_mode = 0;
+                            cliRefreshPrompt();
+                            break;
+                        }
+                    }
+                }
+
                 sdsfree(out);
+                freeReplyObject(reply);
             }
         } while (reply);
 
@@ -2398,34 +2423,37 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
             fflush(stdout);
             if (config.pubsub_mode || num_expected_pubsub_push > 0) {
                 if (isPubsubPush(config.last_reply)) {
-
                     /* Handle pubsub mode */
-                    if (config.last_reply->elements >= 3) {
-                        char *cmd = config.last_reply->element[0]->str;
-                        int count = config.last_reply->element[2]->integer;
+                       if (config.pubsub_mode) {
+                            if (config.last_reply->elements >= 3) {
+                                char *cmd = config.last_reply->element[0]->str;
+                                int count = config.last_reply->element[2]->integer;
 
-                        if (strcmp(cmd, "subscribe") == 0) {
-                            config.pubsub_unsharded_count++;
-                        } else if (strcmp(cmd, "unsubscribe") == 0) {
-                            config.pubsub_unsharded_count = count;
-                        } else if (strcmp(cmd, "psubscribe") == 0) {
-                            config.pubsub_unsharded_count++;
-                        } else if (strcmp(cmd, "punsubscribe") == 0) {
-                            config.pubsub_unsharded_count = count;
-                        } else if (strcmp(cmd, "ssubscribe") == 0) {
-                            config.pubsub_sharded_count++;
-                        } else if (strcmp(cmd, "sunsubscribe") == 0) {
-                            config.pubsub_sharded_count = count;
-                        }
-
-                        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
-                            config.pubsub_mode = 0;
-                            cliRefreshPrompt();
-                        } else {
-                            config.pubsub_mode = 1;
-                        }
-                    }
-
+                                if (strcmp(cmd, "subscribe") == 0) {
+                                    config.pubsub_unsharded_count++;
+                                } else if (strcmp(cmd, "unsubscribe") == 0) {
+                                    config.pubsub_unsharded_count = count;
+                                } else if (strcmp(cmd, "psubscribe") == 0) {
+                                    config.pubsub_unsharded_count++;
+                                } else if (strcmp(cmd, "punsubscribe") == 0) {
+                                    config.pubsub_unsharded_count = count;
+                                } else if (strcmp(cmd, "ssubscribe") == 0) {
+                                    config.pubsub_sharded_count++;
+                                } else if (strcmp(cmd, "sunsubscribe") == 0) {
+                                    config.pubsub_sharded_count = count;
+                                }
+                                    
+                                if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+                                    if (config.pubsub_mode) {
+                                        config.pubsub_mode = 0;
+                                        cliRefreshPrompt();
+                                    }
+                                } else {
+                                    config.pubsub_mode = 1;
+                                    cliRefreshPrompt();
+                                }
+                            }
+                        }   
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
                         /* This pushed message confirms the
                          * [p|s][un]subscribe command. */
@@ -2433,7 +2461,6 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
                             config.pubsub_mode = 1;
                             cliRefreshPrompt();
                         }
-
                         if (--num_expected_pubsub_push > 0) {
                             continue; /* We need more of these. */
                         }
@@ -3147,6 +3174,13 @@ void cliSetPreferences(char **argv, int argc, int interactive) {
         else {
             printf("%sunknown valkey-cli preference '%s'\n", interactive ? "" : ".valkeyclirc: ", argv[1]);
         }
+    } else if (!strcasecmp(argv[0], ":get") && argc >= 2) {
+        if (!strcasecmp(argv[1], "pubsub")) {
+            printf("%d\n", config.pubsub_mode);
+        } else {
+            printf("%sunknown valkey-cli get option '%s'\n", interactive ? "" : ".valkeyclirc: ", argv[1]);
+        }
+        fflush(stdout);
     } else {
         printf("%sunknown valkey-cli internal command '%s'\n", interactive ? "" : ".valkeyclirc: ", argv[0]);
     }

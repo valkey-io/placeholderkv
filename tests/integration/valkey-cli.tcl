@@ -608,68 +608,64 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         assert_equal "a\n1\nb\n2\nc\n3" [exec {*}$cmdline ZRANGE new_zset 0 -1 WITHSCORES]
     }
 
-    test {valkey-cli pubsub mode with multiple subscription types} {
+    test "valkey-cli pubsub mode with multiple subscription types" {
         set fd [open_cli]
-        
-        write_cli $fd "SUBSCRIBE channel1 channel2 channel3"
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
+    
+        write_cli $fd "SUBSCRIBE ch1 ch2 ch3"
         set response [read_cli $fd]
 
-        foreach line [split $response "\n"] {
-            if {[string match "*subscribe*channel1*" $line]} {
-                assert_match "*subscribe*channel1*" $line
-            } elseif {[string match "*subscribe*channel2*" $line]} {
-                assert_match "*subscribe*channel2*" $line
-            } elseif {[string match "*subscribe*channel3*" $line]} {
-                assert_match "*subscribe*channel3*" $line
-            }
-        }
-        
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "1" $pubsub_status
+
         write_cli $fd "PSUBSCRIBE pattern*"
-        assert_match "*psubscribe*pattern**" [read_cli $fd]
+        set response [read_cli $fd]
+        set lines [split $response "\n"]
+        assert_equal "psubscribe" [lindex $lines 0]
+        assert_equal "pattern*" [lindex $lines 1]
+        assert_equal "4" [lindex $lines 2]
 
-        write_cli $fd "SSUBSCRIBE schannel1"
-        assert_match "*ssubscribe*schannel1*" [read_cli $fd]
-
-        write_cli $fd "UNSUBSCRIBE channel1"
-        assert_match "*unsubscribe*channel1*" [read_cli $fd]
-
-        # Verify still in pubsub mode
-        catch {run_command $fd "SET key value"} err
-        assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
+        write_cli $fd "SSUBSCRIBE schannel"
+        set response [read_cli $fd]
+        set lines [split $response "\n"]
+        assert_equal "ssubscribe" [lindex $lines 0]
+        assert_equal "schannel" [lindex $lines 1]
+        assert_equal "1" [lindex $lines 2]
 
         write_cli $fd "PUNSUBSCRIBE pattern*"
-        assert_match "*punsubscribe*pattern**" [read_cli $fd]
+        set response [read_cli $fd]
+        set lines [split $response "\n"]
+        assert_equal "punsubscribe" [lindex $lines 0]
+        assert_equal "pattern*" [lindex $lines 1]
+        assert_equal "3" [lindex $lines 2]
 
-        # Verify still in pubsub mode
-        catch {run_command $fd "GET key"} err
-        assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "1" $pubsub_status
 
-        write_cli $fd "SUNSUBSCRIBE schannel1"
-        assert_match "*sunsubscribe*schannel1*" [read_cli $fd]
+        write_cli $fd "SUNSUBSCRIBE schannel"
+        set response [read_cli $fd]
+        set lines [split $response "\n"]
+        assert_equal "sunsubscribe" [lindex $lines 0]
+        assert_equal "schannel" [lindex $lines 1]
+        assert_equal "0" [lindex $lines 2]
 
-        catch {run_command $fd "INCR counter"} err
-        assert_match "*ERR*only*SUBSCRIBE*UNSUBSCRIBE*allowed*" $err
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "1" $pubsub_status
 
-        # Unsubscribe from all remaining channels
         write_cli $fd "UNSUBSCRIBE"
+        set response [read_cli $fd]
 
-        set combined_response [read_cli $fd]
+        # Verify pubsub mode is no longer active
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
 
-        foreach line [split $combined_response "\n"] {
-            if {[string match "*unsubscribe*channel2*" $line]} {
-                assert_match "*unsubscribe*channel2*" $line
-            } elseif {[string match "*unsubscribe*channel3*" $line]} {
-                assert_match "*unsubscribe*channel3*" $line
-            }
-        }
-
-        # Verify that we've exited pubsub mode
-        set response [run_command $fd "PING"]
-        
-        if {[string first "(subscribed mode)" $response] >= 0} {
-            return -code error "Client is still in pubsub mode"
-        }
-        
         close_cli $fd
     }
 
