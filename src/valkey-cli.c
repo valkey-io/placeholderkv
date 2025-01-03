@@ -2042,6 +2042,8 @@ static sds jsonStringOutput(sds out, const char *p, int len, int mode) {
     } else {
         assert(0);
     }
+    /* Silence compiler warning */
+    return NULL;
 }
 
 static sds cliFormatReplyJson(sds out, redisReply *r, int mode) {
