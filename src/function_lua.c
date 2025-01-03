@@ -561,7 +561,7 @@ int luaEngineInitEngine(void) {
     };
 
     return scriptingEngineManagerRegister(LUA_ENGINE_NAME,
-                                       NULL,
-                                       lua_engine_ctx,
-                                       &lua_engine_methods);
+                                          NULL,
+                                          lua_engine_ctx,
+                                          &lua_engine_methods);
 }

@@ -643,13 +643,13 @@ static void fcallCommandGeneric(client *c, int ro) {
     if (scriptPrepareForRun(&run_ctx, scriptingEngineGetClient(engine), c, fi->name, fi->f_flags, ro) != C_OK) return;
 
     scriptingEngineCallFunction(engine,
-                       &run_ctx,
-                       run_ctx.original_client,
-                       fi->function,
-                       c->argv + 3,
-                       numkeys,
-                       c->argv + 3 + numkeys,
-                       c->argc - 3 - numkeys);
+                                &run_ctx,
+                                run_ctx.original_client,
+                                fi->function,
+                                c->argv + 3,
+                                numkeys,
+                                c->argv + 3 + numkeys,
+                                c->argc - 3 - numkeys);
     scriptResetRun(&run_ctx);
 }
 
@@ -1011,10 +1011,10 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
     robj *compile_error = NULL;
     compiledFunction **compiled_functions =
         scriptingEngineCallCreateFunctionsLibrary(engine,
-                                         md.code,
-                                         timeout,
-                                         &num_compiled_functions,
-                                         &compile_error);
+                                                  md.code,
+                                                  timeout,
+                                                  &num_compiled_functions,
+                                                  &compile_error);
     if (compiled_functions == NULL) {
         serverAssert(num_compiled_functions == 0);
         serverAssert(compile_error != NULL);

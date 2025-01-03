@@ -13163,9 +13163,9 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
     }
 
     if (scriptingEngineManagerRegister(engine_name,
-                                    module_ctx->module,
-                                    engine_ctx,
-                                    engine_methods) != C_OK) {
+                                       module_ctx->module,
+                                       engine_ctx,
+                                       engine_methods) != C_OK) {
         return VALKEYMODULE_ERR;
     }
 
