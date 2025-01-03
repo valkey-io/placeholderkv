@@ -11104,9 +11104,8 @@ static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
         key = node->ele;
         value = createStringObjectFromLongDouble(node->score, 0);
     } else if (o->type == OBJ_HASH) {
-        key = (sds)hashTypeEntryGetKey(entry);
-        hashTypeEntry *hash_entry = entry;
-        sds val = hash_entry->value;
+        key = hashTypeEntryGetField(entry);
+        sds val = hashTypeEntryGetValue(entry);
         value = createStringObject(val, sdslen(val));
     } else {
         serverPanic("unexpected object type");

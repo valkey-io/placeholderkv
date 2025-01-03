@@ -624,37 +624,22 @@ hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
                                    .keyCompare = hashtableStringKeyCaseCompare,
                                    .instant_rehashing = 1};
 
-/* takes ownership of value, does not take ownership of field */
-hashTypeEntry *hashTypeCreateEntry(const sds field, sds value) {
-    size_t field_size = sdsAllocSize(field);
-    void *field_data = sdsAllocPtr(field);
-
-    size_t total_size = sizeof(hashTypeEntry) + field_size;
-    hashTypeEntry *hf = zmalloc(total_size);
-
-    hf->value = value;
-    hf->field_offset = field - (char *)field_data;
-    memcpy(hf->field_data, field_data, field_size);
-    return hf;
-}
-
-const void *hashTypeEntryGetKey(const void *entry) {
-    const hashTypeEntry *hf = entry;
-    return hf->field_data + hf->field_offset;
-}
-
-void freeHashTypeEntry(void *entry) {
-    hashTypeEntry *hf = entry;
-    sdsfree(hf->value);
-    zfree(hf);
-}
-
 /* Hash type hash table (note that small hashes are represented with listpacks) */
+const void *hashHashtableTypeGetKey(const void *entry) {
+    const hashTypeEntry *hash_entry = entry;
+    return (const void *)hashTypeEntryGetField(hash_entry);
+}
+
+void hashHashtableTypeDestructor(void *entry) {
+    hashTypeEntry *hash_entry = entry;
+    freeHashTypeEntry(hash_entry);
+}
+
 hashtableType hashHashtableType = {
     .hashFunction = dictSdsHash,
-    .entryGetKey = hashTypeEntryGetKey,
+    .entryGetKey = hashHashtableTypeGetKey,
     .keyCompare = hashtableSdsKeyCompare,
-    .entryDestructor = freeHashTypeEntry,
+    .entryDestructor = hashHashtableTypeDestructor,
 };
 
 /* Hash type hash table (note that small hashes are represented with listpacks) */

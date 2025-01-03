@@ -1000,10 +1000,9 @@ void hashtableScanCallback(void *privdata, void *entry) {
         key = node->ele;
         /* zset data is copied after filtering by key */
     } else if (o->type == OBJ_HASH) {
-        key = (sds)hashTypeEntryGetKey(entry);
+        key = hashTypeEntryGetField(entry);
         if (!data->only_keys) {
-            hashTypeEntry *hash_entry = entry;
-            val = hash_entry->value;
+            val = hashTypeEntryGetValue(entry);
         }
     } else {
         serverPanic("Type not handled in hashtable SCAN callback.");

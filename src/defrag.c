@@ -480,23 +480,18 @@ static void scanLaterSet(robj *ob, unsigned long *cursor) {
     *cursor = hashtableScanDefrag(ht, *cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
 }
 
-static void activeDefragHashField(void *privdata, void *element_ref) {
+static void activeDefragHashTypeEntry(void *privdata, void *element_ref) {
     UNUSED(privdata);
     hashTypeEntry **entry_ref = (hashTypeEntry **)element_ref;
 
-    /* defragment field */
-    hashTypeEntry *new_entry = activeDefragAlloc(*entry_ref);
+    hashTypeEntry *new_entry = hashTypeEntryDefrag(*entry_ref, activeDefragAlloc, activeDefragSds);
     if (new_entry) *entry_ref = new_entry;
-
-    /* defragment value */
-    sds new_value = activeDefragSds((*entry_ref)->value);
-    if (new_value) (*entry_ref)->value = new_value;
 }
 
 static void scanLaterHash(robj *ob, unsigned long *cursor) {
     if (ob->type != OBJ_HASH || ob->encoding != OBJ_ENCODING_HASHTABLE) return;
     hashtable *ht = ob->ptr;
-    *cursor = hashtableScanDefrag(ht, *cursor, activeDefragHashField, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
+    *cursor = hashtableScanDefrag(ht, *cursor, activeDefragHashTypeEntry, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
 }
 
 static void defragQuicklist(robj *ob) {
@@ -541,7 +536,7 @@ static void defragHash(robj *ob) {
     } else {
         unsigned long cursor = 0;
         do {
-            cursor = hashtableScanDefrag(ht, cursor, activeDefragHashField, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
+            cursor = hashtableScanDefrag(ht, cursor, activeDefragHashTypeEntry, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
         } while (cursor != 0);
     }
     /* defrag the hashtable struct and tables */

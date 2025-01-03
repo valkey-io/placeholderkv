@@ -2524,7 +2524,7 @@ typedef struct {
 
 #include "stream.h" /* Stream data type header file. */
 
-#define OBJ_HASH_KEY 1
+#define OBJ_HASH_FIELD 1
 #define OBJ_HASH_VALUE 2
 
 /*-----------------------------------------------------------------------------
@@ -3232,14 +3232,14 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1 << 1)
 #define HASH_SET_COPY 0
 
-typedef struct {
-    sds value;
-    unsigned char field_offset;
-    char field_data[];
-} hashTypeEntry;
+typedef struct hashTypeEntry hashTypeEntry;
 hashTypeEntry *hashTypeCreateEntry(sds field, sds value);
-const void *hashTypeEntryGetKey(const void *entry);
-void freeHashTypeEntry(void *entry);
+sds hashTypeEntryGetField(const hashTypeEntry *entry);
+sds hashTypeEntryGetValue(const hashTypeEntry *entry);
+size_t hashTypeEntryAllocSize(hashTypeEntry *entry);
+hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds));
+void dismissHashTypeEntry(hashTypeEntry *entry);
+void freeHashTypeEntry(hashTypeEntry *entry);
 
 void hashTypeConvert(robj *o, int enc);
 void hashTypeTryConversion(robj *subject, robj **argv, int start, int end);

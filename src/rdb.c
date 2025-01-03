@@ -962,8 +962,8 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
             hashtableInitIterator(&iter, ht);
             void *next;
             while (hashtableNext(&iter, &next)) {
-                sds field = (sds)hashTypeEntryGetKey(next);
-                sds value = ((hashTypeEntry *)next)->value;
+                sds field = hashTypeEntryGetField(next);
+                sds value = hashTypeEntryGetValue(next);
 
                 if ((n = rdbSaveRawString(rdb, (unsigned char *)field, sdslen(field))) == -1) {
                     hashtableResetIterator(&iter);
@@ -2168,7 +2168,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
 
             /* Add pair to hash table */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, value); // TODO rainval avoid extra allocation of field?
+            hashTypeEntry *entry = hashTypeCreateEntry(field, value);
             sdsfree(field);
             if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                 rdbReportCorruptRDB("Duplicate hash fields detected");

@@ -685,11 +685,7 @@ void dismissHashObject(robj *o, size_t size_hint) {
             hashtableInitIterator(&iter, ht);
             void *next;
             while (hashtableNext(&iter, &next)) {
-                /* Only dismiss values memory since the field size
-                 * usually is small. */
-                hashTypeEntry *entry = next;
-                UNUSED(entry);
-                dismissSds(entry->value);
+                dismissHashTypeEntry(next);
             }
             hashtableResetIterator(&iter);
         }
@@ -1206,9 +1202,7 @@ size_t objectComputeSize(robj *key, robj *o, size_t sample_size, int dbid) {
 
             asize = sizeof(*o) + hashtableMemUsage(ht);
             while (hashtableNext(&iter, &next) && samples < sample_size) {
-                elesize += zmalloc_usable_size(next);
-                hashTypeEntry *entry = next;
-                elesize += sdsAllocSize(entry->value);
+                elesize += hashTypeEntryAllocSize(next);
                 samples++;
             }
             hashtableResetIterator(&iter);

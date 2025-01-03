@@ -231,7 +231,7 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
             sds sdsele;
 
             memset(eledigest, 0, 20);
-            sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_KEY);
+            sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_FIELD);
             mixDigest(eledigest, sdsele, sdslen(sdsele));
             sdsfree(sdsele);
             sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_VALUE);
