@@ -37,6 +37,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include "bio.h"
 #include "zmalloc.h"
+#include "module.h"
 
 #include <math.h>
 #include <fcntl.h>
@@ -1098,7 +1099,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
          * to call the right module during loading. */
         int retval = rdbSaveLen(rdb, mt->id);
         if (retval == -1) return -1;
-        moduleInitIOContext(io, mt, rdb, key, dbid);
+        moduleInitIOContext(&io, mt, rdb, key, dbid);
         io.bytes += retval;
 
         /* Then write the module-specific representation + EOF marker. */
@@ -1242,7 +1243,7 @@ ssize_t rdbSaveSingleModuleAux(rio *rdb, int when, moduleType *mt) {
     /* Save a module-specific aux value. */
     ValkeyModuleIO io;
     int retval = 0;
-    moduleInitIOContext(io, mt, rdb, NULL, -1);
+    moduleInitIOContext(&io, mt, rdb, NULL, -1);
 
     /* We save the AUX field header in a temporary buffer so we can support aux_save2 API.
      * If aux_save2 is used the buffer will be flushed at the first time the module will perform
@@ -2795,7 +2796,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
         ValkeyModuleIO io;
         robj keyobj;
         initStaticStringObject(keyobj, key);
-        moduleInitIOContext(io, mt, rdb, &keyobj, dbid);
+        moduleInitIOContext(&io, mt, rdb, &keyobj, dbid);
         /* Call the rdb_load method of the module providing the 10 bit
          * encoding version in the lower 10 bits of the module ID. */
         void *ptr = mt->rdb_load(&io, moduleid & 1023);
@@ -3221,7 +3222,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
                 }
 
                 ValkeyModuleIO io;
-                moduleInitIOContext(io, mt, rdb, NULL, -1);
+                moduleInitIOContext(&io, mt, rdb, NULL, -1);
                 /* Call the rdb_load method of the module providing the 10 bit
                  * encoding version in the lower 10 bits of the module ID. */
                 int rc = mt->aux_load(&io, moduleid & 1023, when);

@@ -32,6 +32,7 @@
 #include "cluster.h"
 #include "connection.h"
 #include "bio.h"
+#include "module.h"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -283,7 +284,7 @@ struct standardConfig {
     void *privdata;          /* privdata for this config, for module configs this is a ModuleConfig struct */
 };
 
-dict *configs = NULL; /* Runtime config values */
+static dict *configs = NULL; /* Runtime config values */
 
 /* Lookup a config by the provided sds string name, or return NULL
  * if the config does not exist */
@@ -297,7 +298,7 @@ static standardConfig *lookupConfig(sds name) {
  *----------------------------------------------------------------------------*/
 
 /* Get enum value from name. If there is no match INT_MIN is returned. */
-int configEnumGetValue(configEnum *ce, sds *argv, int argc, int bitflags) {
+static int configEnumGetValue(configEnum *ce, sds *argv, int argc, int bitflags) {
     if (argc == 0 || (!bitflags && argc != 1)) return INT_MIN;
     int values = 0;
     for (int i = 0; i < argc; i++) {
@@ -369,20 +370,6 @@ void resetServerSaveParams(void) {
     zfree(server.saveparams);
     server.saveparams = NULL;
     server.saveparamslen = 0;
-}
-
-void queueLoadModule(sds path, sds *argv, int argc) {
-    int i;
-    struct moduleLoadQueueEntry *loadmod;
-
-    loadmod = zmalloc(sizeof(struct moduleLoadQueueEntry));
-    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
-    loadmod->path = sdsnew(path);
-    loadmod->argc = argc;
-    for (i = 0; i < argc; i++) {
-        loadmod->argv[i] = createRawStringObject(argv[i], sdslen(argv[i]));
-    }
-    listAddNodeTail(server.loadmodule_queue, loadmod);
 }
 
 /* Parse an array of `arg_len` sds strings, validate and populate
@@ -567,7 +554,7 @@ void loadServerConfigFromString(char *config) {
                 goto loaderr;
             }
         } else if (!strcasecmp(argv[0], "loadmodule") && argc >= 2) {
-            queueLoadModule(argv[1], &argv[2], argc - 2);
+            moduleEnqueueLoadModule(argv[1], &argv[2], argc - 2);
         } else if (strchr(argv[0], '.')) {
             if (argc < 2) {
                 err = "Module config specified without value";
@@ -1583,12 +1570,7 @@ void rewriteConfigLoadmoduleOption(struct rewriteConfigState *state) {
     dictEntry *de;
     while ((de = dictNext(di)) != NULL) {
         struct ValkeyModule *module = dictGetVal(de);
-        line = sdsnew("loadmodule ");
-        line = sdscatsds(line, module->loadmod->path);
-        for (int i = 0; i < module->loadmod->argc; i++) {
-            line = sdscatlen(line, " ", 1);
-            line = sdscatsds(line, module->loadmod->argv[i]->ptr);
-        }
+        line = moduleLoadQueueEntryToLoadmoduleOptionStr(module, "loadmodule");
         rewriteConfigRewriteLine(state, "loadmodule", line, 1);
     }
     dictReleaseIterator(di);
