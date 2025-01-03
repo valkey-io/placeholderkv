@@ -50,20 +50,20 @@ dictType engineDictType = {
  *
  * Returns C_ERR if some error occurs during the initialization.
  */
-int engineManagerInit(void) {
+int scriptingEngineManagerInit(void) {
     engineMgr.engines = dictCreate(&engineDictType);
     return C_OK;
 }
 
-size_t engineManagerGetCacheMemory(void) {
+size_t scriptingEngineManagerGetCacheMemory(void) {
     return engineMgr.engine_cache_memory;
 }
 
-size_t engineManagerGetNumEngines(void) {
+size_t scriptingEngineManagerGetNumEngines(void) {
     return dictSize(engineMgr.engines);
 }
 
-size_t engineManagerGetMemoryUsage(void) {
+size_t scriptingEngineManagerGetMemoryUsage(void) {
     return dictMemUsage(engineMgr.engines) + sizeof(engineMgr);
 }
 
@@ -79,10 +79,10 @@ size_t engineManagerGetMemoryUsage(void) {
  *
  * Returns C_ERR in case of an error during registration.
  */
-int engineManagerRegisterEngine(const char *engine_name,
-                                ValkeyModule *engine_module,
-                                engineCtx *engine_ctx,
-                                engineMethods *engine_methods) {
+int scriptingEngineManagerRegister(const char *engine_name,
+                                   ValkeyModule *engine_module,
+                                   engineCtx *engine_ctx,
+                                   engineMethods *engine_methods) {
     sds engine_name_sds = sdsnew(engine_name);
 
     if (dictFetchValue(engineMgr.engines, engine_name_sds)) {
@@ -119,7 +119,7 @@ int engineManagerRegisterEngine(const char *engine_name,
 
     dictAdd(engineMgr.engines, engine_name_sds, e);
 
-    engineMemoryInfo mem_info = engineCallGetMemoryInfo(e);
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e);
     engineMgr.engine_cache_memory += zmalloc_size(e) +
                                      sdsAllocSize(e->name) +
                                      zmalloc_size(ei) +
@@ -132,7 +132,7 @@ int engineManagerRegisterEngine(const char *engine_name,
  *
  * - `engine_name`: name of the engine to remove
  */
-int engineManagerUnregisterEngine(const char *engine_name) {
+int scriptingEngineManagerUnregister(const char *engine_name) {
     dictEntry *entry = dictUnlink(engineMgr.engines, engine_name);
     if (entry == NULL) {
         serverLog(LL_WARNING, "There's no engine registered with name %s", engine_name);
@@ -161,7 +161,7 @@ int engineManagerUnregisterEngine(const char *engine_name) {
  * Lookups the engine with `engine_name` in the engine manager and returns it if
  * it exists. Otherwise returns `NULL`.
  */
-scriptingEngine *engineManagerFind(sds engine_name) {
+scriptingEngine *scriptingEngineManagerFind(sds engine_name) {
     dictEntry *entry = dictFind(engineMgr.engines, engine_name);
     if (entry) {
         return dictGetVal(entry);
@@ -169,15 +169,15 @@ scriptingEngine *engineManagerFind(sds engine_name) {
     return NULL;
 }
 
-sds engineGetName(scriptingEngine *engine) {
+sds scriptingEngineGetName(scriptingEngine *engine) {
     return engine->name;
 }
 
-client *engineGetClient(scriptingEngine *engine) {
+client *scriptingEngineGetClient(scriptingEngine *engine) {
     return engine->c;
 }
 
-ValkeyModule *engineGetModule(scriptingEngine *engine) {
+ValkeyModule *scriptingEngineGetModule(scriptingEngine *engine) {
     return engine->module;
 }
 
@@ -187,7 +187,8 @@ ValkeyModule *engineGetModule(scriptingEngine *engine) {
  *
  * The `context` pointer is also passed in each callback call.
  */
-void engineManagerForEachEngine(engineIterCallback callback, void *context) {
+void scriptingEngineManagerForEachEngine(engineIterCallback callback,
+                                         void *context) {
     dictIterator *iter = dictGetIterator(engineMgr.engines);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
@@ -213,11 +214,11 @@ static void engineTeardownModuleCtx(scriptingEngine *e) {
     }
 }
 
-compiledFunction **engineCallCreateFunctionsLibrary(scriptingEngine *engine,
-                                                    const char *code,
-                                                    size_t timeout,
-                                                    size_t *out_num_compiled_functions,
-                                                    robj **err) {
+compiledFunction **scriptingEngineCallCreateFunctionsLibrary(scriptingEngine *engine,
+                                                             const char *code,
+                                                             size_t timeout,
+                                                             size_t *out_num_compiled_functions,
+                                                             robj **err) {
     engineSetupModuleCtx(engine, NULL);
 
     compiledFunction **functions = engine->impl->methods.create_functions_library(
@@ -233,14 +234,14 @@ compiledFunction **engineCallCreateFunctionsLibrary(scriptingEngine *engine,
     return functions;
 }
 
-void engineCallFunction(scriptingEngine *engine,
-                        functionCtx *func_ctx,
-                        client *caller,
-                        void *compiled_function,
-                        robj **keys,
-                        size_t nkeys,
-                        robj **args,
-                        size_t nargs) {
+void scriptingEngineCallFunction(scriptingEngine *engine,
+                                 functionCtx *func_ctx,
+                                 client *caller,
+                                 void *compiled_function,
+                                 robj **keys,
+                                 size_t nkeys,
+                                 robj **args,
+                                 size_t nargs) {
     engineSetupModuleCtx(engine, caller);
 
     engine->impl->methods.call_function(
@@ -256,8 +257,8 @@ void engineCallFunction(scriptingEngine *engine,
     engineTeardownModuleCtx(engine);
 }
 
-void engineCallFreeFunction(scriptingEngine *engine,
-                            void *compiled_func) {
+void scriptingEngineCallFreeFunction(scriptingEngine *engine,
+                                     void *compiled_func) {
     engineSetupModuleCtx(engine, NULL);
     engine->impl->methods.free_function(engine->module_ctx,
                                         engine->impl->ctx,
@@ -265,8 +266,8 @@ void engineCallFreeFunction(scriptingEngine *engine,
     engineTeardownModuleCtx(engine);
 }
 
-size_t engineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
-                                           void *compiled_function) {
+size_t scriptingEngineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
+                                                    void *compiled_function) {
     engineSetupModuleCtx(engine, NULL);
     size_t mem = engine->impl->methods.get_function_memory_overhead(
         engine->module_ctx, compiled_function);
@@ -274,7 +275,7 @@ size_t engineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
     return mem;
 }
 
-engineMemoryInfo engineCallGetMemoryInfo(scriptingEngine *engine) {
+engineMemoryInfo scriptingEngineCallGetMemoryInfo(scriptingEngine *engine) {
     engineSetupModuleCtx(engine, NULL);
     engineMemoryInfo mem_info = engine->impl->methods.get_memory_info(
         engine->module_ctx, engine->impl->ctx);

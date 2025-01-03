@@ -1,5 +1,5 @@
-#ifndef _ENGINE_H_
-#define _ENGINE_H_
+#ifndef _SCRIPTING_ENGINE_H_
+#define _SCRIPTING_ENGINE_H_
 
 #include "server.h"
 
@@ -29,44 +29,46 @@ typedef int (*engineIterCallback)(scriptingEngine *engine, void *context);
 /*
  * Engine manager API functions.
  */
-int engineManagerInit(void);
-size_t engineManagerGetCacheMemory(void);
-size_t engineManagerGetNumEngines(void);
-size_t engineManagerGetMemoryUsage(void);
-int engineManagerRegisterEngine(const char *engine_name,
-                                ValkeyModule *engine_module,
-                                engineCtx *engine_ctx,
-                                engineMethods *engine_methods);
-int engineManagerUnregisterEngine(const char *engine_name);
-scriptingEngine *engineManagerFind(sds engine_name);
-void engineManagerForEachEngine(engineIterCallback callback, void *context);
+int scriptingEngineManagerInit(void);
+size_t scriptingEngineManagerGetCacheMemory(void);
+size_t scriptingEngineManagerGetNumEngines(void);
+size_t scriptingEngineManagerGetMemoryUsage(void);
+int scriptingEngineManagerRegister(const char *engine_name,
+                                   ValkeyModule *engine_module,
+                                   engineCtx *engine_ctx,
+                                   engineMethods *engine_methods);
+int scriptingEngineManagerUnregister(const char *engine_name);
+scriptingEngine *scriptingEngineManagerFind(sds engine_name);
+void scriptingEngineManagerForEachEngine(engineIterCallback callback,
+                                         void *context);
 
 /*
  * Engine API functions.
  */
-sds engineGetName(scriptingEngine *engine);
-client *engineGetClient(scriptingEngine *engine);
-ValkeyModule *engineGetModule(scriptingEngine *engine);
+sds scriptingEngineGetName(scriptingEngine *engine);
+client *scriptingEngineGetClient(scriptingEngine *engine);
+ValkeyModule *scriptingEngineGetModule(scriptingEngine *engine);
 
 /*
  * API to call engine callback functions.
  */
-compiledFunction **engineCallCreateFunctionsLibrary(scriptingEngine *engine,
-                                                    const char *code,
-                                                    size_t timeout,
-                                                    size_t *out_num_compiled_functions,
-                                                    robj **err);
-void engineCallFunction(scriptingEngine *engine,
-                        functionCtx *func_ctx,
-                        client *caller,
-                        void *compiled_function,
-                        robj **keys,
-                        size_t nkeys,
-                        robj **args,
-                        size_t nargs);
-void engineCallFreeFunction(scriptingEngine *engine, void *compiled_func);
-size_t engineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
-                                           void *compiled_function);
-engineMemoryInfo engineCallGetMemoryInfo(scriptingEngine *engine);
+compiledFunction **scriptingEngineCallCreateFunctionsLibrary(scriptingEngine *engine,
+                                                             const char *code,
+                                                             size_t timeout,
+                                                             size_t *out_num_compiled_functions,
+                                                             robj **err);
+void scriptingEngineCallFunction(scriptingEngine *engine,
+                                 functionCtx *func_ctx,
+                                 client *caller,
+                                 void *compiled_function,
+                                 robj **keys,
+                                 size_t nkeys,
+                                 robj **args,
+                                 size_t nargs);
+void scriptingEngineCallFreeFunction(scriptingEngine *engine,
+                                     void *compiled_func);
+size_t scriptingEngineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
+                                                    void *compiled_function);
+engineMemoryInfo scriptingEngineCallGetMemoryInfo(scriptingEngine *engine);
 
-#endif /* _ENGINE_H_ */
+#endif /* _SCRIPTING_ENGINE_H_ */

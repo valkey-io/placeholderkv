@@ -107,7 +107,7 @@ static size_t functionMallocSize(functionInfo *fi) {
     return zmalloc_size(fi) +
            sdsAllocSize(fi->name) +
            (fi->desc ? sdsAllocSize(fi->desc) : 0) +
-           engineCallGetFunctionMemoryOverhead(fi->li->engine, fi->function);
+           scriptingEngineCallGetFunctionMemoryOverhead(fi->li->engine, fi->function);
 }
 
 static size_t libraryMallocSize(functionLibInfo *li) {
@@ -130,7 +130,7 @@ static void engineFunctionDispose(void *obj) {
         sdsfree(fi->desc);
     }
 
-    engineCallFreeFunction(fi->li->engine, fi->function);
+    scriptingEngineCallFreeFunction(fi->li->engine, fi->function);
     zfree(fi);
 }
 
@@ -206,7 +206,7 @@ functionsLibCtx *functionsLibCtxGetCurrent(void) {
 static int initializeFunctionsLibEngineStats(scriptingEngine *engine, void *context) {
     functionsLibCtx *lib_ctx = (functionsLibCtx *)context;
     functionsLibEngineStats *stats = zcalloc(sizeof(*stats));
-    dictAdd(lib_ctx->engines_stats, engineGetName(engine), stats);
+    dictAdd(lib_ctx->engines_stats, scriptingEngineGetName(engine), stats);
     return 1;
 }
 
@@ -216,7 +216,7 @@ functionsLibCtx *functionsLibCtxCreate(void) {
     ret->libraries = dictCreate(&librariesDictType);
     ret->functions = dictCreate(&functionDictType);
     ret->engines_stats = dictCreate(&engineStatsDictType);
-    engineManagerForEachEngine(initializeFunctionsLibEngineStats, ret);
+    scriptingEngineManagerForEachEngine(initializeFunctionsLibEngineStats, ret);
     ret->cache_memory = 0;
     return ret;
 }
@@ -303,7 +303,7 @@ static void libraryUnlink(functionsLibCtx *lib_ctx, functionLibInfo *li) {
     lib_ctx->cache_memory -= libraryMallocSize(li);
 
     /* update stats */
-    functionsLibEngineStats *stats = dictFetchValue(lib_ctx->engines_stats, engineGetName(li->engine));
+    functionsLibEngineStats *stats = dictFetchValue(lib_ctx->engines_stats, scriptingEngineGetName(li->engine));
     serverAssert(stats);
     stats->n_lib--;
     stats->n_functions -= dictSize(li->functions);
@@ -323,7 +323,7 @@ static void libraryLink(functionsLibCtx *lib_ctx, functionLibInfo *li) {
     lib_ctx->cache_memory += libraryMallocSize(li);
 
     /* update stats */
-    functionsLibEngineStats *stats = dictFetchValue(lib_ctx->engines_stats, engineGetName(li->engine));
+    functionsLibEngineStats *stats = dictFetchValue(lib_ctx->engines_stats, scriptingEngineGetName(li->engine));
     serverAssert(stats);
     stats->n_lib++;
     stats->n_functions += dictSize(li->functions);
@@ -412,10 +412,10 @@ done:
 
 static int replyEngineStats(scriptingEngine *engine, void *context) {
     client *c = (client *)context;
-    addReplyBulkCString(c, engineGetName(engine));
+    addReplyBulkCString(c, scriptingEngineGetName(engine));
     addReplyMapLen(c, 2);
     functionsLibEngineStats *e_stats =
-        dictFetchValue(curr_functions_lib_ctx->engines_stats, engineGetName(engine));
+        dictFetchValue(curr_functions_lib_ctx->engines_stats, scriptingEngineGetName(engine));
     addReplyBulkCString(c, "libraries_count");
     addReplyLongLong(c, e_stats ? e_stats->n_lib : 0);
     addReplyBulkCString(c, "functions_count");
@@ -465,8 +465,8 @@ void functionStatsCommand(client *c) {
     }
 
     addReplyBulkCString(c, "engines");
-    addReplyMapLen(c, engineManagerGetNumEngines());
-    engineManagerForEachEngine(replyEngineStats, c);
+    addReplyMapLen(c, scriptingEngineManagerGetNumEngines());
+    scriptingEngineManagerForEachEngine(replyEngineStats, c);
 }
 
 static void functionListReplyFlags(client *c, functionInfo *fi) {
@@ -542,7 +542,7 @@ void functionListCommand(client *c) {
         addReplyBulkCString(c, "library_name");
         addReplyBulkCBuffer(c, li->name, sdslen(li->name));
         addReplyBulkCString(c, "engine");
-        sds engine_name = engineGetName(li->engine);
+        sds engine_name = scriptingEngineGetName(li->engine);
         addReplyBulkCBuffer(c, engine_name, sdslen(engine_name));
 
         addReplyBulkCString(c, "functions");
@@ -640,9 +640,9 @@ static void fcallCommandGeneric(client *c, int ro) {
     }
 
     scriptRunCtx run_ctx;
-    if (scriptPrepareForRun(&run_ctx, engineGetClient(engine), c, fi->name, fi->f_flags, ro) != C_OK) return;
+    if (scriptPrepareForRun(&run_ctx, scriptingEngineGetClient(engine), c, fi->name, fi->f_flags, ro) != C_OK) return;
 
-    engineCallFunction(engine,
+    scriptingEngineCallFunction(engine,
                        &run_ctx,
                        run_ctx.original_client,
                        fi->function,
@@ -960,7 +960,7 @@ static void freeCompiledFunctions(scriptingEngine *engine,
             decrRefCount(func->desc);
         }
         if (i >= free_function_from_idx) {
-            engineCallFreeFunction(engine, func->function);
+            scriptingEngineCallFreeFunction(engine, func->function);
         }
         zfree(func);
     }
@@ -987,7 +987,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
         goto error;
     }
 
-    scriptingEngine *engine = engineManagerFind(md.engine);
+    scriptingEngine *engine = scriptingEngineManagerFind(md.engine);
     if (!engine) {
         *err = sdscatfmt(sdsempty(), "Engine '%S' not found", md.engine);
         goto error;
@@ -1010,7 +1010,7 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
     size_t num_compiled_functions = 0;
     robj *compile_error = NULL;
     compiledFunction **compiled_functions =
-        engineCallCreateFunctionsLibrary(engine,
+        scriptingEngineCallCreateFunctionsLibrary(engine,
                                          md.code,
                                          timeout,
                                          &num_compiled_functions,
@@ -1126,7 +1126,7 @@ void functionLoadCommand(client *c) {
 
 static int getEngineUsedMemory(scriptingEngine *engine, void *context) {
     size_t *engines_memory = (size_t *)context;
-    engineMemoryInfo mem_info = engineCallGetMemoryInfo(engine);
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(engine);
     *engines_memory += mem_info.used_memory;
     return 1;
 }
@@ -1134,17 +1134,17 @@ static int getEngineUsedMemory(scriptingEngine *engine, void *context) {
 /* Return memory usage of all the engines combine */
 unsigned long functionsMemory(void) {
     size_t engines_memory = 0;
-    engineManagerForEachEngine(getEngineUsedMemory, &engines_memory);
+    scriptingEngineManagerForEachEngine(getEngineUsedMemory, &engines_memory);
     return engines_memory;
 }
 
 /* Return memory overhead of all the engines combine */
 unsigned long functionsMemoryOverhead(void) {
-    size_t memory_overhead = engineManagerGetMemoryUsage();
+    size_t memory_overhead = scriptingEngineManagerGetMemoryUsage();
     memory_overhead += dictMemUsage(curr_functions_lib_ctx->functions);
     memory_overhead += sizeof(functionsLibCtx);
     memory_overhead += curr_functions_lib_ctx->cache_memory;
-    memory_overhead += engineManagerGetCacheMemory();
+    memory_overhead += scriptingEngineManagerGetCacheMemory();
 
     return memory_overhead;
 }

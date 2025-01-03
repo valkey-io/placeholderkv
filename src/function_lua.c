@@ -560,7 +560,7 @@ int luaEngineInitEngine(void) {
         .get_memory_info = luaEngineGetMemoryInfo,
     };
 
-    return engineManagerRegisterEngine(LUA_ENGINE_NAME,
+    return scriptingEngineManagerRegister(LUA_ENGINE_NAME,
                                        NULL,
                                        lua_engine_ctx,
                                        &lua_engine_methods);

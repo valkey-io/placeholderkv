@@ -2874,7 +2874,7 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
-    if (engineManagerInit() == C_ERR) {
+    if (scriptingEngineManagerInit() == C_ERR) {
         serverPanic("Scripting engine manager initialization failed, check the server logs.");
         exit(1);
     }

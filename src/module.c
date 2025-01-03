@@ -13125,7 +13125,7 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
         return VALKEYMODULE_ERR;
     }
 
-    if (engineManagerRegisterEngine(engine_name,
+    if (scriptingEngineManagerRegister(engine_name,
                                     module_ctx->module,
                                     engine_ctx,
                                     engine_methods) != C_OK) {
@@ -13144,7 +13144,7 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
  */
 int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
     UNUSED(ctx);
-    if (engineManagerUnregisterEngine(engine_name) != C_OK) {
+    if (scriptingEngineManagerUnregister(engine_name) != C_OK) {
         return VALKEYMODULE_ERR;
     }
     return VALKEYMODULE_OK;

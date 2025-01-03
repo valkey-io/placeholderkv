@@ -100,14 +100,14 @@ set(VALKEY_SERVER_SRCS
     ${CMAKE_SOURCE_DIR}/src/script_lua.c
     ${CMAKE_SOURCE_DIR}/src/script.c
     ${CMAKE_SOURCE_DIR}/src/functions.c
+    ${CMAKE_SOURCE_DIR}/src/scripting_engine.c
     ${CMAKE_SOURCE_DIR}/src/function_lua.c
     ${CMAKE_SOURCE_DIR}/src/commands.c
     ${CMAKE_SOURCE_DIR}/src/strl.c
     ${CMAKE_SOURCE_DIR}/src/connection.c
     ${CMAKE_SOURCE_DIR}/src/unix.c
     ${CMAKE_SOURCE_DIR}/src/server.c
-    ${CMAKE_SOURCE_DIR}/src/logreqres.c
-    ${CMAKE_SOURCE_DIR}/src/scripting_engine.c)
+    ${CMAKE_SOURCE_DIR}/src/logreqres.c)
 
 # valkey-cli
 set(VALKEY_CLI_SRCS
