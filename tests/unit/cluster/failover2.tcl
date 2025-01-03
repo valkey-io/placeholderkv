@@ -101,6 +101,7 @@ start_cluster 7 3 {tags {external:skip cluster} overrides {cluster-ping-interval
     }
 } ;# start_cluster
 
+run_solo {cluster} {
 start_cluster 32 15 {tags {external:skip cluster} overrides {cluster-ping-interval 1000 cluster-node-timeout 15000}} {
     test "Multiple primary nodes are down, rank them based on the failed primary" {
         # Killing these primary nodes.
@@ -131,3 +132,4 @@ start_cluster 32 15 {tags {external:skip cluster} overrides {cluster-ping-interv
         }
     }
 } ;# start_cluster
+} ;# run_solo
