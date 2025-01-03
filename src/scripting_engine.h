@@ -7,6 +7,7 @@
 typedef struct scriptingEngine scriptingEngine;
 
 /* ValkeyModule type aliases for scripting engine structs and types. */
+typedef struct ValkeyModule ValkeyModule;
 typedef ValkeyModuleScriptingEngineCtx engineCtx;
 typedef ValkeyModuleScriptingEngineFunctionCtx functionCtx;
 typedef ValkeyModuleScriptingEngineCompiledFunction compiledFunction;
