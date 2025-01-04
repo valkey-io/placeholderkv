@@ -2793,7 +2793,7 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                 if (isnan(score)) score = 0;
 
                 /* Search for this element in the accumulating dictionary. */
-                de = dictAddRaw(dstzset->dict, zuiSdsFromValue(&zval), &existing);
+                existing = dictFind(dstzset->dict, zuiSdsFromValue(&zval));
                 /* If we don't have it, we need to create a new entry. */
                 if (!existing) {
                     tmp = zuiNewSdsFromValue(&zval);
@@ -2802,8 +2802,8 @@ void zunionInterDiffGenericCommand(client *c, robj *dstkey, int numkeysIndex, in
                      * at the end. */
                     totelelen += sdslen(tmp);
                     if (sdslen(tmp) > maxelelen) maxelelen = sdslen(tmp);
-                    /* Update the element with its initial score. */
-                    dictSetKey(dstzset->dict, de, tmp);
+                    /* Insert the element with its initial score. */
+                    de = dictAddRaw(dstzset->dict, tmp, NULL);
                     dictSetDoubleVal(de, score);
                 } else {
                     /* Update the score with the score of the new instance
