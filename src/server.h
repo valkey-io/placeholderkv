@@ -3780,6 +3780,7 @@ int verifyDumpPayload(unsigned char *p, size_t len, uint16_t *rdbver_ptr);
 void dumpCommand(client *c);
 void objectCommand(client *c);
 void memoryCommand(client *c);
+void clientCommand(client *c);
 void clientCommandHelp(client *c);
 void clientCommandID(client *c);
 void clientCommandInfo(client *c);

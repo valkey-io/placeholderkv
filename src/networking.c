@@ -74,27 +74,6 @@ static int parseClientFiltersOrReply(client *c, int index, clientFilter *filter)
 static int clientMatchesFilter(client *client, clientFilter client_filter);
 static sds getAllFilteredClientsInfoString(clientFilter *client_filter, int hide_user_data);
 
-#define IS_CLIENT_SUBCOMMAND(cmd)        \
-    (cmd == clientCommandHelp ||         \
-     cmd == clientCommandID ||           \
-     cmd == clientCommandInfo ||         \
-     cmd == clientCommandList ||         \
-     cmd == clientCommandReply ||        \
-     cmd == clientCommandNoEvict ||      \
-     cmd == clientCommandKill ||         \
-     cmd == clientCommandUnblock ||      \
-     cmd == clientCommandSetName ||      \
-     cmd == clientCommandGetName ||      \
-     cmd == clientCommandUnpause ||      \
-     cmd == clientCommandPause ||        \
-     cmd == clientCommandTracking ||     \
-     cmd == clientCommandCaching ||      \
-     cmd == clientCommandGetredir ||     \
-     cmd == clientCommandTrackingInfo || \
-     cmd == clientCommandNoTouch ||      \
-     cmd == clientCommandCapa ||         \
-     cmd == clientCommandImportSource)
-
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
 __thread sds thread_shared_qb = NULL;
 
@@ -2498,6 +2477,7 @@ int handleClientsWithPendingWrites(void) {
 /* resetClient prepare the client to process the next command */
 void resetClient(client *c) {
     serverCommandProc *prevcmd = c->cmd ? c->cmd->proc : NULL;
+    serverCommandProc *prevParentCmd = c->cmd && c->cmd->parent ? c->cmd->parent->proc : NULL;
 
     freeClientArgv(c);
     freeClientOriginalArgv(c);
@@ -2527,9 +2507,7 @@ void resetClient(client *c) {
     /* We do the same for the CACHING command as well. It also affects
      * the next command or transaction executed, in a way very similar
      * to ASKING. */
-    if (!c->flag.multi && !IS_CLIENT_SUBCOMMAND(prevcmd)) {
-        c->flag.tracking_caching = 0;
-    }
+    if (!c->flag.multi && prevParentCmd != clientCommand) c->flag.tracking_caching = 0;
 
     /* Remove the CLIENT_REPLY_SKIP flag if any so that the reply
      * to the next command will be sent, but set the flag if the command
@@ -4174,6 +4152,10 @@ void clientCommandImportSource(client *c) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }
+}
+
+void clientCommand(client *c) {
+    addReplySubcommandSyntaxError(c);
 }
 
 /* HELLO [<protocol-version> [AUTH <user> <password>] [SETNAME <name>] ] */
