@@ -31,6 +31,7 @@
 #include "bio.h"
 #include "rio.h"
 #include "functions.h"
+#include "module.h"
 
 #include <signal.h>
 #include <fcntl.h>
@@ -2161,7 +2162,7 @@ int rewriteModuleObject(rio *r, robj *key, robj *o, int dbid) {
     ValkeyModuleIO io;
     moduleValue *mv = o->ptr;
     moduleType *mt = mv->type;
-    moduleInitIOContext(io, mt, r, key, dbid);
+    moduleInitIOContext(&io, mt, r, key, dbid);
     mt->aof_rewrite(&io, key, mv->value);
     if (io.ctx) {
         moduleFreeContext(io.ctx);

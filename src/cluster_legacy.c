@@ -38,6 +38,7 @@
 #include "cluster_slot_stats.h"
 #include "endianconv.h"
 #include "connection.h"
+#include "module.h"
 
 #include <stdlib.h>
 #include <sys/types.h>
@@ -867,7 +868,7 @@ int clusterSaveConfig(int do_fsync) {
 
 cleanup:
     if (fd != -1) close(fd);
-    if (retval) unlink(tmpfilename);
+    if (retval == C_ERR) unlink(tmpfilename);
     sdsfree(tmpfilename);
     sdsfree(ci);
     return retval;

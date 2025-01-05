@@ -63,6 +63,7 @@
 #include "valkeymodule.h"
 #include "io_threads.h"
 #include "functions.h"
+#include "module.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -74,6 +75,12 @@
  * structures that are never exposed to Modules, if not as void
  * pointers that have an API the module can call with them)
  * -------------------------------------------------------------------------- */
+
+struct moduleLoadQueueEntry {
+    sds path;
+    int argc;
+    robj **argv;
+};
 
 struct ValkeyModuleInfoCtx {
     struct ValkeyModule *module;
@@ -643,6 +650,35 @@ void *VM_PoolAlloc(ValkeyModuleCtx *ctx, size_t bytes) {
 /* --------------------------------------------------------------------------
  * Helpers for modules API implementation
  * -------------------------------------------------------------------------- */
+
+void moduleEnqueueLoadModule(sds path, sds *argv, int argc) {
+    int i;
+    struct moduleLoadQueueEntry *loadmod;
+
+    loadmod = zmalloc(sizeof(struct moduleLoadQueueEntry));
+    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
+    loadmod->path = sdsnew(path);
+    loadmod->argc = argc;
+    for (i = 0; i < argc; i++) {
+        loadmod->argv[i] = createRawStringObject(argv[i], sdslen(argv[i]));
+    }
+    listAddNodeTail(server.loadmodule_queue, loadmod);
+}
+
+sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module,
+                                              const char *config_option_str) {
+    sds line;
+
+    line = sdsnew(config_option_str);
+    line = sdscatlen(line, " ", 1);
+    line = sdscatsds(line, module->loadmod->path);
+    for (int i = 0; i < module->loadmod->argc; i++) {
+        line = sdscatlen(line, " ", 1);
+        line = sdscatsds(line, module->loadmod->argv[i]->ptr);
+    }
+
+    return line;
+}
 
 client *moduleAllocTempClient(void) {
     client *c = NULL;
@@ -7401,7 +7437,7 @@ void *VM_LoadDataTypeFromStringEncver(const ValkeyModuleString *str, const modul
     void *ret;
 
     rioInitWithBuffer(&payload, str->ptr);
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
 
     /* All VM_Save*() calls always write a version 2 compatible format, so we
      * need to make sure we read the same.
@@ -7433,7 +7469,7 @@ ValkeyModuleString *VM_SaveDataTypeToString(ValkeyModuleCtx *ctx, void *data, co
     ValkeyModuleIO io;
 
     rioInitWithBuffer(&payload, sdsempty());
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
     mt->rdb_save(&io, data);
     if (io.ctx) {
         moduleFreeContext(io.ctx);

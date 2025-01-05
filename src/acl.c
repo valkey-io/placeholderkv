@@ -29,6 +29,7 @@
 
 #include "server.h"
 #include "sha256.h"
+#include "module.h"
 #include <fcntl.h>
 #include <ctype.h>
 

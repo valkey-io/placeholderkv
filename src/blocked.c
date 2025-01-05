@@ -65,6 +65,7 @@
 #include "latency.h"
 #include "monotonic.h"
 #include "cluster_slot_stats.h"
+#include "module.h"
 
 /* forward declarations */
 static void unblockClientWaitingData(client *c);
