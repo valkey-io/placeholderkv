@@ -116,31 +116,23 @@ start_server {tags {"acl external:skip"}} {
         assert_match "*NOPERM*key*" $err
     }
 
-    test {Validate read and write permissions format - empty permission} {
-        catch {r ACL SETUSER key-permission-RW %~} err
-        set err
-    } {ERR Error in ACL SETUSER modifier '%~': Syntax error}
+    test {Validate read and write permissions format} {
+        # Regression tests for CVE-2024-51741
+        assert_error "ERR Error in ACL SETUSER modifier '%~': Syntax error" {r ACL SETUSER invalid %~}
+        assert_error "ERR Error in ACL SETUSER modifier '%': Syntax error" {r ACL SETUSER invalid %}
+    }
 
-    test {Validate read and write permissions format - empty selector} {
-        catch {r ACL SETUSER key-permission-RW %} err
-        set err
-    } {ERR Error in ACL SETUSER modifier '%': Syntax error}
+    test {Validate key permissions format - empty and omitted pattern} {
+        # Empty pattern results with access to only the empty key
+        r ACL SETUSER key-permission-no-key on nopass %RW~ +@all
+        assert_equal "User key-permission-no-key has no permissions to access the 'x' key" [r ACL DRYRUN key-permission-no-key GET x]
+        assert_equal "OK" [r ACL DRYRUN key-permission-no-key GET ""]
 
-    test {Validate read and write permissions format - empty pattern} {
-        # Empty pattern results with R/W access to no key
-        r ACL SETUSER key-permission-RW on nopass %RW~ +@all
-        $r2 auth key-permission-RW password
-        catch {$r2 SET x 5} err
-        set err
-    } {NOPERM No permissions to access a key}
-
-    test {Validate read and write permissions format - no pattern} {
-        # No pattern results with R/W access to no key (currently we accept this syntax error)
-        r ACL SETUSER key-permission-RW on nopass %RW +@all
-        $r2 auth key-permission-RW password
-        catch {$r2 SET x 5} err
-        set err
-    } {NOPERM No permissions to access a key}
+        # This is incorrect syntax, it should have `~`, but we'll allow it for compatibility since it does something
+        r ACL SETUSER key-permission-omit on nopass %RW +@all
+        assert_equal "User key-permission-omit has no permissions to access the 'x' key" [r ACL DRYRUN key-permission-omit GET x]
+        assert_equal "OK" [r ACL DRYRUN key-permission-omit GET ""]
+    }
 
     test {Test separate read and write permissions on different selectors are not additive} {
         r ACL SETUSER key-permission-RW-selector on nopass "(%R~read* +@all)" "(%W~write* +@all)"
