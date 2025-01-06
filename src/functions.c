@@ -1022,6 +1022,8 @@ sds functionsCreateWithLibraryCtx(sds code, int replace, sds *err, functionsLibC
         goto error;
     }
 
+    serverAssert(compile_error == NULL);
+
     for (size_t i = 0; i < num_compiled_functions; i++) {
         compiledFunction *func = compiled_functions[i];
         int ret = functionLibCreateFunction(func->name,

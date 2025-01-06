@@ -226,6 +226,7 @@ static uint32_t executeHelloLangFunction(HelloFunc *func,
             break;
         }
         case RETURN: {
+            ValkeyModule_Assert(sp > 0);
             uint32_t val = stack[--sp];
             ValkeyModule_Assert(sp == 0);
             return val;
@@ -303,6 +304,13 @@ static ValkeyModuleScriptingEngineCompiledFunction **createHelloLangEngine(Valke
 
     int ret = helloLangParseCode(code, ctx->program, err);
     if (ret < 0) {
+        for (uint32_t i = 0; i < ctx->program->num_functions; i++) {
+            HelloFunc *func = ctx->program->functions[i];
+            ValkeyModule_Free(func->name);
+            ValkeyModule_Free(func);
+            ctx->program->functions[i] = NULL;
+        }
+        ctx->program->num_functions = 0;
         return NULL;
     }
 
