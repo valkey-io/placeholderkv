@@ -279,6 +279,7 @@ void scriptingRelease(int async) {
     else
         dictRelease(lctx.lua_scripts);
     lctx.lua_scripts_mem = 0;
+    lua_gc(lctx.lua, LUA_GCCOLLECT, 0);
     lua_close(lctx.lua);
 }
 
