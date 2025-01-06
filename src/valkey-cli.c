@@ -2232,6 +2232,28 @@ static int cliReadReply(int output_raw_strings) {
     return REDIS_OK;
 }
 
+/* Helper method to process unsubscribe responses */
+static void processUnsubscribeReply(redisReply *reply) {
+    if (reply->elements >= 3) {
+        char *cmd = reply->element[0]->str;
+        int count = reply->element[2]->integer;
+
+        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+            
+            if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+                config.pubsub_unsharded_count = count;
+            } else if (strcmp(cmd, "sunsubscribe") == 0) {
+                config.pubsub_sharded_count = count;
+            }
+
+            if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+                config.pubsub_mode = 0;
+                cliRefreshPrompt();
+            }
+        }
+    }
+}
+
 /* Simultaneously wait for pubsub messages from the server and input on stdin. */
 static void cliWaitForMessagesOrStdin(void) {
     int show_info = config.output != OUTPUT_RAW && (isatty(STDOUT_FILENO) || getenv("FAKETTY"));
@@ -2250,28 +2272,7 @@ static void cliWaitForMessagesOrStdin(void) {
                 fwrite(out, sdslen(out), 1, stdout);
                 fflush(stdout);
 
-                // Handle unsubscribe responses
-                if (isPubsubPush(reply) && reply->elements >= 3) {
-                    char *cmd = reply->element[0]->str;
-                    int count = reply->element[2]->integer;
-                    
-                    if (strcmp(cmd, "unsubscribe") == 0 || 
-                        strcmp(cmd, "punsubscribe") == 0 ||
-                        strcmp(cmd, "sunsubscribe") == 0) {
-                        
-                        if (strcmp(cmd, "unsubscribe") == 0) {
-                            config.pubsub_unsharded_count = count;
-                        } else if (strcmp(cmd, "sunsubscribe") == 0) {
-                            config.pubsub_sharded_count = count;
-                        }
-                                                
-                        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
-                            config.pubsub_mode = 0;
-                            cliRefreshPrompt();
-                            break;
-                        }
-                    }
-                }
+                processUnsubscribeReply(reply);
 
                 sdsfree(out);
                 freeReplyObject(reply);
@@ -2426,36 +2427,22 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
             if (config.pubsub_mode || num_expected_pubsub_push > 0) {
                 if (isPubsubPush(config.last_reply)) {
                     /* Handle pubsub mode */
-                       if (config.pubsub_mode) {
-                            if (config.last_reply->elements >= 3) {
-                                char *cmd = config.last_reply->element[0]->str;
-                                int count = config.last_reply->element[2]->integer;
+                    if (config.last_reply->elements >= 3) {
+                        char *cmd = config.last_reply->element[0]->str;
 
-                                if (strcmp(cmd, "subscribe") == 0) {
-                                    config.pubsub_unsharded_count++;
-                                } else if (strcmp(cmd, "unsubscribe") == 0) {
-                                    config.pubsub_unsharded_count = count;
-                                } else if (strcmp(cmd, "psubscribe") == 0) {
-                                    config.pubsub_unsharded_count++;
-                                } else if (strcmp(cmd, "punsubscribe") == 0) {
-                                    config.pubsub_unsharded_count = count;
-                                } else if (strcmp(cmd, "ssubscribe") == 0) {
-                                    config.pubsub_sharded_count++;
-                                } else if (strcmp(cmd, "sunsubscribe") == 0) {
-                                    config.pubsub_sharded_count = count;
-                                }
-                                    
-                                if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
-                                    if (config.pubsub_mode) {
-                                        config.pubsub_mode = 0;
-                                        cliRefreshPrompt();
-                                    }
-                                } else {
-                                    config.pubsub_mode = 1;
-                                    cliRefreshPrompt();
-                                }
-                            }
-                        }   
+                        /* If it's an unsubscribe command, call the helper */
+                        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+                            processUnsubscribeReply(config.last_reply);
+                        } 
+
+                        /* Handle subscribe commands */
+                        else if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0) {
+                            config.pubsub_unsharded_count++;
+                        } else if (strcmp(cmd, "ssubscribe") == 0) {
+                            config.pubsub_sharded_count++;
+                        }
+                    }   
+
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
                         /* This pushed message confirms the
                          * [p|s][un]subscribe command. */
