@@ -2237,19 +2237,16 @@ static void processUnsubscribeReply(redisReply *reply) {
     if (reply->elements >= 3) {
         char *cmd = reply->element[0]->str;
         int count = reply->element[2]->integer;
+ 
+        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+            config.pubsub_unsharded_count = count;
+        } else if (strcmp(cmd, "sunsubscribe") == 0) {
+            config.pubsub_sharded_count = count;
+        }
 
-        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-            
-            if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
-                config.pubsub_unsharded_count = count;
-            } else if (strcmp(cmd, "sunsubscribe") == 0) {
-                config.pubsub_sharded_count = count;
-            }
-
-            if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
-                config.pubsub_mode = 0;
-                cliRefreshPrompt();
-            }
+        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+            config.pubsub_mode = 0;
+            cliRefreshPrompt();
         }
     }
 }
@@ -2272,7 +2269,9 @@ static void cliWaitForMessagesOrStdin(void) {
                 fwrite(out, sdslen(out), 1, stdout);
                 fflush(stdout);
 
-                processUnsubscribeReply(reply);
+                if (isPubsubPush(reply)) {
+                    processUnsubscribeReply(reply);
+                }
 
                 sdsfree(out);
                 freeReplyObject(reply);
@@ -2432,7 +2431,9 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
 
                         /* If it's an unsubscribe command, call the helper */
                         if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-                            processUnsubscribeReply(config.last_reply);
+                            if (config.pubsub_mode && isPubsubPush(config.last_reply)) {
+                                processUnsubscribeReply(config.last_reply);
+                            }
                         } 
 
                         /* Handle subscribe commands */
