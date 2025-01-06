@@ -753,7 +753,13 @@ void kvstoreDictLUTDefrag(kvstore *kvs, kvstoreDictLUTDefragFunction *defragfn) 
     for (int didx = 0; didx < kvs->num_dicts; didx++) {
         dict **d = kvstoreGetDictRef(kvs, didx), *newd;
         if (!*d) continue;
+        /* In case we will defrag the dictionary while it is registered to active-rehashing
+         * we need to make sure to update the registration in the rehashing list.
+         * So we keep the list node and after the defrag operation completes we reassign the value to the
+         * dictionary pointer. */
+        listNode *rehashing_node = ((kvstoreDictMetadata *)dictMetadata(*d))->rehashing_node;
         if ((newd = defragfn(*d))) *d = newd;
+        if (rehashing_node) listNodeValue(rehashing_node) = *d;
     }
 }
 
