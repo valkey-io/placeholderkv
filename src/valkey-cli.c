@@ -2428,6 +2428,8 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
                     /* Handle pubsub mode */
                     if (config.last_reply->elements >= 3) {
                         char *cmd = config.last_reply->element[0]->str;
+                        int count = config.last_reply->element[2]->integer;
+
 
                         /* If it's an unsubscribe command, call the helper */
                         if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
@@ -2438,9 +2440,9 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
 
                         /* Handle subscribe commands */
                         else if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0) {
-                            config.pubsub_unsharded_count++;
+                            config.pubsub_unsharded_count = count;
                         } else if (strcmp(cmd, "ssubscribe") == 0) {
-                            config.pubsub_sharded_count++;
+                            config.pubsub_sharded_count = count;
                         }
                     }   
 

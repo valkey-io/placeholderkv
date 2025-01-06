@@ -608,7 +608,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         assert_equal "a\n1\nb\n2\nc\n3" [exec {*}$cmdline ZRANGE new_zset 0 -1 WITHSCORES]
     }
 
-    test "valkey-cli pubsub mode with standard channel subscription" {
+    test "valkey-cli pubsub mode with single standard channel subscription" {
         set fd [open_cli]
 
         write_cli $fd ":get pubsub"
@@ -624,6 +624,16 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
 
         write_cli $fd "UNSUBSCRIBE ch1"
         set response [read_cli $fd]
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
+
+        close_cli $fd
+    }
+
+    test "valkey-cli pubsub mode with multiple standard channel subscriptions" {
+        set fd [open_cli]
 
         write_cli $fd ":get pubsub"
         set pubsub_status [string trim [read_cli $fd]]
@@ -646,7 +656,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         close_cli $fd
     }
 
-    test "valkey-cli pubsub mode with shard channel subscription" {
+    test "valkey-cli pubsub mode with single shard channel subscription" {
         set fd [open_cli]
 
         write_cli $fd ":get pubsub"
@@ -662,6 +672,17 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
 
         write_cli $fd "SUNSUBSCRIBE schannel1"
         set response [read_cli $fd]
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
+
+        close_cli $fd
+    }
+
+    test "valkey-cli pubsub mode with multiple shard channel subscriptions" {
+
+        set fd [open_cli]
 
         write_cli $fd ":get pubsub"
         set pubsub_status [string trim [read_cli $fd]]
@@ -684,7 +705,7 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         close_cli $fd
     }
 
-    test "valkey-cli pubsub mode with pattern channel subscription" {
+    test "valkey-cli pubsub mode with single pattern channel subscription" {
         set fd [open_cli]
 
         write_cli $fd ":get pubsub"
@@ -705,6 +726,12 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         set pubsub_status [string trim [read_cli $fd]]
         assert_equal "0" $pubsub_status
 
+        close_cli $fd
+    }
+
+    test "valkey-cli pubsub mode with multiple pattern channel subscriptions" {
+        set fd [open_cli]
+
         write_cli $fd "PSUBSCRIBE pattern1* pattern2* pattern3*"
         set response [read_cli $fd]
 
@@ -719,6 +746,30 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
         set pubsub_status [string trim [read_cli $fd]]
         assert_equal "0" $pubsub_status
 
+        close_cli $fd
+    }
+
+    test "valkey-cli pubsub mode when subscribing to the same channel" {
+        set fd [open_cli]
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
+
+        write_cli $fd "SUBSCRIBE ch1 ch1"
+        set response [read_cli $fd]
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "1" $pubsub_status
+
+        write_cli $fd "UNSUBSCRIBE"
+        set response [read_cli $fd]
+
+        write_cli $fd ":get pubsub"
+        set pubsub_status [string trim [read_cli $fd]]
+        assert_equal "0" $pubsub_status
+        
         close_cli $fd
     }
 
