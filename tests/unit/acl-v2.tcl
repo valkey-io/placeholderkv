@@ -132,6 +132,9 @@ start_server {tags {"acl external:skip"}} {
         r ACL SETUSER key-permission-omit on nopass %RW +@all
         assert_equal "User key-permission-omit has no permissions to access the 'x' key" [r ACL DRYRUN key-permission-omit GET x]
         assert_equal "OK" [r ACL DRYRUN key-permission-omit GET ""]
+
+        # Assert these two are equivalent 
+        assert_equal [r ACL GETUSER key-permission-omit] [r ACL GETUSER key-permission-no-key]
     }
 
     test {Test separate read and write permissions on different selectors are not additive} {
