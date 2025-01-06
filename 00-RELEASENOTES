@@ -10,6 +10,39 @@ SECURITY: There are security fixes in the release.
 --------------------------------------------------------------------------------
 
 ================================================================================
+Valkey 8.0.2  -  Released Mon 6 Jan 2025
+================================================================================
+
+Upgrade urgency SECURITY: This release includes security fixes we recommend you
+apply as soon as possible.
+
+Bug fixes
+=========
+* Fix an uncommon crash when using TLS with dual channel replication. (#1173)
+* Make sure `repl_down_since` is correctly reset when dual channel replication
+  fails. (#1149)
+* Fix a performance regression where a replica does not properly initiaize
+  the database size when loading a snapshot during replication. (#1199)
+* Make sure the last accessed time is correctly updated when using the `TOUCH`
+  command with the `CLIENT NO-TOUCH` option.
+* Fix a bug where `total_net_repl_output_bytes` would report the wrong. (#1486)
+* Fix a bug where `used_memory_scripts` may report the wrong value. (#1255)
+* Fix a bug where server might crash when using active defrag when scripts
+  are evicted from the script cache. (#1310)
+* Fix a bug where extra memory would be used when storing strings in the
+  inline protocol. (#1213)
+* Fix a bug where the `SORT` command may throw a cross slot error. (#1182)
+* Fix a bug where the `RANDOMKEY` command may omit returning keys in cluster
+  mode. (#1155)
+* Send the correct error message when `FUNCTION KIlL` is used to kill an
+  ongoing script. (#1171)
+
+Behavior changes
+================
+* Revert an unintended breaking change when sending an unsubuscribe command
+  when a client is not subscribed to any channels. (#1265)
+
+================================================================================
 Valkey 8.0.1  -  Released Tue 1 Oct 2024
 ================================================================================
 
