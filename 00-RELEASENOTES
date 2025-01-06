@@ -10,6 +10,26 @@ HIGH:     There is a critical bug that may affect a subset of users. Upgrade!
 CRITICAL: There is a critical bug affecting MOST USERS. Upgrade ASAP.
 SECURITY: There are security fixes in the release.
 --------------------------------------------------------------------------------
+================================================================================
+Valkey 7.2.8  -  Released Mon 06 Jan 2025
+================================================================================
+
+Upgrade urgency SECURITY: This release includes security fixes we recommend you
+apply as soon as possible.
+
+Bug fixes
+=========
+* Fix a bug where extra memory would be used when storing strings in the
+  inline protocol. (#1213)
+* Send the correct error message when `FUNCTION KIlL` is used to kill an
+  ongoing script. (#1171)
+* Make sure the last accessed time is correctly updated when using the `TOUCH`
+  command with the `CLIENT NO-TOUCH` option. (#1499)
+
+Security fixes
+==============
+* (CVE-2024-46981) Lua script commands may lead to remote code execution. (#1513)
+* (CVE-2024-51741) Denial-of-service due to malformed ACL selectors. (#1514)
 
 ================================================================================
 Valkey 7.2.7  -  Released Tue 01 Oct 2024
