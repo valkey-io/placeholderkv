@@ -193,9 +193,7 @@ void scriptingEngineManagerForEachEngine(engineIterCallback callback,
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter))) {
         scriptingEngine *e = dictGetVal(entry);
-        if (!callback(e, context)) {
-            break;
-        }
+        callback(e, context);
     }
     dictReleaseIterator(iter);
 }

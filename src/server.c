@@ -2878,7 +2878,6 @@ void initServer(void) {
 
     if (scriptingEngineManagerInit() == C_ERR) {
         serverPanic("Scripting engine manager initialization failed, check the server logs.");
-        exit(1);
     }
 
     /* Initialize the LUA scripting engine. */
@@ -2886,7 +2885,6 @@ void initServer(void) {
     /* Initialize the functions engine based off of LUA initialization. */
     if (functionsInit() == C_ERR) {
         serverPanic("Functions initialization failed, check the server logs.");
-        exit(1);
     }
     slowlogInit();
     latencyMonitorInit();

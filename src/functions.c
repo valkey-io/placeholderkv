@@ -203,11 +203,11 @@ functionsLibCtx *functionsLibCtxGetCurrent(void) {
     return curr_functions_lib_ctx;
 }
 
-static int initializeFunctionsLibEngineStats(scriptingEngine *engine, void *context) {
+static void initializeFunctionsLibEngineStats(scriptingEngine *engine,
+                                              void *context) {
     functionsLibCtx *lib_ctx = (functionsLibCtx *)context;
     functionsLibEngineStats *stats = zcalloc(sizeof(*stats));
     dictAdd(lib_ctx->engines_stats, scriptingEngineGetName(engine), stats);
-    return 1;
 }
 
 /* Create a new functions ctx */
@@ -410,7 +410,7 @@ done:
     return ret;
 }
 
-static int replyEngineStats(scriptingEngine *engine, void *context) {
+static void replyEngineStats(scriptingEngine *engine, void *context) {
     client *c = (client *)context;
     addReplyBulkCString(c, scriptingEngineGetName(engine));
     addReplyMapLen(c, 2);
@@ -420,7 +420,6 @@ static int replyEngineStats(scriptingEngine *engine, void *context) {
     addReplyLongLong(c, e_stats ? e_stats->n_lib : 0);
     addReplyBulkCString(c, "functions_count");
     addReplyLongLong(c, e_stats ? e_stats->n_functions : 0);
-    return 1;
 }
 
 void functionsRemoveLibFromEngine(scriptingEngine *engine) {
@@ -1124,11 +1123,10 @@ void functionLoadCommand(client *c) {
     addReplyBulkSds(c, library_name);
 }
 
-static int getEngineUsedMemory(scriptingEngine *engine, void *context) {
+static void getEngineUsedMemory(scriptingEngine *engine, void *context) {
     size_t *engines_memory = (size_t *)context;
     engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(engine);
     *engines_memory += mem_info.used_memory;
-    return 1;
 }
 
 /* Return memory usage of all the engines combine */

@@ -22,10 +22,8 @@ typedef ValkeyModuleScriptingEngineMethods engineMethods;
  *
  * - `context`: a generic pointer to a context object.
  *
- * If the callback function returns 0, then the iteration is stopped
- * immediately.
  */
-typedef int (*engineIterCallback)(scriptingEngine *engine, void *context);
+typedef void (*engineIterCallback)(scriptingEngine *engine, void *context);
 
 /*
  * Engine manager API functions.
