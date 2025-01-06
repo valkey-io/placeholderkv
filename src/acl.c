@@ -1078,18 +1078,23 @@ int ACLSetSelector(aclSelector *selector, const char *op, size_t oplen) {
         int flags = 0;
         size_t offset = 1;
         if (op[0] == '%') {
+            int perm_ok = 1;
             for (; offset < oplen; offset++) {
                 if (toupper(op[offset]) == 'R' && !(flags & ACL_READ_PERMISSION)) {
                     flags |= ACL_READ_PERMISSION;
                 } else if (toupper(op[offset]) == 'W' && !(flags & ACL_WRITE_PERMISSION)) {
                     flags |= ACL_WRITE_PERMISSION;
-                } else if (op[offset] == '~' && flags) {
+                } else if (op[offset] == '~') {
                     offset++;
                     break;
                 } else {
-                    errno = EINVAL;
-                    return C_ERR;
+                    perm_ok = 0;
+                    break;
                 }
+            }
+            if (!flags || !perm_ok) {
+                errno = EINVAL;
+                return C_ERR;
             }
         } else {
             flags = ACL_ALL_PERMISSION;
