@@ -1,6 +1,6 @@
 #define SERVER_NAME "valkey"
-#define VALKEY_VERSION "7.2.7"
-#define VALKEY_VERSION_NUM 0x00070207
+#define VALKEY_VERSION "7.2.8"
+#define VALKEY_VERSION_NUM 0x00070208
 
 /* Redis compatibility version, should never
  * exceed 7.2.x. */
