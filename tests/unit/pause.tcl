@@ -1,4 +1,19 @@
 start_server {tags {"pause network"}} {
+    test "Test check paused_actions in info stats" {
+        assert_equal [s paused_actions] "none"
+
+        r client PAUSE 10000 WRITE
+        assert_equal [s paused_actions] "write"
+        r client unpause
+
+        r multi
+        r client PAUSE 1000 All
+        r info stats
+        assert_match "*paused_actions:all*" [r exec]
+
+        r client unpause
+    }
+
     test "Test read commands are not blocked by client pause" {
         r client PAUSE 100000 WRITE
         set rd [valkey_deferring_client]

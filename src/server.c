@@ -5863,6 +5863,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             server.stat_last_eviction_exceeded_time ? (long long)elapsedUs(server.stat_last_eviction_exceeded_time) : 0;
         long long current_active_defrag_time =
             server.stat_last_active_defrag_time ? (long long)elapsedUs(server.stat_last_active_defrag_time) : 0;
+        char *paused_actions = server.paused_actions & PAUSE_ACTION_CLIENT_ALL ? "all" : server.paused_actions & PAUSE_ACTION_CLIENT_WRITE ? "write" : "none";
 
         if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(
@@ -5930,7 +5931,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
                 "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
-                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
+                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
+                "paused_actions:%s\r\n", paused_actions));
         info = genValkeyInfoStringACLStats(info);
     }
 
