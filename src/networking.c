@@ -4206,7 +4206,7 @@ void helloCommand(client *c) {
 
     /* Let's switch to the specified RESP mode. */
     if (ver) c->resp = ver;
-    addReplyMapLen(c, 6 + !server.sentinel_mode);
+    addReplyMapLen(c, 6 + !server.sentinel_mode + (sdslen(server.availability_zone) != 0));
 
     addReplyBulkCString(c, "server");
     addReplyBulkCString(c, server.extended_redis_compat ? "redis" : SERVER_NAME);
@@ -4235,6 +4235,11 @@ void helloCommand(client *c) {
 
     addReplyBulkCString(c, "modules");
     addReplyLoadedModules(c);
+
+    if (sdslen(server.availability_zone) != 0) {
+        addReplyBulkCString(c, "availability_zone");
+        addReplyBulkCBuffer(c, server.availability_zone, sdslen(server.availability_zone));
+    }
 }
 
 /* This callback is bound to POST and "Host:" command names. Those are not
