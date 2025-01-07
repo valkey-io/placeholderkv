@@ -72,7 +72,7 @@ void zsetConvertAndExpand(robj *zobj, int encoding, unsigned long cap);
 static zskiplistNode *zslGetElementByRankFromNode(zskiplistNode *start_node, int start_level, unsigned long rank);
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
-static inline unsigned long zslGetNodeSpanAtLevel(zskiplistNode *x, int level) {
+static inline unsigned long zslGetNodeSpanAtLevel(const zskiplistNode *x, int level) {
     /* We use the level 0 span in order to hold the node height, so in case the span is requested on
      * level 0 and this is not the last node we return 1 and 0 otherwise. For the rest of the levels we just return
      * the recorded span in that level. */
@@ -98,7 +98,7 @@ static inline void zslDecrNodeSpanAtLevel(zskiplistNode *x, int level, unsigned 
         x->level[level].span -= decr;
 }
 
-static inline unsigned long zslGetNodeHeight(zskiplistNode *x) {
+static inline unsigned long zslGetNodeHeight(const zskiplistNode *x) {
     /* Since the span at level 0 is always 1 (or 0 for the last node), this
      * field is instead used for storing the height of the node. */
     return x->level[0].span;
@@ -295,19 +295,18 @@ static void zslDelete(zskiplist *zsl, zskiplistNode *node) {
  * Note that the element must exist in the skiplist.
  *
  * Note that this function attempts to just update the node, in case after
- * the score update, the node would be exactly at the same position.
+ * the score update, the node would be exactly at the same position. If the old
+ * node can be kept it returns NULL.
  * Otherwise the skiplist is modified by removing and re-adding a new
- * element, which is more costly. In this case, it updates the pointer stored
- * in the hashtable using node_ref. */
-static void zslUpdateScore(zskiplist *zsl, zskiplistNode **node_ref, double newscore) {
+ * element, which is more costly. A pointer to the new node is returned. */
+static zskiplistNode *zslUpdateScore(zskiplist *zsl, zskiplistNode *node, double newscore) {
     /* If the node, after the score update, would be still exactly
      * at the same position, we can just update the score without
      * actually removing and re-inserting the element in the skiplist. */
-    zskiplistNode *node = *node_ref;
     if ((node->backward == NULL || node->backward->score < newscore) &&
         (node->level[0].forward == NULL || node->level[0].forward->score > newscore)) {
         node->score = newscore;
-        return;
+        return NULL;
     }
 
     /* We need to remove the node from the skiplist and insert a new one */
@@ -324,11 +323,12 @@ static void zslUpdateScore(zskiplist *zsl, zskiplistNode **node_ref, double news
 
     zslDeleteNode(zsl, node, update);
     /* update pointer inside hashtable with new node */
-    *node_ref = zslInsert(zsl, newscore, node->ele);
+    zskiplistNode *new_node = zslInsert(zsl, newscore, node->ele);
     /* We reused the old node->ele SDS string, free the node now
      * since zslInsert created a new node */
     node->ele = NULL;
     zslFreeNode(node);
+    return new_node;
 }
 
 int zslValueGteMin(double value, zrangespec *spec) {
@@ -519,15 +519,41 @@ static unsigned long zslDeleteRangeByRank(zskiplist *zsl, unsigned int start, un
     return removed;
 }
 
-/* Find the rank for a specific skiplist node. */
-unsigned long zslGetRankByNode(zskiplist *zsl, zskiplistNode *x) {
-    int i = zslGetNodeHeight(x) - 1;
-    unsigned long rank = zslGetNodeSpanAtLevel(x, i);
-    while (x->level[zslGetNodeHeight(x) - 1].forward) {
-        x = x->level[zslGetNodeHeight(x) - 1].forward;
-        rank += zslGetNodeSpanAtLevel(x, zslGetNodeHeight(x) - 1);
+/* Find the rank for a specific skiplist node.
+ * Returns 0 when the element cannot be found, rank otherwise.
+ * Note that the rank is 1-based due to the span of zsl->header to the
+ * first element. */
+static unsigned long zslGetRank(zskiplist *zsl, const zskiplistNode *node) {
+    unsigned long rank = 0;
+
+    /* Count up nodes that come before */
+    zskiplistNode *x = zsl->header;
+    for (int i = zsl->level - 1; i >= 0; i--) {
+        while (zslCompareNodes(x->level[i].forward, node) <= 0) {
+            rank += zslGetNodeSpanAtLevel(x, i);
+            x = x->level[i].forward;
+        }
+
+        if (x == node) {
+            return rank;
+        }
     }
-    rank = zsl->length - rank;
+    return 0;
+}
+
+/* Find the rank for a specific skiplist node. Alternate method that counts
+ * nodes after the one specified and subtracts from list length.
+ * TODO investigate whether both rank methods are needed and compare perf */
+static unsigned long zslGetRankCountingNodesAfter(zskiplist *zsl, const zskiplistNode *node) {
+    int highest_node_span = zslGetNodeHeight(node) - 1;
+    unsigned long count_after_node = zslGetNodeSpanAtLevel(node, highest_node_span);
+    while (node->level[highest_node_span].forward) {
+        node = node->level[highest_node_span].forward;
+        highest_node_span = zslGetNodeHeight(node) - 1;
+        count_after_node += zslGetNodeSpanAtLevel(node, highest_node_span);
+    }
+
+    unsigned long rank = zsl->length - count_after_node;
     return rank;
 }
 
@@ -1475,8 +1501,8 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
                 return 1;
             }
 
-            zskiplistNode *existing_node = *node_ref_in_hashtable;
-            curscore = existing_node->score;
+            zskiplistNode *old_node = *node_ref_in_hashtable;
+            curscore = old_node->score;
 
             /* Prepare the score for the increment if needed. */
             if (incr) {
@@ -1497,9 +1523,10 @@ int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, dou
 
             /* Remove and re-insert when score changes. */
             if (score != curscore) {
+                zskiplistNode *new_node = zslUpdateScore(zs->zsl, old_node, score);
                 /* Note that this assignment updates the node pointer stored in
                  * the hashtable */
-                zslUpdateScore(zs->zsl, (zskiplistNode **)node_ref_in_hashtable, score);
+                if (new_node) *node_ref_in_hashtable = new_node;
                 *out_flags |= ZADD_OUT_UPDATED;
             }
             return 1;
@@ -1606,7 +1633,7 @@ static long zsetRank(robj *zobj, sds ele, int reverse, double *output_score) {
         if (!hashtableFind(zs->ht, ele, &entry)) return -1;
         zskiplistNode *node = entry;
 
-        rank = zslGetRankByNode(zs->zsl, node);
+        rank = zslGetRankCountingNodesAfter(zs->zsl, node);
         /* Existing elements always have a rank. */
         serverAssert(rank != 0);
         if (output_score) *output_score = node->score;
@@ -3280,7 +3307,7 @@ void zcountCommand(client *c) {
 
         /* Use rank of first element, if any, to determine preliminary count */
         if (zn != NULL) {
-            rank = zslGetRankByNode(zsl, zn);
+            rank = zslGetRank(zsl, zn);
             count = (zsl->length - (rank - 1));
 
             /* Find last element in range */
@@ -3288,7 +3315,7 @@ void zcountCommand(client *c) {
 
             /* Use rank of last element, if any, to determine the actual count */
             if (zn != NULL) {
-                rank = zslGetRankByNode(zsl, zn);
+                rank = zslGetRank(zsl, zn);
                 count -= (zsl->length - rank);
             }
         }
@@ -3356,7 +3383,7 @@ void zlexcountCommand(client *c) {
 
         /* Use rank of first element, if any, to determine preliminary count */
         if (zn != NULL) {
-            rank = zslGetRankByNode(zsl, zn);
+            rank = zslGetRank(zsl, zn);
             count = (zsl->length - (rank - 1));
 
             /* Find last element in range */
@@ -3364,7 +3391,7 @@ void zlexcountCommand(client *c) {
 
             /* Use rank of last element, if any, to determine the actual count */
             if (zn != NULL) {
-                rank = zslGetRankByNode(zsl, zn);
+                rank = zslGetRank(zsl, zn);
                 count -= (zsl->length - rank);
             }
         }
