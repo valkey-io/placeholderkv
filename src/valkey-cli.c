@@ -2233,19 +2233,25 @@ static int cliReadReply(int output_raw_strings) {
 }
 
 /* Helper method to process unsubscribe responses */
-static void processUnsubscribeReply(redisReply *reply) {
+static void handlePubSubMode(redisReply *reply) {
     if (reply->elements >= 3) {
         char *cmd = reply->element[0]->str;
         int count = reply->element[2]->integer;
  
-        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+        /* Update counts based on the command type */
+        if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 || 
+            strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
             config.pubsub_unsharded_count = count;
-        } else if (strcmp(cmd, "sunsubscribe") == 0) {
+        } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
             config.pubsub_sharded_count = count;
         }
 
-        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0) {
+        /* Update pubsub mode based on the current counts */
+        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0 && config.pubsub_mode) {
             config.pubsub_mode = 0;
+            cliRefreshPrompt();
+        } else if (config.pubsub_unsharded_count + config.pubsub_sharded_count > 0 && !config.pubsub_mode) {
+            config.pubsub_mode = 1;
             cliRefreshPrompt();
         }
     }
@@ -2270,7 +2276,7 @@ static void cliWaitForMessagesOrStdin(void) {
                 fflush(stdout);
 
                 if (isPubsubPush(reply)) {
-                    processUnsubscribeReply(reply);
+                    handlePubSubMode(reply);
                 }
 
                 sdsfree(out);
@@ -2428,22 +2434,14 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
                     /* Handle pubsub mode */
                     if (config.last_reply->elements >= 3) {
                         char *cmd = config.last_reply->element[0]->str;
-                        int count = config.last_reply->element[2]->integer;
-
-
-                        /* If it's an unsubscribe command, call the helper */
-                        if (strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-                            if (config.pubsub_mode && isPubsubPush(config.last_reply)) {
-                                processUnsubscribeReply(config.last_reply);
-                            }
-                        } 
-
-                        /* Handle subscribe commands */
-                        else if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0) {
-                            config.pubsub_unsharded_count = count;
-                        } else if (strcmp(cmd, "ssubscribe") == 0) {
-                            config.pubsub_sharded_count = count;
+                        
+                        /* Call the helper to handle both subscribe and unsubscribe commands */
+                        if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 ||
+                            strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 ||
+                            strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+                            handlePubSubMode(config.last_reply);
                         }
+
                     }   
 
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
