@@ -431,7 +431,7 @@ start_server {tags {"pubsub network"}} {
         set rd1 [valkey_deferring_client]
         assert_equal {1} [psubscribe $rd1 *]
         r set foo 1
-        r expire foo 0
+        r expire foo -1
         assert_equal "pmessage * __keyevent@${db}__:expired foo" [$rd1 read]
         $rd1 close
     }

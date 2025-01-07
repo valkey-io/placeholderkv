@@ -143,28 +143,28 @@ start_server {tags {"expire"}} {
     } {somevalue {}}
 
     test {EXPIRE / EXPIREAT / PEXPIRE / PEXPIREAT Expiration time is already expired} {
-        set prev_expired [s expired_keys]
-        r del x
+        r flushall
+        r config resetstat
 
         r set x somevalue
         r expire x -1
         assert_equal {0} [r exists x]
-        assert_equal {1} [expr {[s expired_keys] - $prev_expired}]
+        assert_equal {1} [s expired_keys]
 
         r set x somevalue
         r expireat x [expr [clock seconds] - 1]
         assert_equal {0} [r exists x]
-        assert_equal {2}  [expr {[s expired_keys] - $prev_expired}]
+        assert_equal {2}  [s expired_keys]
 
         r set x somevalue
-        r pexpire x -1
+        r pexpire x -1000
         assert_equal {0} [r exists x]
-        assert_equal {3}  [expr {[s expired_keys] - $prev_expired}]
+        assert_equal {3} [s expired_keys]
 
         r set x somevalue
-        r pexpireat x [expr [clock milliseconds] - 1]
+        r pexpireat x [expr [clock milliseconds] - 1000]
         assert_equal {0} [r exists x]
-        assert_equal {4}  [expr {[s expired_keys] - $prev_expired}]
+        assert_equal {4} [s expired_keys]
     }
 
     test {TTL returns time to live in seconds} {
