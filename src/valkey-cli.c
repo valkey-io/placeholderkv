@@ -2432,17 +2432,7 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
             if (config.pubsub_mode || num_expected_pubsub_push > 0) {
                 if (isPubsubPush(config.last_reply)) {
                     /* Handle pubsub mode */
-                    if (config.last_reply->elements >= 3) {
-                        char *cmd = config.last_reply->element[0]->str;
-                        
-                        /* Call the helper to handle both subscribe and unsubscribe commands */
-                        if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 ||
-                            strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 ||
-                            strcmp(cmd, "punsubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-                            handlePubSubMode(config.last_reply);
-                        }
-
-                    }   
+                    handlePubSubMode(config.last_reply);   
 
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
                         /* This pushed message confirms the
