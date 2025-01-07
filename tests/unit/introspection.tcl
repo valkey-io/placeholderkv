@@ -19,6 +19,562 @@ start_server {tags {"introspection"}} {
         r client info
     } {id=* addr=*:* laddr=*:* fd=* name=* age=* idle=* flags=N db=* sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=* argv-mem=* multi-mem=0 rbs=* rbp=* obl=0 oll=0 omem=0 tot-mem=* events=r cmd=client|info user=* redir=-1 resp=* lib-name=* lib-ver=* tot-net-in=* tot-net-out=* tot-cmds=*}
 
+    test {CLIENT LIST with ADDR filter} {
+        set client_info [r client info]
+        regexp {addr=([^ ]+)} $client_info match myaddr
+        set cl [split [r client list addr $myaddr] "\r\n"]
+        regexp {addr=([^ ]+) .* cmd=([^ ]+)} [lindex $cl 0] _ actual_addr actual_cmd
+        assert_equal $myaddr $actual_addr
+        assert_equal "client|list" $actual_cmd
+    }
+
+    test {CLIENT LIST with LADDR filter} {
+        set client_info [r client info]
+        regexp {laddr=([^ ]+)} $client_info match myladdr
+        set cl [split [r client list laddr $myladdr] "\r\n"]
+
+        regexp {laddr=([^ ]+)} [lindex $cl 0] _ actual_laddr
+
+        assert_equal $myladdr $actual_laddr
+    }
+
+    test {CLIENT LIST with MAXAGE filter} {
+        set cl [split [r client list maxage 1000000] "\r\n"]
+
+        foreach line $cl {
+            regexp {age=([0-9]+)} $line _ age
+            assert {[expr {$age <= 1000000}]}
+        }
+    }
+
+    test {CLIENT LIST with TYPE filter} {
+        set cl [split [r client list type normal] "\r\n"]
+
+        foreach line $cl {
+            regexp {flags=([^ ]+)} $line _ flags
+            assert [regexp {.*N.*} $flags]
+        }
+    }
+
+    test {CLIENT LIST with USER filter} {
+        set client_info [r client info]
+        regexp {user=([^ ]+)} $client_info match myuser
+        set cl [split [r client list user $myuser] "\r\n"]
+
+        foreach line $cl {
+            regexp {user=([^ ]+)} $line _ actual_user
+            assert_equal $myuser $actual_user
+        }
+    }
+
+    test {CLIENT LIST with SKIPME filter} {
+        set cl [split [r client list skipme no] "\r\n"]
+
+        set found_self 0
+        foreach line $cl {
+            regexp {id=([0-9]+)} $line _ client_id
+            if {[expr {$client_id == [r client id]}]} {
+                set found_self 1
+            }
+        }
+
+        assert_equal $found_self 1
+    }
+
+    test {CLIENT LIST with multiple IDs and TYPE filter} {
+        # Create multiple clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        set c3 [valkey_client]
+
+        # Fetch their IDs
+        set id1 [$c1 client id]
+        set id2 [$c2 client id]
+        set id3 [$c3 client id]
+
+        # Filter by multiple IDs and TYPE
+        set cl [split [r client list id $id1 $id2 type normal] "\r\n"]
+
+        # Assert only c1 and c2 are present and match TYPE=N (NORMAL)
+        foreach line $cl {
+            regexp {id=([0-9]+).*flags=([^ ]+)} $line _ client_id flags
+            assert {[lsearch -exact "$id1 $id2" $client_id] != -1}
+            assert {[string match *N* $flags]}
+        }
+
+        # Close clients
+        $c1 close
+        $c2 close
+        $c3 close
+    }
+
+    test {CLIENT LIST with filters matching no clients} {
+        # Create multiple clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+
+        # Use a filter that doesn't match any client (e.g., invalid user)
+        assert_error "ERR No such user 'invalid_user'" {r client list user invalid_user}
+
+        # Close clients
+        $c1 close
+        $c2 close
+    }
+
+
+    test {CLIENT LIST with NAME filter} {
+        r client setname mytestclient
+        set client_info [r client info]
+        regexp {name=([^ ]+)} $client_info match myname
+        set cl [split [r client list name $myname] "\r\n"]
+        regexp {name=([^ ]+) .* cmd=([^ ]+)} [lindex $cl 0] _ actual_name actual_cmd
+        assert_equal $myname $actual_name
+        assert_equal "client|list" $actual_cmd
+    }
+
+    # Test CLIENT LIST with FLAGS filter
+    test {CLIENT LIST with FLAGS filter} {
+        r client setname mytestclient
+        set cl [split [r client list flags N] "\r\n"]
+        regexp {name=([^ ]+) .* flags=([^ ]+) .* cmd=([^ ]+)} [lindex $cl 0] _ actual_name actual_flags actual_cmd
+        assert_equal "mytestclient" $actual_name
+        assert_equal "N" $actual_flags
+        assert_equal "client|list" $actual_cmd
+    }
+
+    # Test CLIENT LIST with TYPE filter
+    test {CLIENT LIST with TYPE filter} {
+        set cl [split [r client list type normal] "\r\n"]
+        regexp {id=([^ ]+) .* flags=([^ ]+) .* cmd=([^ ]+)} [lindex $cl 0] _ actual_id actual_flags actual_cmd
+        assert {[string match *N* $actual_flags]} ;# Ensure the flags include 'N' (Normal)
+        assert_equal "client|list" $actual_cmd
+    }
+
+    # Test CLIENT LIST with multiple filters
+    test {CLIENT LIST with multiple filters} {
+        r client setname mytestclient
+        set client_info [r client info]
+        regexp {id=([^ ]+) name=([^ ]+)} $client_info _ myid myname
+        set cl [split [r client list id $myid name $myname] "\r\n"]
+        regexp {id=([^ ]+) name=([^ ]+) .* cmd=([^ ]+)} [lindex $cl 0] _ actual_id actual_name actual_cmd
+        assert_equal $myid $actual_id
+        assert_equal $myname $actual_name
+        assert_equal "client|list" $actual_cmd
+    }
+
+    test {CLIENT LIST with PATTERN filter} {
+        # Create a client and subscribe to a channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 psubscribe h*llo
+
+        # Fetch the client list filtered by channel
+        set cl [split [r client list pattern h*llo] "\r\n"]
+
+        # Assert the client is subscribed to the channel
+        foreach line $cl {
+            regexp {name=([^ ]+)} $line _ actual_name
+            assert_equal "mytestclient" $actual_name
+        }
+
+        # Close client
+        $c1 close
+    }
+
+    test {CLIENT LIST with CHANNEL filter} {
+        # Create a client and subscribe to a channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 subscribe mychannel
+
+        # Fetch the client list filtered by channel
+        set cl [split [r client list channel mychannel] "\r\n"]
+
+        # Assert the client is subscribed to the channel
+        foreach line $cl {
+            regexp {name=([^ ]+)} $line _ actual_name
+            assert_equal "mytestclient" $actual_name
+        }
+
+        # Close client
+        $c1 close
+    }
+
+    test {CLIENT LIST with SHARDCHANNEL filter} {
+        # Create a client and subscribe to a channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 ssubscribe myshardchannel
+
+        # Fetch the client list filtered by channel
+        set cl [split [r client list shardchannel myshardchannel] "\r\n"]
+
+        # Assert the client is subscribed to the channel
+        foreach line $cl {
+            regexp {name=([^ ]+)} $line _ actual_name
+            assert_equal "mytestclient" $actual_name
+        }
+
+        # Close client
+        $c1 close
+    }
+
+    test {CLIENT LIST with multiple filters} {
+        # Create multiple clients with different names and flags
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        set c3 [valkey_client]
+        $c1 client setname client1
+        $c2 client setname client1
+        $c3 client setname client2
+        $c3 multi
+
+        # Wait 1 second to ensure idle time
+        after 1000  ;# Wait 1 second
+
+        # Fetch the client list filtered by name and flags
+        set cl [split [r client list name client1 flags N] "\r\n"]
+
+        # Assert the clients returned match the filters
+        foreach line $cl {
+            regexp {name=([^ ]+) .* flags=([^ ]+)} $line _ actual_name flags
+            assert {[string match *client1* $actual_name] || [string match *client2* $actual_name]}
+            assert {[string match *N* $flags]}
+        }
+
+        # Close clients
+        $c1 close
+        $c2 close
+        $c3 close
+    }
+
+    test {CLIENT KILL with NAME filter} {
+        # Create a client and set its name
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+
+        # Kill the client by name
+        r client kill name mytestclient
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with FLAGS filter} {
+        # Create a client and set its name
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+
+        # Kill the client by flag
+        r client kill flags N
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with TYPE filter} {
+        # Create a client
+        set c1 [valkey_client]
+
+        # Kill the client by type
+        r client kill type normal
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with multiple filters} {
+        # Create two clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        $c1 client setname client1
+        $c2 client setname client2
+
+        # Kill the client with name and flag filters
+        r client kill name client1 flags N
+
+        # Assert client1 was killed
+        set err1 [catch {$c1 ping} error_message1]
+        assert {$err1 == 1}
+        assert {[string match "*I/O error*" $error_message1]}
+
+        # Assert client2 is still alive
+        assert {[catch {$c2 ping}] == 0}
+
+        # Cleanup
+        catch {$c2 close}
+    }
+
+    test {CLIENT KILL with PATTERN filter} {
+        # Create a client and subscribe to a channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 psubscribe h*llo
+
+        # Kill the client using the exact name pattern
+        r client kill pattern h*llo
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with CHANNEL filter} {
+        # Create a client and subscribe to a channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 subscribe mychannel
+
+        # Kill the client using the channel filter
+        r client kill channel mychannel
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with SHARDCHANNEL filter} {
+        # Create a client and subscribe to a shard channel
+        set c1 [valkey_client]
+        $c1 client setname mytestclient
+        $c1 ssubscribe myshardchannel
+
+        # Kill the client using the shard channel filter
+        r client kill shardchannel myshardchannel
+
+        # Assert the client was killed
+        set err [catch {$c1 ping} error_message]
+        assert {$err == 1}
+        assert {[string match "*I/O error*" $error_message]}
+
+        # Cleanup
+        catch {$c1 close}
+    }
+
+    test {CLIENT KILL with multiple filters including idle time} {
+        # Create two clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        $c1 client setname client1
+        $c2 client setname client2
+
+        # Wait 1 second to ensure idle time
+        after 1000 ;# Wait 1 second
+
+        # Kill the client with name and idle time filters
+        r client kill name client1 minidle 1
+
+        # Assert client1 was killed
+        set err1 [catch {$c1 ping} error_message1]
+        assert {$err1 == 1}
+        assert {[string match "*I/O error*" $error_message1]}
+
+        # Assert client2 is still alive
+        assert {[catch {$c2 ping}] == 0}
+
+        # Cleanup
+        catch {$c2 close}
+    }
+
+    test {CLIENT LIST with illegal arguments} {
+        assert_error "ERR syntax error" {r client list id 10 wrong_arg}
+
+        assert_error "ERR syntax error" {r client list id str}
+        assert_error "ERR *greater than 0*" {r client list id -1}
+        assert_error "ERR *greater than 0*" {r client list id 0}
+
+        assert_error "ERR Unknown client type*" {r client list type wrong_type}
+
+        assert_error "ERR No such user*" {r client list user wrong_user}
+
+        assert_error "ERR syntax error*" {r client list skipme yes_or_no}
+
+        assert_error "ERR *not an integer or out of range*" {r client list maxage str}
+        assert_error "ERR *not an integer or out of range*" {r client list maxage 9999999999999999999}
+        assert_error "ERR *greater than 0*" {r client list maxage -1}
+    }
+
+    test {CLIENT COUNT: Count all clients} {
+        # Connect multiple clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        set c3 [valkey_client]
+
+        # Assert the count matches the number of connected clients
+        assert {[r client count] == 4}
+
+        # Close all clients
+        $c1 close
+        $c2 close
+        $c3 close
+    }
+
+    test {CLIENT COUNT: Filter by specific ID} {
+        # Create two clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+
+        # Get the ID of the first client
+        set client_list [r client list]
+        regexp {id=(\d+)} $client_list -> id1
+
+        # Assert only the client with the matching ID is counted
+        assert {[r client count id $id1] == 1}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+    }
+
+    test {CLIENT COUNT: Filter by maximum age} {
+        # Create two clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+
+        # Wait 2 seconds
+        after 2000
+
+        # Assert no clients younger than 1 second are counted
+        assert {[r client count maxage 1] == 3}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+    }
+
+    test {CLIENT COUNT: Filter by client address} {
+        # Create a client
+        set c1 [valkey_client]
+
+        # Get the client's address
+        set client_list [r client list]
+        regexp {addr=([^ ]+)} $client_list -> addr
+
+        # Assert only the client with the matching address is counted
+        assert {[r client count addr $addr] == 1}
+
+        # Close the client
+        $c1 close
+    }
+
+    test {CLIENT COUNT: Filter by local address} {
+        # Create a client
+        set c1 [valkey_client]
+
+        # Get the client's local address
+        set client_list [r client list]
+        regexp {laddr=([^ ]+)} $client_list -> laddr
+
+        # Assert only the client with the matching local address is counted
+        assert {[r client count laddr $laddr] == 2}
+
+        # Close the client
+        $c1 close
+    }
+
+    test {CLIENT COUNT: Exclude current client} {
+        # Create two clients
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+
+        # Assert the correct number of clients is returned for both cases
+        assert {[r client count skipme no] == 3}
+        assert {[r client count skipme yes] == 2}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+    }
+
+    test {CLIENT COUNT: Filter by user} {
+        # Create a user and assign it to a client
+        r acl setuser user1 on +@all >password
+        set c1 [valkey_client]
+        $c1 auth user1 password
+        set c2 [valkey_client]
+
+        # Assert only the client associated with the user is counted
+        assert {[r client count user user1] == 1}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+
+        # Delete the user
+        r acl deluser user1
+    }
+
+    test {CLIENT COUNT: Filter by type} {
+        # Create clients of different types
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        $c2 subscribe test_channel
+
+        # Assert only normal clients are counted
+        assert {[r client count type normal] == 2}
+        assert {[r client count type pubsub] == 1}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+    }
+
+
+    test {CLIENT COUNT: Filter by client name} {
+        # Create a client and set its name
+        set c1 [valkey_client]
+        $c1 client setname test_client
+
+        # Assert only the client with the matching name is counted
+        assert {[r client count name test_client] == 1}
+
+        # Close the client
+        $c1 close
+    }
+
+    test {CLIENT COUNT: Combine filters for name and flags} {
+        # Create multiple clients with different attributes
+        set c1 [valkey_client]
+        set c2 [valkey_client]
+        $c1 client setname client1
+        $c2 client setname client2
+        $c2 multi
+
+        # Assert only clients matching both filters are counted
+        assert {[r client count name client1 flags x] == 0}
+
+
+        # Assert only clients matching both filters are counted
+        assert {[r client count name client2 flags x] == 1}
+
+        # Close the clients
+        $c1 close
+        $c2 close
+    }
+
     proc get_field_in_client_info {info field} {
         set info [string trim $info]
         foreach item [split $info " "] {
@@ -108,7 +664,7 @@ start_server {tags {"introspection"}} {
         assert_error "ERR wrong number of arguments for 'client|kill' command" {r client kill}
         assert_error "ERR syntax error*" {r client kill id 10 wrong_arg}
 
-        assert_error "ERR *greater than 0*" {r client kill id str}
+        assert_error "ERR syntax error*" {r client kill id str}
         assert_error "ERR *greater than 0*" {r client kill id -1}
         assert_error "ERR *greater than 0*" {r client kill id 0}
 
@@ -385,19 +941,19 @@ start_server {tags {"introspection"}} {
         set rd [valkey_deferring_client]
         $rd monitor
         $rd read ; # Discard the OK
-    
+
         # Execute multi-exec block with SET EX commands
         r multi
         r set "{slot}key1" value1 ex 3600
         r set "{slot}key2" value2 ex 1800
         r exec
-    
+
         # Verify monitor output shows the original commands:
         assert_match {*"multi"*} [$rd read]
         assert_match {*"set"*"{slot}key1"*"value1"*"ex"*"3600"*} [$rd read]
         assert_match {*"set"*"{slot}key2"*"value2"*"ex"*"1800"*} [$rd read]
         assert_match {*"exec"*} [$rd read]
-    
+
         # Clean up monitoring client
         $rd close
     }

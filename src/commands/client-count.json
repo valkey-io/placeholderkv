@@ -1,44 +1,16 @@
 {
-    "LIST": {
-        "summary": "Lists open connections.",
+    "COUNT": {
+        "summary": "Counts open connections.",
         "complexity": "O(N) where N is the number of client connections",
         "group": "connection",
-        "since": "2.4.0",
+        "since": "8.1.0",
         "arity": -2,
         "container": "CLIENT",
         "function": "clientCommand",
         "history": [
             [
-                "2.8.12",
-                "Added unique client `id` field."
-            ],
-            [
-                "5.0.0",
-                "Added optional `TYPE` filter."
-            ],
-            [
-                "6.0.0",
-                "Added `user` field."
-            ],
-            [
-                "6.2.0",
-                "Added `argv-mem`, `tot-mem`, `laddr` and `redir` fields and the optional `ID` filter."
-            ],
-            [
-                "7.0.0",
-                "Added `resp`, `multi-mem`, `rbs` and `rbp` fields."
-            ],
-            [
-                "7.0.3",
-                "Added `ssub` field."
-            ],
-            [
-                "8.0.0",
-                "Replaced `master` `TYPE` with `primary`. `master` still supported for backward compatibility."
-            ],
-            [
                 "8.1.0",
-                "Added filters like USER, ADDR, LADDR, SKIPME, MAXAGE, NAME, MINIDLE, FLAGS, PATTERN, CHANNEL and SHARDCHANNEL "
+                "Introducing client count command with filters"
             ]
         ],
         "command_flags": [
@@ -60,11 +32,18 @@
         },
         "arguments": [
             {
+                "name": "client-id",
+                "token": "ID",
+                "type": "integer",
+                "optional": true,
+                "multiple": true,
+                "since": "8.1.0"
+            },
+            {
                 "token": "TYPE",
                 "name": "client-type",
                 "type": "oneof",
                 "optional": true,
-                "since": "5.0.0",
                 "arguments": [
                     {
                         "name": "normal",
@@ -87,14 +66,6 @@
                         "token": "pubsub"
                     }
                 ]
-            },
-            {
-                "name": "client-id",
-                "token": "ID",
-                "type": "integer",
-                "optional": true,
-                "multiple": true,
-                "since": "6.2.0"
             },
             {
                 "token": "USER",
