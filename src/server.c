@@ -5863,7 +5863,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             server.stat_last_eviction_exceeded_time ? (long long)elapsedUs(server.stat_last_eviction_exceeded_time) : 0;
         long long current_active_defrag_time =
             server.stat_last_active_defrag_time ? (long long)elapsedUs(server.stat_last_active_defrag_time) : 0;
-        char *paused_actions = server.paused_actions & PAUSE_ACTION_CLIENT_ALL ? "all" : server.paused_actions & PAUSE_ACTION_CLIENT_WRITE ? "write" : "none";
+        char *paused_actions = server.paused_actions & PAUSE_ACTION_CLIENT_ALL ? "all" : server.paused_actions & PAUSE_ACTION_CLIENT_WRITE ? "write"
+                                                                                                                                           : "none";
 
         if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(
