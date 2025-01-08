@@ -2228,13 +2228,11 @@ static int cliReadReply(int output_raw_strings) {
         fflush(stdout);
         sdsfree(out);
     }
-    
     return REDIS_OK;
 }
 
 /* Helper method to handle pubsub subscription/unsubscription. */
 static void handlePubSubMode(redisReply *reply) {
-    
     char *cmd = reply->element[0]->str;
     int count = reply->element[2]->integer;
  
@@ -2253,7 +2251,6 @@ static void handlePubSubMode(redisReply *reply) {
         config.pubsub_mode = 1;
         cliRefreshPrompt();
     }
-    
 }
 
 /* Simultaneously wait for pubsub messages from the server and input on stdin. */
@@ -2430,7 +2427,7 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
             fflush(stdout);
             if (config.pubsub_mode || num_expected_pubsub_push > 0) {
                 if (isPubsubPush(config.last_reply)) {
-                    handlePubSubMode(config.last_reply);   
+                    handlePubSubMode(config.last_reply);
 
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
                         /* This pushed message confirms the
