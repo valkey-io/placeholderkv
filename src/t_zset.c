@@ -302,7 +302,9 @@ static void zslDelete(zskiplist *zsl, zskiplistNode *node) {
 static zskiplistNode *zslUpdateScore(zskiplist *zsl, zskiplistNode *node, double newscore) {
     /* If the node, after the score update, would be still exactly
      * at the same position, we can just update the score without
-     * actually removing and re-inserting the element in the skiplist. */
+     * actually removing and re-inserting the element in the skiplist.
+     * (TODO: The check can be extended to check also equality of the
+     * score, but then we'll also need to compare the key order). */
     if ((node->backward == NULL || node->backward->score < newscore) &&
         (node->level[0].forward == NULL || node->level[0].forward->score > newscore)) {
         node->score = newscore;
