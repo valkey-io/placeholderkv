@@ -11,7 +11,7 @@ CRITICAL: There is a critical bug affecting MOST USERS. Upgrade ASAP.
 SECURITY: There are security fixes in the release.
 --------------------------------------------------------------------------------
 ================================================================================
-Valkey 7.2.8  -  Released Mon 06 Jan 2025
+Valkey 7.2.8  -  Released Mon 07 Jan 2025
 ================================================================================
 
 Upgrade urgency SECURITY: This release includes security fixes we recommend you
