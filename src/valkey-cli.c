@@ -2235,7 +2235,7 @@ static int cliReadReply(int output_raw_strings) {
 static void handlePubSubMode(redisReply *reply) {
     char *cmd = reply->element[0]->str;
     int count = reply->element[2]->integer;
- 
+
     /* Update counts based on the command type */
     if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
         config.pubsub_unsharded_count = count;
