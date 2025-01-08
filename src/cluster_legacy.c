@@ -4724,14 +4724,9 @@ void clusterHandleReplicaFailover(void) {
         if (server.cluster->mf_end) {
             server.cluster->failover_auth_time = now;
             server.cluster->failover_auth_rank = 0;
-<<<<<<< HEAD
-            server.cluster->failover_auth_count++;
-            clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
-=======
             /* Reset auth_age since it is outdated now and we can bypass the auth_timeout
              * check in the next state and start the election ASAP. */
             auth_age = 0;
->>>>>>> upstream/unstable
         }
         serverLog(LL_NOTICE,
                   "Start of election delayed for %lld milliseconds "
