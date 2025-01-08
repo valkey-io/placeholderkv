@@ -35,6 +35,7 @@
 #include "solarisfixes.h"
 #include "rio.h"
 #include "commands.h"
+#include "allocator_defrag.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +67,8 @@ typedef long long ustime_t; /* microsecond time type. */
 
 #include "ae.h"         /* Event driven programming library */
 #include "sds.h"        /* Dynamic safe strings */
-#include "dict.h"       /* Hash tables */
+#include "dict.h"       /* Hash tables (old implementation) */
+#include "hashtable.h"  /* Hash tables (new implementation) */
 #include "kvstore.h"    /* Slot-based hash table */
 #include "adlist.h"     /* Linked lists */
 #include "zmalloc.h"    /* total memory usage aware version of malloc/free */
@@ -80,6 +82,8 @@ typedef long long ustime_t; /* microsecond time type. */
 #include "rax.h"        /* Radix tree */
 #include "connection.h" /* Connection abstraction */
 #include "memory_prefetch.h"
+
+#define dismissMemory zmadvise_dontneed
 
 #define VALKEYMODULE_CORE 1
 typedef struct serverObject robj;
@@ -144,6 +148,11 @@ struct hdr_histogram;
 #define DEFAULT_WAIT_BEFORE_RDB_CLIENT_FREE 60      /* Grace period in seconds for replica main \
                                                      * channel to establish psync. */
 #define LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT 100 /* Default: 0.1 seconds */
+#if !defined(DEBUG_FORCE_DEFRAG)
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 0
+#else
+#define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
+#endif
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -208,9 +217,6 @@ struct hdr_histogram;
 
 extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 
-/* Hash table parameters */
-#define HASHTABLE_MAX_LOAD_FACTOR 1.618 /* Maximum hash table load factor. */
-
 /* Command flags. Please check the definition of struct serverCommand in this file
  * for more information about the meaning of every flag. */
 #define CMD_WRITE (1ULL << 0)
@@ -242,6 +248,8 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CMD_ALLOW_BUSY ((1ULL << 26))
 #define CMD_MODULE_GETCHANNELS (1ULL << 27) /* Use the modules getchannels interface. */
 #define CMD_TOUCHES_ARBITRARY_KEYS (1ULL << 28)
+/* Command flags. Please don't forget to add command flag documentation in struct
+ * serverCommand in this file. */
 
 /* Command flags that describe ACLs categories. */
 #define ACL_CATEGORY_KEYSPACE (1ULL << 0)
@@ -567,6 +575,15 @@ typedef enum {
 #define PAUSE_ACTION_EVICT (1 << 3)
 #define PAUSE_ACTION_REPLICA (1 << 4) /* pause replica traffic */
 
+/* Sets log format */
+typedef enum { LOG_FORMAT_LEGACY = 0,
+               LOG_FORMAT_LOGFMT } log_format_type;
+
+/* Sets log timestamp format */
+typedef enum { LOG_TIMESTAMP_LEGACY = 0,
+               LOG_TIMESTAMP_ISO8601,
+               LOG_TIMESTAMP_MILLISECONDS } log_timestamp_type;
+
 /* common sets of actions to pause/unpause */
 #define PAUSE_ACTIONS_CLIENT_WRITE_SET \
     (PAUSE_ACTION_CLIENT_WRITE | PAUSE_ACTION_EXPIRE | PAUSE_ACTION_EVICT | PAUSE_ACTION_REPLICA)
@@ -684,168 +701,7 @@ typedef enum {
 #define OBJ_STREAM 6   /* Stream object. */
 #define OBJ_TYPE_MAX 7 /* Maximum number of object types */
 
-/* Extract encver / signature from a module type ID. */
-#define VALKEYMODULE_TYPE_ENCVER_BITS 10
-#define VALKEYMODULE_TYPE_ENCVER_MASK ((1 << VALKEYMODULE_TYPE_ENCVER_BITS) - 1)
-#define VALKEYMODULE_TYPE_ENCVER(id) ((id) & VALKEYMODULE_TYPE_ENCVER_MASK)
-#define VALKEYMODULE_TYPE_SIGN(id) \
-    (((id) & ~((uint64_t)VALKEYMODULE_TYPE_ENCVER_MASK)) >> VALKEYMODULE_TYPE_ENCVER_BITS)
-
-/* Bit flags for moduleTypeAuxSaveFunc */
-#define VALKEYMODULE_AUX_BEFORE_RDB (1 << 0)
-#define VALKEYMODULE_AUX_AFTER_RDB (1 << 1)
-
-struct ValkeyModule;
-struct ValkeyModuleIO;
-struct ValkeyModuleDigest;
-struct ValkeyModuleCtx;
-struct moduleLoadQueueEntry;
-struct ValkeyModuleKeyOptCtx;
-struct ValkeyModuleCommand;
-struct clusterState;
-
-/* Each module type implementation should export a set of methods in order
- * to serialize and deserialize the value in the RDB file, rewrite the AOF
- * log, create the digest for "DEBUG DIGEST", and free the value when a key
- * is deleted. */
-typedef void *(*moduleTypeLoadFunc)(struct ValkeyModuleIO *io, int encver);
-typedef void (*moduleTypeSaveFunc)(struct ValkeyModuleIO *io, void *value);
-typedef int (*moduleTypeAuxLoadFunc)(struct ValkeyModuleIO *rdb, int encver, int when);
-typedef void (*moduleTypeAuxSaveFunc)(struct ValkeyModuleIO *rdb, int when);
-typedef void (*moduleTypeRewriteFunc)(struct ValkeyModuleIO *io, struct serverObject *key, void *value);
-typedef void (*moduleTypeDigestFunc)(struct ValkeyModuleDigest *digest, void *value);
-typedef size_t (*moduleTypeMemUsageFunc)(const void *value);
-typedef void (*moduleTypeFreeFunc)(void *value);
-typedef size_t (*moduleTypeFreeEffortFunc)(struct serverObject *key, const void *value);
-typedef void (*moduleTypeUnlinkFunc)(struct serverObject *key, void *value);
-typedef void *(*moduleTypeCopyFunc)(struct serverObject *fromkey, struct serverObject *tokey, const void *value);
-typedef int (*moduleTypeDefragFunc)(struct ValkeyModuleDefragCtx *ctx, struct serverObject *key, void **value);
-typedef size_t (*moduleTypeMemUsageFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value, size_t sample_size);
-typedef void (*moduleTypeFreeFunc2)(struct ValkeyModuleKeyOptCtx *ctx, void *value);
-typedef size_t (*moduleTypeFreeEffortFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value);
-typedef void (*moduleTypeUnlinkFunc2)(struct ValkeyModuleKeyOptCtx *ctx, void *value);
-typedef void *(*moduleTypeCopyFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value);
-typedef int (*moduleTypeAuthCallback)(struct ValkeyModuleCtx *ctx, void *username, void *password, const char **err);
-
-
-/* The module type, which is referenced in each value of a given type, defines
- * the methods and links to the module exporting the type. */
-typedef struct ValkeyModuleType {
-    uint64_t id; /* Higher 54 bits of type ID + 10 lower bits of encoding ver. */
-    struct ValkeyModule *module;
-    moduleTypeLoadFunc rdb_load;
-    moduleTypeSaveFunc rdb_save;
-    moduleTypeRewriteFunc aof_rewrite;
-    moduleTypeMemUsageFunc mem_usage;
-    moduleTypeDigestFunc digest;
-    moduleTypeFreeFunc free;
-    moduleTypeFreeEffortFunc free_effort;
-    moduleTypeUnlinkFunc unlink;
-    moduleTypeCopyFunc copy;
-    moduleTypeDefragFunc defrag;
-    moduleTypeAuxLoadFunc aux_load;
-    moduleTypeAuxSaveFunc aux_save;
-    moduleTypeMemUsageFunc2 mem_usage2;
-    moduleTypeFreeEffortFunc2 free_effort2;
-    moduleTypeUnlinkFunc2 unlink2;
-    moduleTypeCopyFunc2 copy2;
-    moduleTypeAuxSaveFunc aux_save2;
-    int aux_save_triggers;
-    char name[10]; /* 9 bytes name + null term. Charset: A-Z a-z 0-9 _- */
-} moduleType;
-
-/* In Object 'robj' structures of type OBJ_MODULE, the value pointer
- * is set to the following structure, referencing the moduleType structure
- * in order to work with the value, and at the same time providing a raw
- * pointer to the value, as created by the module commands operating with
- * the module type.
- *
- * So for example in order to free such a value, it is possible to use
- * the following code:
- *
- *  if (robj->type == OBJ_MODULE) {
- *      moduleValue *mt = robj->ptr;
- *      mt->type->free(mt->value);
- *      zfree(mt); // We need to release this in-the-middle struct as well.
- *  }
- */
-typedef struct moduleValue {
-    moduleType *type;
-    void *value;
-} moduleValue;
-
-/* This structure represents a module inside the system. */
-struct ValkeyModule {
-    void *handle;                         /* Module dlopen() handle. */
-    char *name;                           /* Module name. */
-    int ver;                              /* Module version. We use just progressive integers. */
-    int apiver;                           /* Module API version as requested during initialization.*/
-    list *types;                          /* Module data types. */
-    list *usedby;                         /* List of modules using APIs from this one. */
-    list *using;                          /* List of modules we use some APIs of. */
-    list *filters;                        /* List of filters the module has registered. */
-    list *module_configs;                 /* List of configurations the module has registered */
-    int configs_initialized;              /* Have the module configurations been initialized? */
-    int in_call;                          /* RM_Call() nesting level */
-    int in_hook;                          /* Hooks callback nesting level for this module (0 or 1). */
-    int options;                          /* Module options and capabilities. */
-    int blocked_clients;                  /* Count of ValkeyModuleBlockedClient in this module. */
-    ValkeyModuleInfoFunc info_cb;         /* Callback for module to add INFO fields. */
-    ValkeyModuleDefragFunc defrag_cb;     /* Callback for global data defrag. */
-    struct moduleLoadQueueEntry *loadmod; /* Module load arguments for config rewrite. */
-    int num_commands_with_acl_categories; /* Number of commands in this module included in acl categories */
-    int onload;                           /* Flag to identify if the call is being made from Onload (0 or 1) */
-    size_t num_acl_categories_added;      /* Number of acl categories added by this module. */
-};
-typedef struct ValkeyModule ValkeyModule;
-
-/* This is a wrapper for the 'rio' streams used inside rdb.c in the server, so that
- * the user does not have to take the total count of the written bytes nor
- * to care about error conditions. */
-struct ValkeyModuleIO {
-    size_t bytes;                /* Bytes read / written so far. */
-    rio *rio;                    /* Rio stream. */
-    moduleType *type;            /* Module type doing the operation. */
-    int error;                   /* True if error condition happened. */
-    struct ValkeyModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
-    struct serverObject *key;    /* Optional name of key processed */
-    int dbid;                    /* The dbid of the key being processed, -1 when unknown. */
-    sds pre_flush_buffer;        /* A buffer that should be flushed before next write operation
-                                  * See rdbSaveSingleModuleAux for more details */
-};
-
-/* Macro to initialize an IO context. Note that the 'ver' field is populated
- * inside rdb.c according to the version of the value to load. */
-#define moduleInitIOContext(iovar, mtype, rioptr, keyptr, db) \
-    do {                                                      \
-        iovar.rio = rioptr;                                   \
-        iovar.type = mtype;                                   \
-        iovar.bytes = 0;                                      \
-        iovar.error = 0;                                      \
-        iovar.key = keyptr;                                   \
-        iovar.dbid = db;                                      \
-        iovar.ctx = NULL;                                     \
-        iovar.pre_flush_buffer = NULL;                        \
-    } while (0)
-
-/* This is a structure used to export DEBUG DIGEST capabilities to
- * modules. We want to capture both the ordered and unordered elements of
- * a data structure, so that a digest can be created in a way that correctly
- * reflects the values. See the DEBUG DIGEST command implementation for more
- * background. */
-struct ValkeyModuleDigest {
-    unsigned char o[20];      /* Ordered elements. */
-    unsigned char x[20];      /* Xored elements. */
-    struct serverObject *key; /* Optional name of key processed */
-    int dbid;                 /* The dbid of the key being processed */
-};
-
-/* Just start with a digest composed of all zero bytes. */
-#define moduleInitDigestContext(mdvar)       \
-    do {                                     \
-        memset(mdvar.o, 0, sizeof(mdvar.o)); \
-        memset(mdvar.x, 0, sizeof(mdvar.x)); \
-    } while (0)
+typedef struct ValkeyModuleType moduleType;
 
 /* Macro to check if the client is in the middle of module based authentication. */
 #define clientHasModuleAuthInProgress(c) ((c)->module_auth_ctx != NULL)
@@ -865,13 +721,15 @@ struct ValkeyModuleDigest {
 #define OBJ_ENCODING_QUICKLIST 9  /* Encoded as linked list of listpacks */
 #define OBJ_ENCODING_STREAM 10    /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11  /* Encoded as a listpack */
+#define OBJ_ENCODING_HASHTABLE 12 /* Encoded as a hashtable */
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1 << LRU_BITS) - 1) /* Max value of obj->lru */
 #define LRU_CLOCK_RESOLUTION 1000           /* LRU clock resolution in ms */
 
-#define OBJ_SHARED_REFCOUNT INT_MAX       /* Global object never destroyed. */
-#define OBJ_STATIC_REFCOUNT (INT_MAX - 1) /* Object allocated in the stack. */
+#define OBJ_REFCOUNT_BITS 30
+#define OBJ_SHARED_REFCOUNT ((1 << OBJ_REFCOUNT_BITS) - 1) /* Global object never destroyed. */
+#define OBJ_STATIC_REFCOUNT ((1 << OBJ_REFCOUNT_BITS) - 2) /* Object allocated in the stack. */
 #define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
 struct serverObject {
     unsigned type : 4;
@@ -879,7 +737,9 @@ struct serverObject {
     unsigned lru : LRU_BITS; /* LRU time (relative to global lru_clock) or
                               * LFU data (least significant 8 bits frequency
                               * and most significant 16 bits access time). */
-    int refcount;
+    unsigned hasexpire : 1;
+    unsigned hasembkey : 1;
+    unsigned refcount : OBJ_REFCOUNT_BITS;
     void *ptr;
 };
 
@@ -897,6 +757,8 @@ char *getObjectTypeName(robj *);
         _var.refcount = OBJ_STATIC_REFCOUNT; \
         _var.type = OBJ_STRING;              \
         _var.encoding = OBJ_ENCODING_RAW;    \
+        _var.hasexpire = 0;                  \
+        _var.hasembkey = 0;                  \
         _var.ptr = _ptr;                     \
     } while (0)
 
@@ -951,7 +813,6 @@ typedef struct serverDb {
     int id;                               /* Database ID */
     long long avg_ttl;                    /* Average TTL, just for stats */
     unsigned long expires_cursor;         /* Cursor of the active expire cycle. */
-    list *defrag_later;                   /* List of key names to attempt to defrag one by one, gradually. */
 } serverDb;
 
 /* forward declaration for functions ctx */
@@ -1084,9 +945,10 @@ typedef struct {
 /* With multiplexing we need to take per-client state.
  * Clients are taken in a linked list. */
 
-#define CLIENT_ID_AOF (UINT64_MAX) /* Reserved ID for the AOF client. If you   \
-                                      need more reserved IDs use UINT64_MAX-1, \
-                                      -2, ... and so forth. */
+#define CLIENT_ID_AOF (UINT64_MAX)                 /* Reserved ID for the AOF client. If you   \
+                                                      need more reserved IDs use UINT64_MAX-1, \
+                                                      -2, ... and so forth. */
+#define CLIENT_ID_CACHED_RESPONSE (UINT64_MAX - 1) /* Client for cached response, see createCachedResponseClient. */
 
 /* Replication backlog is not a separate memory, it just is one consumer of
  * the global replication buffer. This structure records the reference of
@@ -1224,7 +1086,8 @@ typedef struct ClientFlags {
                                             * knows that it does not need the cache and required a full sync. With this
                                             * flag, we won't cache the primary in freeClient. */
     uint64_t fake : 1;                     /* This is a fake client without a real connection. */
-    uint64_t reserved : 5;                 /* Reserved for future use */
+    uint64_t import_source : 1;            /* This client is importing data to server and can visit expired key. */
+    uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
 typedef struct client {
@@ -1394,12 +1257,6 @@ struct saveparam {
     int changes;
 };
 
-struct moduleLoadQueueEntry {
-    sds path;
-    int argc;
-    robj **argv;
-};
-
 struct sentinelLoadQueueEntry {
     int argc;
     sds *argv;
@@ -1422,7 +1279,7 @@ struct sharedObjectsStruct {
         *rpoplpush, *lmove, *blmove, *zpopmin, *zpopmax, *emptyscan, *multi, *exec, *left, *right, *hset, *srem,
         *xgroup, *xclaim, *script, *replconf, *eval, *persist, *set, *pexpireat, *pexpire, *time, *pxat, *absttl,
         *retrycount, *force, *justid, *entriesread, *lastid, *ping, *setid, *keepttl, *load, *createconsumer, *getack,
-        *special_asterick, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
+        *special_asterisk, *special_equals, *default_username, *redacted, *ssubscribebulk, *sunsubscribebulk,
         *smessagebulk, *select[PROTO_SHARED_SELECT_CMDS], *integers[OBJ_SHARED_INTEGERS],
         *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], /* "*<value>\r\n" */
         *bulkhdr[OBJ_SHARED_BULKHDR_LEN],  /* "$<value>\r\n" */
@@ -1438,6 +1295,10 @@ typedef struct zskiplistNode {
     struct zskiplistNode *backward;
     struct zskiplistLevel {
         struct zskiplistNode *forward;
+        /* At each level we keep the span, which is the number of elements which are on the "subtree"
+         * from this node at this level to the next node at the same level.
+         * One exception is the value at level 0. In level 0 the span can only be 1 or 0 (in case the last elements in the list)
+         * So we use it in order to hold the height of the node, which is the number of levels. */
         unsigned long span;
     } level[];
 } zskiplistNode;
@@ -1603,6 +1464,17 @@ typedef struct serverUnixContextConfig {
 } serverUnixContextConfig;
 
 /*-----------------------------------------------------------------------------
+ * RDMA Context Configuration
+ *----------------------------------------------------------------------------*/
+typedef struct serverRdmaContextConfig {
+    char *bindaddr[CONFIG_BINDADDR_MAX];
+    int bindaddr_count;
+    int port;
+    int rx_size;
+    int completion_vector;
+} serverRdmaContextConfig;
+
+/*-----------------------------------------------------------------------------
  * AOF manifest definition
  *----------------------------------------------------------------------------*/
 typedef enum {
@@ -1667,8 +1539,8 @@ struct valkeyServer {
     int hz;                   /* serverCron() calls frequency in hertz */
     int in_fork_child;        /* indication that this is a fork child */
     serverDb *db;
-    dict *commands;      /* Command table */
-    dict *orig_commands; /* Command table before command renaming. */
+    hashtable *commands;      /* Command table */
+    hashtable *orig_commands; /* Command table before command renaming. */
     aeEventLoop *el;
     _Atomic AeIoState io_poll_state;     /* Indicates the state of the IO polling. */
     int io_ae_fired_events;              /* Number of poll events received by the IO thread. */
@@ -1679,7 +1551,7 @@ struct valkeyServer {
     int last_sig_received;               /* Indicates the last SIGNAL received, if any (e.g., SIGINT or SIGTERM). */
     int shutdown_flags;                  /* Flags passed to prepareForShutdown(). */
     int activerehashing;                 /* Incremental rehash in serverCron() */
-    int active_defrag_running;           /* Active defragmentation running (holds current scan aggressiveness) */
+    int active_defrag_cpu_percent;       /* Current desired CPU percentage for active defrag */
     char *pidfile;                       /* PID file path */
     int arch_bits;                       /* 32 or 64 depending on sizeof(long) */
     int cronloops;                       /* Number of times the cron function run */
@@ -1692,6 +1564,7 @@ struct valkeyServer {
     const char *busy_module_yield_reply; /* When non-null, we are inside RM_Yield. */
     char *ignore_warnings;               /* Config: warnings that should be ignored. */
     int client_pause_in_transaction;     /* Was a client pause executed during this Exec? */
+    int server_del_keys_in_slot;         /* The server is deleting the keys in the dirty slot. */
     int thp_enabled;                     /* If true, THP is enabled. */
     size_t page_size;                    /* The page size of OS. */
     /* Modules */
@@ -1831,6 +1704,7 @@ struct valkeyServer {
     long long stat_io_reads_processed;                 /* Number of read events processed by IO threads */
     long long stat_io_writes_processed;                /* Number of write events processed by IO threads */
     long long stat_io_freed_objects;                   /* Number of objects freed by IO threads */
+    long long stat_io_accept_offloaded;                /* Number of offloaded accepts */
     long long stat_poll_processed_by_io_threads;       /* Total number of poll jobs processed by IO */
     long long stat_total_reads_processed;              /* Total number of read events processed */
     long long stat_total_writes_processed;             /* Total number of write events processed */
@@ -1870,13 +1744,13 @@ struct valkeyServer {
     int sanitize_dump_payload;                   /* Enables deep sanitization for ziplist and listpack in RDB and RESTORE. */
     int skip_checksum_validation;                /* Disable checksum validation for RDB and RESTORE payload. */
     int jemalloc_bg_thread;                      /* Enable jemalloc background thread */
-    int active_defrag_configuration_changed;     /* defrag configuration has been changed and need to reconsider
-                                                  * active_defrag_running in computeDefragCycles. */
+    int active_defrag_configuration_changed;     /* Config changed; need to recompute active_defrag_cpu_percent. */
     size_t active_defrag_ignore_bytes;           /* minimum amount of fragmentation waste to start active defrag */
     int active_defrag_threshold_lower;           /* minimum percentage of fragmentation to start active defrag */
     int active_defrag_threshold_upper;           /* maximum percentage of fragmentation at which we use maximum effort */
-    int active_defrag_cycle_min;                 /* minimal effort for defrag in CPU percentage */
-    int active_defrag_cycle_max;                 /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cpu_min;                   /* minimal effort for defrag in CPU percentage */
+    int active_defrag_cpu_max;                   /* maximal effort for defrag in CPU percentage */
+    int active_defrag_cycle_us;                  /* standard duration of defrag cycle */
     unsigned long active_defrag_max_scan_fields; /* maximum number of fields of set/hash/zset/list to process from
                                                     within the main dict scan */
     size_t client_max_querybuf_len;              /* Limit for client query buffer length */
@@ -1978,17 +1852,19 @@ struct valkeyServer {
     serverOpArray also_propagate; /* Additional command to propagate. */
     int replication_allowed;      /* Are we allowed to replicate? */
     /* Logging */
-    char *logfile;         /* Path of log file */
-    int syslog_enabled;    /* Is syslog enabled? */
-    char *syslog_ident;    /* Syslog ident */
-    int syslog_facility;   /* Syslog facility */
-    int crashlog_enabled;  /* Enable signal handler for crashlog.
-                            * disable for clean core dumps. */
-    int crashed;           /* True if the server has crashed, used in catClientInfoString
-                            * to indicate that no wait for IO threads is needed. */
-    int memcheck_enabled;  /* Enable memory check on crash. */
-    int use_exit_on_panic; /* Use exit() on panic and assert rather than
-                            * abort(). useful for Valgrind. */
+    char *logfile;            /* Path of log file */
+    int syslog_enabled;       /* Is syslog enabled? */
+    char *syslog_ident;       /* Syslog ident */
+    int syslog_facility;      /* Syslog facility */
+    int crashlog_enabled;     /* Enable signal handler for crashlog.
+                               * disable for clean core dumps. */
+    int crashed;              /* True if the server has crashed, used in catClientInfoString
+                               * to indicate that no wait for IO threads is needed. */
+    int memcheck_enabled;     /* Enable memory check on crash. */
+    int use_exit_on_panic;    /* Use exit() on panic and assert rather than
+                               * abort(). useful for Valgrind. */
+    int log_format;           /* Print log in specific format */
+    int log_timestamp_format; /* Timestamp format in log */
     /* Shutdown */
     int shutdown_timeout;    /* Graceful shutdown time limit in seconds. */
     int shutdown_on_sigint;  /* Shutdown flags configured for SIGINT. */
@@ -2047,6 +1923,7 @@ struct valkeyServer {
         int dbid;
     } repl_provisional_primary;
     client *cached_primary;             /* Cached primary to be reused for PSYNC. */
+    rio *loading_rio;                   /* Pointer to the rio object currently used for loading data. */
     int repl_syncio_timeout;            /* Timeout for synchronous I/O calls */
     int repl_state;                     /* Replication status if the instance is a replica */
     int repl_rdb_channel_state;         /* State of the replica's rdb channel during dual-channel-replication */
@@ -2077,6 +1954,8 @@ struct valkeyServer {
     char primary_replid[CONFIG_RUN_ID_SIZE + 1]; /* Primary PSYNC runid. */
     long long primary_initial_offset;            /* Primary PSYNC offset. */
     int repl_replica_lazy_flush;                 /* Lazy FLUSHALL before loading DB? */
+    /* Import Mode */
+    int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
     int get_ack_from_replicas;  /* If true we send REPLCONF GETACK. */
@@ -2179,6 +2058,8 @@ struct valkeyServer {
     int auto_failover_on_shutdown;                         /* Trigger manual failover on shutdown to primary. */
     /* Debug config that goes along with cluster_drop_packet_filter. When set, the link is closed on packet drop. */
     uint32_t debug_cluster_close_link_on_packet_drop : 1;
+    /* Debug config to control the random ping. When set, we will disable the random ping in clusterCron. */
+    uint32_t debug_cluster_disable_random_ping : 1;
     sds cached_cluster_slot_info[CACHE_CONN_TYPE_MAX]; /* Index in array is a bitwise or of CACHE_CONN_TYPE_* */
     /* Scripting */
     mstime_t busy_reply_threshold;  /* Script / module timeout in milliseconds */
@@ -2211,6 +2092,7 @@ struct valkeyServer {
     int tls_auth_clients;
     serverTLSContextConfig tls_ctx_config;
     serverUnixContextConfig unix_ctx_config;
+    serverRdmaContextConfig rdma_ctx_config;
     /* cpu affinity */
     char *server_cpulist;      /* cpu affinity list of server main/io thread. */
     char *bio_cpulist;         /* cpu affinity list of bio thread. */
@@ -2425,6 +2307,8 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  * CMD_DENYOOM:     May increase memory usage once called. Don't allow if out
  *                  of memory.
  *
+ * CMD_MODULE:      Command exported by module.
+ *
  * CMD_ADMIN:       Administrative command, like SAVE or SHUTDOWN.
  *
  * CMD_PUBSUB:      Pub/Sub related command.
@@ -2471,10 +2355,21 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  *
  * CMD_NO_MANDATORY_KEYS: This key arguments for this command are optional.
  *
+ * CMD_PROTECTED: The command is a protected command, see enable-debug-command for more details.
+ *
+ * CMD_MODULE_GETKEYS: Use the modules getkeys interface.
+ *
+ * CMD_MODULE_NO_CLUSTER: Deny on cluster.
+ *
  * CMD_NO_MULTI: The command is not allowed inside a transaction
+ *
+ * CMD_MOVABLE_KEYS: The legacy range spec doesn't cover all keys. Populated by
+ *                   populateCommandLegacyRangeSpec.
  *
  * CMD_ALLOW_BUSY: The command can run while another command is running for
  *                 a long time (timedout script, module command that yields)
+ *
+ * CMD_MODULE_GETCHANNELS: Use the modules getchannels interface.
  *
  * CMD_TOUCHES_ARBITRARY_KEYS: The command may touch (and cause lazy-expire)
  *                             arbitrary key (i.e not provided in argv)
@@ -2543,12 +2438,12 @@ struct serverCommand {
                      bit set in the bitmap of allowed commands. */
     sds fullname; /* A SDS string representing the command fullname. */
     struct hdr_histogram
-        *latency_histogram;        /*points to the command latency command histogram (unit of time nanosecond) */
+        *latency_histogram;        /* Points to the command latency command histogram (unit of time nanosecond). */
     keySpec legacy_range_key_spec; /* The legacy (first,last,step) key spec is
                                     * still maintained (if applicable) so that
                                     * we can still support the reply format of
                                     * COMMAND INFO and COMMAND GETKEYS */
-    dict *subcommands_dict;        /* A dictionary that holds the subcommands, the key is the subcommand sds name
+    hashtable *subcommands_ht;     /* Subcommands hash table. The key is the subcommand sds name
                                     * (not the fullname), and the value is the serverCommand structure pointer. */
     struct serverCommand *parent;
     struct ValkeyModuleCommand *module_cmd; /* A pointer to the module command data (NULL if native command) */
@@ -2598,7 +2493,7 @@ typedef struct {
     robj *subject;
     int encoding;
     int ii; /* intset iterator */
-    dictIterator *di;
+    hashtableIterator *hashtable_iterator;
     unsigned char *lpi; /* listpack iterator */
 } setTypeIterator;
 
@@ -2629,11 +2524,11 @@ extern struct valkeyServer server;
 extern struct sharedObjectsStruct shared;
 extern dictType objectKeyPointerValueDictType;
 extern dictType objectKeyHeapPointerValueDictType;
-extern dictType setDictType;
+extern hashtableType setHashtableType;
 extern dictType BenchmarkDictType;
 extern dictType zsetDictType;
-extern dictType kvstoreKeysDictType;
-extern dictType kvstoreExpiresDictType;
+extern hashtableType kvstoreKeysHashtableType;
+extern hashtableType kvstoreExpiresHashtableType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
 extern dictType stringSetDictType;
@@ -2641,9 +2536,10 @@ extern dictType externalStringType;
 extern dictType sdsHashDictType;
 extern dictType clientDictType;
 extern dictType objToDictDictType;
-extern dictType kvstoreChannelDictType;
+extern hashtableType kvstoreChannelHashtableType;
 extern dictType modulesDictType;
 extern dictType sdsReplyDictType;
+extern hashtableType sdsReplyHashtableType;
 extern dictType keylistDictType;
 extern dict *modules;
 
@@ -2653,59 +2549,6 @@ extern dict *modules;
 
 /* Command metadata */
 void populateCommandLegacyRangeSpec(struct serverCommand *c);
-
-/* Modules */
-void moduleInitModulesSystem(void);
-void moduleInitModulesSystemLast(void);
-void modulesCron(void);
-int moduleLoad(const char *path, void **argv, int argc, int is_loadex);
-int moduleUnload(sds name, const char **errmsg);
-void moduleLoadFromQueue(void);
-int moduleGetCommandKeysViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
-int moduleGetCommandChannelsViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
-moduleType *moduleTypeLookupModuleByID(uint64_t id);
-moduleType *moduleTypeLookupModuleByName(const char *name);
-moduleType *moduleTypeLookupModuleByNameIgnoreCase(const char *name);
-void moduleTypeNameByID(char *name, uint64_t moduleid);
-const char *moduleTypeModuleName(moduleType *mt);
-const char *moduleNameFromCommand(struct serverCommand *cmd);
-void moduleFreeContext(struct ValkeyModuleCtx *ctx);
-void moduleCallCommandUnblockedHandler(client *c);
-int isModuleClientUnblocked(client *c);
-void unblockClientFromModule(client *c);
-void moduleHandleBlockedClients(void);
-void moduleBlockedClientTimedOut(client *c, int from_module);
-void modulePipeReadable(aeEventLoop *el, int fd, void *privdata, int mask);
-size_t moduleCount(void);
-void moduleAcquireGIL(void);
-int moduleTryAcquireGIL(void);
-void moduleReleaseGIL(void);
-void moduleNotifyKeyspaceEvent(int type, const char *event, robj *key, int dbid);
-void firePostExecutionUnitJobs(void);
-void moduleCallCommandFilters(client *c);
-void modulePostExecutionUnitOperations(void);
-void ModuleForkDoneHandler(int exitcode, int bysignal);
-int TerminateModuleForkChild(int child_pid, int wait);
-ssize_t rdbSaveModulesAux(rio *rdb, int when);
-int moduleAllDatatypesHandleErrors(void);
-int moduleAllModulesHandleReplAsyncLoad(void);
-sds modulesCollectInfo(sds info, dict *sections_dict, int for_crash_report, int sections);
-void moduleFireServerEvent(uint64_t eid, int subid, void *data);
-void processModuleLoadingProgressEvent(int is_aof);
-int moduleTryServeClientBlockedOnKey(client *c, robj *key);
-void moduleUnblockClient(client *c);
-int moduleBlockedClientMayTimeout(client *c);
-int moduleClientIsBlockedOnKeys(client *c);
-void moduleNotifyUserChanged(client *c);
-void moduleNotifyKeyUnlink(robj *key, robj *val, int dbid, int flags);
-size_t moduleGetFreeEffort(robj *key, robj *val, int dbid);
-size_t moduleGetMemUsage(robj *key, robj *val, size_t sample_size, int dbid);
-robj *moduleTypeDupOrReply(client *c, robj *fromkey, robj *tokey, int todb, robj *value);
-int moduleDefragValue(robj *key, robj *obj, int dbid);
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, long long endtime, int dbid);
-void moduleDefragGlobals(void);
-void *moduleGetHandleByName(char *modulename);
-int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
 
 /* Utils */
 long long ustime(void);
@@ -2720,7 +2563,7 @@ int serverSetProcTitle(char *title);
 int validateProcTitleTemplate(const char *template);
 int serverCommunicateSystemd(const char *sd_notify_msg);
 void serverSetCpuAffinity(const char *cpulist);
-void dictVanillaFree(dict *d, void *val);
+void dictVanillaFree(void *val);
 
 /* ERROR STATS constants */
 
@@ -2768,6 +2611,7 @@ void logInvalidUseAndFreeClientAsync(client *c, const char *fmt, ...);
 void beforeNextClient(client *c);
 void clearClientConnectionState(client *c);
 void resetClient(client *c);
+void resetClientIOState(client *c);
 void freeClientOriginalArgv(client *c);
 void freeClientArgv(client *c);
 void sendReplyToClient(connection *conn);
@@ -2836,6 +2680,7 @@ char *getClientPeerId(client *client);
 char *getClientSockName(client *client);
 int isClientConnIpV6(client *c);
 sds catClientInfoString(sds s, client *client, int hide_user_data);
+sds catClientInfoShortString(sds s, client *client, int hide_user_data);
 sds getAllClientsInfoString(int type, int hide_user_data);
 int clientSetName(client *c, robj *name, const char **err);
 void rewriteClientCommandVector(client *c, int argc, ...);
@@ -2853,7 +2698,7 @@ void flushReplicasOutputBuffers(void);
 void disconnectReplicas(void);
 void evictClients(void);
 int listenToPort(connListener *fds);
-void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions_bitmask);
+void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions);
 void unpauseActions(pause_purpose purpose);
 uint32_t isPausedActions(uint32_t action_bitmask);
 uint32_t isPausedActionsWithUpdate(uint32_t action_bitmask);
@@ -2964,7 +2809,6 @@ void execCommandAbort(client *c, sds error);
 
 /* Object implementation */
 void decrRefCount(robj *o);
-void decrRefCountVoid(void *o);
 void incrRefCount(robj *o);
 robj *makeObjectShared(robj *o);
 void freeStringObject(robj *o);
@@ -2977,7 +2821,6 @@ robj *createObject(int type, void *ptr);
 void initObjectLRUOrLFU(robj *o);
 robj *createStringObject(const char *ptr, size_t len);
 robj *createRawStringObject(const char *ptr, size_t len);
-robj *createEmbeddedStringObject(const char *ptr, size_t len);
 robj *tryCreateRawStringObject(const char *ptr, size_t len);
 robj *tryCreateStringObject(const char *ptr, size_t len);
 robj *dupStringObject(const robj *o);
@@ -3018,10 +2861,14 @@ int collateStringObjects(const robj *a, const robj *b);
 int equalStringObjects(robj *a, robj *b);
 unsigned long long estimateObjectIdleTime(robj *o);
 void trimStringObjectIfNeeded(robj *o, int trim_small_values);
-static inline int canUseSharedObject(void) {
-    return server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS);
-}
 #define sdsEncodedObject(objptr) (objptr->encoding == OBJ_ENCODING_RAW || objptr->encoding == OBJ_ENCODING_EMBSTR)
+
+/* Objects with key attached, AKA valkey (val+key) objects */
+robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long expire);
+robj *objectSetKeyAndExpire(robj *val, sds key, long long expire);
+robj *objectSetExpire(robj *val, long long expire);
+sds objectGetKey(const robj *val);
+long long objectGetExpire(const robj *val);
 
 /* Synchronous I/O with timeout */
 ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout);
@@ -3274,12 +3121,11 @@ void setupSignalHandlers(void);
 int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler);
 connListener *listenerByType(const char *typename);
 int changeListener(connListener *listener);
-void closeListener(connListener *listener);
 struct serverCommand *lookupSubcommand(struct serverCommand *container, sds sub_name);
 struct serverCommand *lookupCommand(robj **argv, int argc);
-struct serverCommand *lookupCommandBySdsLogic(dict *commands, sds s);
+struct serverCommand *lookupCommandBySdsLogic(hashtable *commands, sds s);
 struct serverCommand *lookupCommandBySds(sds s);
-struct serverCommand *lookupCommandByCStringLogic(dict *commands, const char *s);
+struct serverCommand *lookupCommandByCStringLogic(hashtable *commands, const char *s);
 struct serverCommand *lookupCommandByCString(const char *s);
 struct serverCommand *lookupCommandOrOriginal(robj **argv, int argc);
 int commandCheckExistence(client *c, sds *err);
@@ -3313,7 +3159,7 @@ void serverLogRawFromHandler(int level, const char *msg);
 void usage(void);
 void updateDictResizePolicy(void);
 void populateCommandTable(void);
-void resetCommandTableStats(dict *commands);
+void resetCommandTableStats(hashtable *commands);
 void resetErrorTableStats(void);
 void adjustOpenFilesLimit(void);
 void incrementErrorCount(const char *fullerr, size_t namelen);
@@ -3323,7 +3169,8 @@ void bytesToHuman(char *s, size_t size, unsigned long long n);
 void enterExecutionUnit(int update_cached_time, long long us);
 void exitExecutionUnit(void);
 void resetServerStats(void);
-void activeDefragCycle(void);
+void monitorActiveDefrag(void);
+void defragWhileBlocked(void);
 unsigned int getLRUClock(void);
 unsigned int LRU_CLOCK(void);
 const char *evictPolicyToString(void);
@@ -3335,7 +3182,6 @@ void rejectCommandFormat(client *c, const char *fmt, ...);
 void *activeDefragAlloc(void *ptr);
 robj *activeDefragStringOb(robj *ob);
 void dismissSds(sds s);
-void dismissMemory(void *ptr, size_t size_hint);
 void dismissMemoryInChild(void);
 
 #define RESTART_SERVER_NONE 0
@@ -3348,10 +3194,10 @@ int calculateKeySlot(sds key);
 /* kvstore wrappers */
 int dbExpand(serverDb *db, uint64_t db_size, int try_expand);
 int dbExpandExpires(serverDb *db, uint64_t db_size, int try_expand);
-dictEntry *dbFind(serverDb *db, void *key);
-dictEntry *dbFindExpires(serverDb *db, void *key);
+robj *dbFind(serverDb *db, sds key);
+robj *dbFindExpires(serverDb *db, sds key);
 unsigned long long dbSize(serverDb *db);
-unsigned long long dbScan(serverDb *db, unsigned long long cursor, dictScanFunction *scan_cb, void *privdata);
+unsigned long long dbScan(serverDb *db, unsigned long long cursor, hashtableScanFunction scan_cb, void *privdata);
 
 /* Set data type */
 robj *setTypeCreate(sds value, size_t size_hint);
@@ -3510,7 +3356,7 @@ void deleteExpiredKeyFromOverwriteAndPropagate(client *c, robj *keyobj);
 void propagateDeletion(serverDb *db, robj *key, int lazy);
 int keyIsExpired(serverDb *db, robj *key);
 long long getExpire(serverDb *db, robj *key);
-void setExpire(client *c, serverDb *db, robj *key, long long when);
+robj *setExpire(client *c, serverDb *db, robj *key, long long when);
 int checkAlreadyExpired(long long when);
 robj *lookupKeyRead(serverDb *db, robj *key);
 robj *lookupKeyWrite(serverDb *db, robj *key);
@@ -3530,16 +3376,16 @@ int objectSetLRUOrLFU(robj *val, long long lfu_freq, long long lru_idle, long lo
 #define LOOKUP_NOEFFECTS \
     (LOOKUP_NONOTIFY | LOOKUP_NOSTATS | LOOKUP_NOTOUCH | LOOKUP_NOEXPIRE) /* Avoid any effects from fetching the key */
 
-void dbAdd(serverDb *db, robj *key, robj *val);
-int dbAddRDBLoad(serverDb *db, sds key, robj *val);
-void dbReplaceValue(serverDb *db, robj *key, robj *val);
+void dbAdd(serverDb *db, robj *key, robj **valref);
+int dbAddRDBLoad(serverDb *db, sds key, robj **valref);
+void dbReplaceValue(serverDb *db, robj *key, robj **valref);
 
 #define SETKEY_KEEPTTL 1
 #define SETKEY_NO_SIGNAL 2
 #define SETKEY_ALREADY_EXIST 4
 #define SETKEY_DOESNT_EXIST 8
 #define SETKEY_ADD_OR_UPDATE 16 /* Key most likely doesn't exists */
-void setKey(client *c, serverDb *db, robj *key, robj *val, int flags);
+void setKey(client *c, serverDb *db, robj *key, robj **valref, int flags);
 robj *dbRandomKey(serverDb *db);
 int dbGenericDelete(serverDb *db, robj *key, int async, int flags);
 int dbSyncDelete(serverDb *db, robj *key);
@@ -3549,14 +3395,12 @@ robj *dbUnshareStringValue(serverDb *db, robj *key, robj *o);
 #define EMPTYDB_NO_FLAGS 0           /* No flags. */
 #define EMPTYDB_ASYNC (1 << 0)       /* Reclaim memory in another thread. */
 #define EMPTYDB_NOFUNCTIONS (1 << 1) /* Indicate not to flush the functions. */
-long long emptyData(int dbnum, int flags, void(callback)(dict *));
-long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callback)(dict *));
+long long emptyData(int dbnum, int flags, void(callback)(hashtable *));
+long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callback)(hashtable *));
 void flushAllDataAndResetRDB(int flags);
 long long dbTotalServerKeyCount(void);
 serverDb *initTempDb(void);
-void discardTempDb(serverDb *tempDb, void(callback)(dict *));
-
-
+void discardTempDb(serverDb *tempDb);
 int selectDb(client *c, int id);
 void signalModifiedKey(client *c, serverDb *db, robj *key);
 void signalFlushedDb(int dbid, int async);
@@ -3672,7 +3516,7 @@ void blockPostponeClient(client *c);
 void blockClientForReplicaAck(client *c, mstime_t timeout, long long offset, long numreplicas, int numlocal);
 void replicationRequestAckFromReplicas(void);
 void signalDeletedKeyAsReady(serverDb *db, robj *key, int type);
-void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int had_errors);
+void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int failed_or_rejected);
 void scanDatabaseForDeletedKeys(serverDb *emptied, serverDb *replaced_with);
 void totalNumberOfStatefulKeys(unsigned long *blocking_keys,
                                unsigned long *blocking_keys_on_nokey,
@@ -3707,11 +3551,11 @@ void startEvictionTimeProc(void);
 /* Keys hashing / comparison functions for dict.c hash tables. */
 uint64_t dictSdsHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
-int dictSdsKeyCompare(dict *d, const void *key1, const void *key2);
-int dictSdsKeyCaseCompare(dict *d, const void *key1, const void *key2);
-void dictSdsDestructor(dict *d, void *val);
-void dictListDestructor(dict *d, void *val);
-void *dictSdsDup(dict *d, const void *key);
+int dictSdsKeyCompare(const void *key1, const void *key2);
+int dictSdsKeyCaseCompare(const void *key1, const void *key2);
+void dictSdsDestructor(void *val);
+void dictListDestructor(void *val);
+void *dictSdsDup(const void *key);
 
 /* Git SHA1 */
 char *serverGitSHA1(void);
@@ -4010,7 +3854,7 @@ int memtest_preserving_test(unsigned long *m, size_t bytes, int passes);
 void mixDigest(unsigned char *digest, const void *ptr, size_t len);
 void xorDigest(unsigned char *digest, const void *ptr, size_t len);
 sds catSubCommandFullname(const char *parent_name, const char *sub_name);
-void commandAddSubcommand(struct serverCommand *parent, struct serverCommand *subcommand, const char *declared_name);
+void commandAddSubcommand(struct serverCommand *parent, struct serverCommand *subcommand);
 void debugDelay(int usec);
 void killThreads(void);
 void makeThreadKillable(void);
@@ -4025,6 +3869,11 @@ void debugPauseProcess(void);
         if (((level) & 0xff) < server.verbosity) break; \
         _serverLog(level, __VA_ARGS__);                 \
     } while (0)
+
+/* dualChannelServerLog - Log messages related to dual-channel operations
+ * This macro wraps the serverLog function, prepending "<Dual Channel>"
+ * to the log message. */
+#define dualChannelServerLog(level, ...) serverLog(level, "<Dual Channel> " __VA_ARGS__)
 
 #define serverDebug(fmt, ...) printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define serverDebugMark() printf("-- MARK %s:%d --\n", __FILE__, __LINE__)

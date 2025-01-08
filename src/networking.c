@@ -35,6 +35,7 @@
 #include "fpconv_dtoa.h"
 #include "fmtargs.h"
 #include "io_threads.h"
+#include "module.h"
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -134,6 +135,7 @@ client *createClient(connection *conn) {
         if (server.tcpkeepalive) connKeepAlive(conn, server.tcpkeepalive);
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
+        conn->flags |= CONN_FLAG_ALLOW_ACCEPT_OFFLOAD;
     }
     c->buf = zmalloc_usable(PROTO_REPLY_CHUNK_BYTES, &c->buf_usable_size);
     selectDb(c, 0);
@@ -314,7 +316,11 @@ int prepareClientToWrite(client *c) {
      * is set. */
     if (c->flag.primary && !c->flag.primary_force_reply) return C_ERR;
 
-    if (!c->conn) return C_ERR; /* Fake client for AOF loading. */
+    /* Skip the fake client, such as the fake client for AOF loading.
+     * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
+     * but has a connection to cache the response. */
+    if (c->flag.fake && c->id != CLIENT_ID_CACHED_RESPONSE) return C_ERR;
+    serverAssert(c->conn);
 
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
@@ -348,6 +354,9 @@ sds aggregateClientOutputBuffer(client *c) {
  * It needs be paired with `deleteCachedResponseClient` function to stop caching. */
 client *createCachedResponseClient(int resp) {
     struct client *recording_client = createClient(NULL);
+    /* It is a fake client but with a connection, setting a special client id,
+     * so we can identify it's a fake cached response client. */
+    recording_client->id = CLIENT_ID_CACHED_RESPONSE;
     recording_client->resp = resp;
     /* Allocating the `conn` allows to prepare the caching client before adding
      * data to the clients output buffer by `prepareClientToWrite`. */
@@ -549,7 +558,7 @@ void afterErrorReply(client *c, const char *s, size_t len, int flags) {
     if (c->flag.module) {
         if (!c->deferred_reply_errors) {
             c->deferred_reply_errors = listCreate();
-            listSetFreeMethod(c->deferred_reply_errors, (void (*)(void *))sdsfree);
+            listSetFreeMethod(c->deferred_reply_errors, sdsfreeVoid);
         }
         listAddNodeTail(c->deferred_reply_errors, sdsnewlen(s, len));
         return;
@@ -888,8 +897,11 @@ void setDeferredAggregateLen(client *c, void *node, long length, char prefix) {
     }
 
     char lenstr[128];
-    size_t lenstr_len = snprintf(lenstr, sizeof(lenstr), "%c%ld\r\n", prefix, length);
-    setDeferredReply(c, node, lenstr, lenstr_len);
+    lenstr[0] = prefix;
+    size_t lenstr_len = ll2string(lenstr + 1, sizeof(lenstr) - 1, length);
+    lenstr[lenstr_len + 1] = '\r';
+    lenstr[lenstr_len + 2] = '\n';
+    setDeferredReply(c, node, lenstr, lenstr_len + 3);
 }
 
 void setDeferredArrayLen(client *c, void *node, long length) {
@@ -1478,14 +1490,19 @@ void freeClientOriginalArgv(client *c) {
     /* We didn't rewrite this client */
     if (!c->original_argv) return;
 
-    for (int j = 0; j < c->original_argc; j++) decrRefCount(c->original_argv[j]);
-    zfree(c->original_argv);
+    if (tryOffloadFreeArgvToIOThreads(c, c->original_argc, c->original_argv) == C_ERR) {
+        for (int j = 0; j < c->original_argc; j++) decrRefCount(c->original_argv[j]);
+        zfree(c->original_argv);
+    }
+
     c->original_argv = NULL;
     c->original_argc = 0;
 }
 
 void freeClientArgv(client *c) {
-    if (tryOffloadFreeArgvToIOThreads(c) == C_ERR) {
+    /* If original_argv exists, 'c->argv' was allocated by the main thread,
+     * so it's more efficient to free it directly here rather than offloading to IO threads */
+    if (c->original_argv || tryOffloadFreeArgvToIOThreads(c, c->argc, c->argv) == C_ERR) {
         for (int j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
         zfree(c->argv);
     }
@@ -1552,12 +1569,17 @@ void unlinkClient(client *c) {
          * in which case it needs to be cleaned from that list */
         if (c->flag.replica && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END && server.rdb_pipe_conns) {
             int i;
+            int still_alive = 0;
             for (i = 0; i < server.rdb_pipe_numconns; i++) {
                 if (server.rdb_pipe_conns[i] == c->conn) {
                     rdbPipeWriteHandlerConnRemoved(c->conn);
                     server.rdb_pipe_conns[i] = NULL;
-                    break;
                 }
+                if (server.rdb_pipe_conns[i]) still_alive++;
+            }
+            if (still_alive == 0) {
+                serverLog(LL_NOTICE, "Diskless rdb transfer, last replica dropped, killing fork child.");
+                killRDBChild();
             }
         }
         /* Only use shutdown when the fork is active and we are the parent. */
@@ -1705,10 +1727,10 @@ void freeClient(client *c) {
 
     /* Log link disconnection with replica */
     if (getClientType(c) == CLIENT_TYPE_REPLICA) {
-        serverLog(LL_NOTICE,
-                  c->flag.repl_rdb_channel ? "Replica %s rdb channel disconnected."
-                                           : "Connection with replica %s lost.",
-                  replicationGetReplicaName(c));
+        if (c->flag.repl_rdb_channel)
+            dualChannelServerLog(LL_NOTICE, "Replica %s rdb channel disconnected.", replicationGetReplicaName(c));
+        else
+            serverLog(LL_NOTICE, "Connection with replica %s lost.", replicationGetReplicaName(c));
     }
 
     /* Free the query buffer */
@@ -1728,6 +1750,7 @@ void freeClient(client *c) {
     /* UNWATCH all the keys */
     unwatchAllKeys(c);
     listRelease(c->watched_keys);
+    c->watched_keys = NULL;
 
     /* Unsubscribe from all the pubsub channels */
     pubsubUnsubscribeAllChannels(c, 0);
@@ -1735,16 +1758,22 @@ void freeClient(client *c) {
     pubsubUnsubscribeAllPatterns(c, 0);
     unmarkClientAsPubSub(c);
     dictRelease(c->pubsub_channels);
+    c->pubsub_channels = NULL;
     dictRelease(c->pubsub_patterns);
+    c->pubsub_patterns = NULL;
     dictRelease(c->pubsubshard_channels);
+    c->pubsubshard_channels = NULL;
 
     /* Free data structures. */
     listRelease(c->reply);
-    zfree(c->buf);
+    c->reply = NULL;
+    zfree_with_size(c->buf, c->buf_usable_size);
+    c->buf = NULL;
     freeReplicaReferencedReplBuffer(c);
     freeClientArgv(c);
     freeClientOriginalArgv(c);
     if (c->deferred_reply_errors) listRelease(c->deferred_reply_errors);
+    c->deferred_reply_errors = NULL;
 #ifdef LOG_REQ_RES
     reqresReset(c, 1);
 #endif
@@ -1771,6 +1800,7 @@ void freeClient(client *c) {
         if (server.saveparamslen == 0 && c->repl_state == REPLICA_STATE_WAIT_BGSAVE_END &&
             server.child_type == CHILD_TYPE_RDB && server.rdb_child_type == RDB_CHILD_TYPE_DISK &&
             anyOtherReplicaWaitRdb(c) == 0) {
+            serverLog(LL_NOTICE, "Background saving, persistence disabled, last replica dropped, killing fork child.");
             killRDBChild();
         }
         if (c->repl_state == REPLICA_STATE_SEND_BULK) {
@@ -1947,14 +1977,15 @@ int freeClientsInAsyncFreeQueue(void) {
             if (!c->rdb_client_disconnect_time) {
                 if (c->conn) connSetReadHandler(c->conn, NULL);
                 c->rdb_client_disconnect_time = server.unixtime;
-                serverLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds", (unsigned long long)c->id,
-                          replicationGetReplicaName(c), server.wait_before_rdb_client_free);
+                dualChannelServerLog(LL_VERBOSE, "Postpone RDB client id=%llu (%s) free for %d seconds",
+                                     (unsigned long long)c->id, replicationGetReplicaName(c), server.wait_before_rdb_client_free);
             }
             if (server.unixtime - c->rdb_client_disconnect_time <= server.wait_before_rdb_client_free) continue;
-            serverLog(LL_NOTICE,
-                      "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
-                      "Freeing RDB client %llu.",
-                      (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
+            dualChannelServerLog(
+                LL_NOTICE,
+                "Replica main channel failed to establish PSYNC within the grace period (%ld seconds). "
+                "Freeing RDB client %llu.",
+                (long int)(server.unixtime - c->rdb_client_disconnect_time), (unsigned long long)c->id);
             c->flag.protected_rdb_channel = 0;
         }
 
@@ -2201,6 +2232,8 @@ int postWriteToClient(client *c) {
     server.stat_total_writes_processed++;
     if (getClientType(c) != CLIENT_TYPE_REPLICA) {
         _postWriteToClient(c);
+    } else {
+        server.stat_net_repl_output_bytes += c->nwritten > 0 ? c->nwritten : 0;
     }
 
     if (c->write_flags & WRITE_FLAGS_WRITE_ERROR) {
@@ -2521,6 +2554,7 @@ void resetClient(client *c) {
     serverCommandProc *prevcmd = c->cmd ? c->cmd->proc : NULL;
 
     freeClientArgv(c);
+    freeClientOriginalArgv(c);
     c->cur_script = NULL;
     c->reqtype = 0;
     c->multibulklen = 0;
@@ -2557,6 +2591,16 @@ void resetClient(client *c) {
         c->flag.reply_skip = 1;
         c->flag.reply_skip_next = 0;
     }
+}
+
+void resetClientIOState(client *c) {
+    c->nwritten = 0;
+    c->nread = 0;
+    c->io_read_state = c->io_write_state = CLIENT_IDLE;
+    c->io_parsed_cmd = NULL;
+    c->flag.pending_command = 0;
+    c->io_last_bufpos = 0;
+    c->io_last_reply_block = NULL;
 }
 
 /* Initializes the shared query buffer to a new sds with the default capacity.
@@ -2669,6 +2713,8 @@ void processInlineBuffer(client *c) {
 
     /* Create an Object for all arguments. */
     for (c->argc = 0, j = 0; j < argc; j++) {
+        /* Strings returned from sdssplitargs() may have unused capacity that we can trim. */
+        argv[j] = sdsRemoveFreeSpace(argv[j], 1);
         c->argv[c->argc] = createObject(OBJ_STRING, argv[j]);
         c->argc++;
         c->argv_len_sum += sdslen(argv[j]);
@@ -3308,6 +3354,7 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
     if (client->flag.readonly) *p++ = 'r';
     if (client->flag.no_evict) *p++ = 'e';
     if (client->flag.no_touch) *p++ = 'T';
+    if (client->flag.import_source) *p++ = 'I';
     if (p == flags) *p++ = 'N';
     *p++ = '\0';
 
@@ -3364,6 +3411,29 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
             " tot-net-in=%U", client->net_input_bytes,
             " tot-net-out=%U", client->net_output_bytes,
             " tot-cmds=%U", client->commands_processed));
+    return ret;
+}
+
+/* Concatenate a string representing the state of a client in a human
+ * readable format, into the sds string 's'.
+ *
+ * This is a simplified and shortened version of catClientInfoString,
+ * it only added some basic fields for tracking clients. */
+sds catClientInfoShortString(sds s, client *client, int hide_user_data) {
+    if (!server.crashed) waitForClientIO(client);
+    char conninfo[CONN_INFO_LEN];
+
+    sds ret = sdscatfmt(
+        s,
+        FMTARGS(
+            "id=%U", (unsigned long long)client->id,
+            " addr=%s", getClientPeerId(client),
+            " laddr=%s", getClientSockname(client),
+            " %s", connGetInfo(client->conn, conninfo, sizeof(conninfo)),
+            " name=%s", hide_user_data ? "*redacted*" : (client->name ? (char *)client->name->ptr : ""),
+            " user=%s", hide_user_data ? "*redacted*" : (client->user ? client->user->name : "(superuser)"),
+            " lib-name=%s", client->lib_name ? (char *)client->lib_name->ptr : "",
+            " lib-ver=%s", client->lib_ver ? (char *)client->lib_ver->ptr : ""));
     return ret;
 }
 
@@ -3567,6 +3637,10 @@ void clientCommand(client *c) {
             "    Protect current client connection from eviction.",
             "NO-TOUCH (ON|OFF)",
             "    Will not touch LRU/LFU stats when this mode is on.",
+            "IMPORT-SOURCE (ON|OFF)",
+            "    Mark this connection as an import source if import-mode is enabled.",
+            "    Sync tools can set their connections into 'import-source' state to visit",
+            "    expired keys.",
             NULL};
         addReplyHelp(c, help);
     } else if (!strcasecmp(c->argv[1]->ptr, "id") && c->argc == 2) {
@@ -4040,6 +4114,22 @@ void clientCommand(client *c) {
             }
         }
         addReply(c, shared.ok);
+    } else if (!strcasecmp(c->argv[1]->ptr, "import-source")) {
+        /* CLIENT IMPORT-SOURCE ON|OFF */
+        if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
+            addReplyError(c, "Server is not in import mode");
+            return;
+        }
+        if (!strcasecmp(c->argv[2]->ptr, "on")) {
+            c->flag.import_source = 1;
+            addReply(c, shared.ok);
+        } else if (!strcasecmp(c->argv[2]->ptr, "off")) {
+            c->flag.import_source = 0;
+            addReply(c, shared.ok);
+        } else {
+            addReplyErrorObject(c, shared.syntaxerr);
+            return;
+        }
     } else {
         addReplySubcommandSyntaxError(c);
     }
@@ -4116,7 +4206,7 @@ void helloCommand(client *c) {
 
     /* Let's switch to the specified RESP mode. */
     if (ver) c->resp = ver;
-    addReplyMapLen(c, 6 + !server.sentinel_mode);
+    addReplyMapLen(c, 6 + !server.sentinel_mode + (sdslen(server.availability_zone) != 0));
 
     addReplyBulkCString(c, "server");
     addReplyBulkCString(c, server.extended_redis_compat ? "redis" : SERVER_NAME);
@@ -4145,6 +4235,11 @@ void helloCommand(client *c) {
 
     addReplyBulkCString(c, "modules");
     addReplyLoadedModules(c);
+
+    if (sdslen(server.availability_zone) != 0) {
+        addReplyBulkCString(c, "availability_zone");
+        addReplyBulkCBuffer(c, server.availability_zone, sdslen(server.availability_zone));
+    }
 }
 
 /* This callback is bound to POST and "Host:" command names. Those are not
@@ -4179,16 +4274,53 @@ void securityWarningCommand(client *c) {
     freeClientAsync(c);
 }
 
-/* Keep track of the original command arguments so that we can generate
- * an accurate slowlog entry after the command has been executed. */
-static void retainOriginalCommandVector(client *c) {
-    /* We already rewrote this command, so don't rewrite it again */
-    if (c->original_argv) return;
-    c->original_argc = c->argc;
-    c->original_argv = zmalloc(sizeof(robj *) * (c->argc));
-    for (int j = 0; j < c->argc; j++) {
-        c->original_argv[j] = c->argv[j];
-        incrRefCount(c->argv[j]);
+/* This function preserves the original command arguments for accurate slowlog recording.
+ *
+ * It performs the following operations:
+ * - Stores the initial command vector if not already saved
+ * - Manages memory allocation for command argument modifications
+ *
+ * new_argc - The new number of arguments to allocate space for if necessary.
+ * new_argv - Optional pointer to a new argument vector. If NULL, space will be
+ *                allocated for new_argc arguments, preserving the existing arguments.
+ */
+static void backupAndUpdateClientArgv(client *c, int new_argc, robj **new_argv) {
+    robj **old_argv = c->argv;
+    int old_argc = c->argc;
+
+    /* Store original arguments if not already saved */
+    if (!c->original_argv) {
+        c->original_argc = old_argc;
+        c->original_argv = old_argv;
+    }
+
+    /* Handle direct argv replacement */
+    if (new_argv) {
+        c->argv = new_argv;
+    } else if (c->original_argv == old_argv || new_argc > old_argc) {
+        /* Allocate new array if necessary */
+        c->argv = zmalloc(sizeof(robj *) * new_argc);
+
+        for (int i = 0; i < old_argc && i < new_argc; i++) {
+            c->argv[i] = old_argv[i];
+            incrRefCount(c->argv[i]);
+        }
+
+        /* Initialize new argument slots to NULL */
+        for (int i = old_argc; i < new_argc; i++) {
+            c->argv[i] = NULL;
+        }
+    }
+
+    c->argc = new_argc;
+    c->argv_len = new_argc;
+
+    /* Clean up old argv if necessary */
+    if (c->argv != old_argv && c->original_argv != old_argv) {
+        for (int i = 0; i < old_argc; i++) {
+            if (old_argv[i]) decrRefCount(old_argv[i]);
+        }
+        zfree(old_argv);
     }
 }
 
@@ -4196,7 +4328,7 @@ static void retainOriginalCommandVector(client *c) {
  * in the slowlog. This information is stored in the
  * original_argv array. */
 void redactClientCommandArgument(client *c, int argc) {
-    retainOriginalCommandVector(c);
+    backupAndUpdateClientArgv(c, c->argc, NULL);
     if (c->original_argv[argc] == shared.redacted) {
         /* This argument has already been redacted */
         return;
@@ -4229,10 +4361,7 @@ void rewriteClientCommandVector(client *c, int argc, ...) {
 /* Completely replace the client command vector with the provided one. */
 void replaceClientCommandVector(client *c, int argc, robj **argv) {
     int j;
-    retainOriginalCommandVector(c);
-    freeClientArgv(c);
-    c->argv = argv;
-    c->argc = argc;
+    backupAndUpdateClientArgv(c, argc, argv);
     c->argv_len_sum = 0;
     for (j = 0; j < c->argc; j++)
         if (c->argv[j]) c->argv_len_sum += getStringObjectLen(c->argv[j]);
@@ -4253,19 +4382,9 @@ void replaceClientCommandVector(client *c, int argc, robj **argv) {
  *    free the no longer used objects on c->argv. */
 void rewriteClientCommandArgument(client *c, int i, robj *newval) {
     robj *oldval;
-    retainOriginalCommandVector(c);
+    int new_argc = (i >= c->argc) ? i + 1 : c->argc;
+    backupAndUpdateClientArgv(c, new_argc, NULL);
 
-    /* We need to handle both extending beyond argc (just update it and
-     * initialize the new element) or beyond argv_len (realloc is needed).
-     */
-    if (i >= c->argc) {
-        if (i >= c->argv_len) {
-            c->argv = zrealloc(c->argv, sizeof(robj *) * (i + 1));
-            c->argv_len = i + 1;
-        }
-        c->argc = i + 1;
-        c->argv[i] = NULL;
-    }
     oldval = c->argv[i];
     if (oldval) c->argv_len_sum -= getStringObjectLen(oldval);
     if (newval) c->argv_len_sum += getStringObjectLen(newval);
@@ -4437,7 +4556,8 @@ int checkClientOutputBufferLimits(client *c) {
  *
  * Returns 1 if client was (flagged) closed. */
 int closeClientOnOutputBufferLimitReached(client *c, int async) {
-    if (!c->conn) return 0; /* It is unsafe to free fake clients. */
+    if (c->flag.fake) return 0; /* It is unsafe to free fake clients. */
+    serverAssert(c->conn);
     serverAssert(c->reply_bytes < SIZE_MAX - (1024 * 64));
     /* Note that c->reply_bytes is irrelevant for replica clients
      * (they use the global repl buffers). */
@@ -4553,7 +4673,7 @@ static void pauseClientsByClient(mstime_t endTime, int isPauseClientAll) {
 }
 
 /* Pause actions up to the specified unixtime (in ms) for a given type of
- * commands.
+ * purpose.
  *
  * A main use case of this function is to allow pausing replication traffic
  * so that a failover without data loss to occur. Replicas will continue to receive
@@ -4704,8 +4824,13 @@ int processIOThreadsReadDone(void) {
         processed++;
         server.stat_io_reads_processed++;
 
+        /* Save the current conn state, as connUpdateState may modify it */
+        int in_accept_state = (connGetState(c->conn) == CONN_STATE_ACCEPTING);
         connSetPostponeUpdateState(c->conn, 0);
         connUpdateState(c->conn);
+
+        /* In accept state, no client's data was read - stop here. */
+        if (in_accept_state) continue;
 
         /* On read error - stop here. */
         if (handleReadResult(c) == C_ERR) {
@@ -4853,7 +4978,11 @@ void ioThreadReadQueryFromClient(void *data) {
     }
 
 done:
-    trimClientQueryBuffer(c);
+    /* Only trim query buffer for non-primary clients
+     * Primary client's buffer is handled by main thread using repl_applied position */
+    if (!(c->read_flags & READ_FLAGS_PRIMARY)) {
+        trimClientQueryBuffer(c);
+    }
     atomic_thread_fence(memory_order_release);
     c->io_read_state = CLIENT_COMPLETED_IO;
 }

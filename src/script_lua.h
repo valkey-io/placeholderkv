@@ -67,7 +67,7 @@ typedef struct errorInfo {
 } errorInfo;
 
 void luaRegisterServerAPI(lua_State *lua);
-sds luaGetStringSds(lua_State *lua, int index);
+robj *luaGetStringObject(lua_State *lua, int index);
 void luaRegisterGlobalProtectionFunction(lua_State *lua);
 void luaSetErrorMetatable(lua_State *lua);
 void luaSetAllowListProtection(lua_State *lua);

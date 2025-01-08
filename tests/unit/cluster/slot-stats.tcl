@@ -228,11 +228,11 @@ start_cluster 1 0 {tags {external:skip cluster} overrides {cluster-slot-stats-en
     R 0 FLUSHALL
 
     test "CLUSTER SLOT-STATS cpu-usec for blocking commands, unblocked on timeout." {
-        # Blocking command with 1 second timeout.
+        # Blocking command with 0.5 seconds timeout.
         set rd [valkey_deferring_client]
-        $rd BLPOP $key 1
+        $rd BLPOP $key 0.5
 
-        # Confirm that the client is blocked, then unblocked after 1 second timeout.
+        # Confirm that the client is blocked, then unblocked within 1 second.
         wait_for_blocked_clients_count 1
         wait_for_blocked_clients_count 0
 

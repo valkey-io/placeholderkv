@@ -50,6 +50,9 @@
 #include "util.h"
 #include "sha256.h"
 #include "config.h"
+#include "zmalloc.h"
+
+#include "valkey_strtod.h"
 
 #define UNUSED(x) ((void)(x))
 
@@ -102,22 +105,22 @@ static int stringmatchlen_impl(const char *pattern,
 
             pattern++;
             patternLen--;
-            not_op = pattern[0] == '^';
+            not_op = patternLen && pattern[0] == '^';
             if (not_op) {
                 pattern++;
                 patternLen--;
             }
             match = 0;
             while (1) {
-                if (pattern[0] == '\\' && patternLen >= 2) {
+                if (patternLen >= 2 && pattern[0] == '\\') {
                     pattern++;
                     patternLen--;
                     if (pattern[0] == string[0]) match = 1;
-                } else if (pattern[0] == ']') {
-                    break;
                 } else if (patternLen == 0) {
                     pattern--;
                     patternLen++;
+                    break;
+                } else if (pattern[0] == ']') {
                     break;
                 } else if (patternLen >= 3 && pattern[1] == '-') {
                     int start = pattern[0];
@@ -171,7 +174,7 @@ static int stringmatchlen_impl(const char *pattern,
         pattern++;
         patternLen--;
         if (stringLen == 0) {
-            while (*pattern == '*') {
+            while (patternLen && *pattern == '*') {
                 pattern++;
                 patternLen--;
             }
@@ -595,10 +598,12 @@ int string2ld(const char *s, size_t slen, long double *dp) {
 int string2d(const char *s, size_t slen, double *dp) {
     errno = 0;
     char *eptr;
-    *dp = strtod(s, &eptr);
+    *dp = valkey_strtod(s, &eptr);
     if (slen == 0 || isspace(((const char *)s)[0]) || (size_t)(eptr - (char *)s) != slen ||
-        (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp))
+        (errno == ERANGE && (*dp == HUGE_VAL || *dp == -HUGE_VAL || fpclassify(*dp) == FP_ZERO)) || isnan(*dp) || errno == EINVAL) {
+        errno = 0;
         return 0;
+    }
     return 1;
 }
 
@@ -1375,4 +1380,24 @@ int snprintf_async_signal_safe(char *to, size_t n, const char *fmt, ...) {
     result = vsnprintf_async_signal_safe(to, n, fmt, args);
     va_end(args);
     return result;
+}
+
+/* A printf-like function that returns a freshly allocated string.
+ *
+ * This function is similar to asprintf function, but it uses zmalloc for
+ * allocating the string buffer. */
+char *valkey_asprintf(char const *fmt, ...) {
+    va_list args;
+
+    va_start(args, fmt);
+    size_t str_len = vsnprintf(NULL, 0, fmt, args) + 1;
+    va_end(args);
+
+    char *str = zmalloc(str_len);
+
+    va_start(args, fmt);
+    vsnprintf(str, str_len, fmt, args);
+    va_end(args);
+
+    return str;
 }
