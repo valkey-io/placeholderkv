@@ -9,7 +9,7 @@
         "history": [
             [
                 "8.1.0",
-                "A new `availability_zone` field is added to the response if the `availability_zone` config is set."
+                "A new `availability_zone` field is added to the response if the `availability-zone` config is set."
             ],
             [
                 "6.2.0",

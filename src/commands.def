@@ -1719,7 +1719,7 @@ struct COMMAND_ARG ECHO_Args[] = {
 #ifndef SKIP_CMD_HISTORY_TABLE
 /* HELLO history */
 commandHistory HELLO_History[] = {
-{"8.1.0","A new `availability_zone` field is added to the response if the `availability_zone` config is set."},
+{"8.1.0","A new `availability_zone` field is added to the response if the `availability-zone` config is set."},
 {"6.2.0","`protover` made optional; when called without arguments the command reports the current connection's context."},
 };
 #endif
