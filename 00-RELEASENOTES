@@ -21,7 +21,7 @@ Bug fixes
 =========
 * Fix a bug where extra memory would be used when storing strings in the
   inline protocol. (#1213)
-* Send the correct error message when `FUNCTION KIlL` is used to kill an
+* Send the correct error message when `FUNCTION KILL` is used to kill an
   ongoing script. (#1171)
 * Make sure the last accessed time is correctly updated when using the `TOUCH`
   command with the `CLIENT NO-TOUCH` option. (#1499)
