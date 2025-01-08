@@ -6574,7 +6574,7 @@ void clusterCommandSetSlot(client *c) {
              * replication, it would also unlikely win the election.
              *
              * And 0x702ff is 7.2.255, we only support new versions in this case. */
-            if (r->repl_state == REPLICA_STATE_ONLINE && r->replica_version > 0x702ff) {
+            if (r->repl_data->repl_state == REPLICA_STATE_ONLINE && r->repl_data->replica_version > 0x702ff) {
                 num_eligible_replicas++;
             }
         }
