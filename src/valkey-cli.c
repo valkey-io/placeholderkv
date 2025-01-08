@@ -2437,10 +2437,6 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
                         /* This pushed message confirms the
                          * [p|s][un]subscribe command. */
-                        if (is_subscribe && !config.pubsub_mode) {
-                            config.pubsub_mode = 1;
-                            cliRefreshPrompt();
-                        }
                         if (--num_expected_pubsub_push > 0) {
                             continue; /* We need more of these. */
                         }
