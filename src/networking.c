@@ -2085,6 +2085,7 @@ static void writeToReplica(client *c) {
         iov[iovcnt].iov_len = len;
         total_bytes += len;
         iovcnt++;
+        if (cur_node == last_node) break;
     }
 
     if (total_bytes == 0) return;
