@@ -2232,29 +2232,28 @@ static int cliReadReply(int output_raw_strings) {
     return REDIS_OK;
 }
 
-/* Helper method to process unsubscribe responses */
+/* Helper method to handle pubsub subscription/unsubscription. */
 static void handlePubSubMode(redisReply *reply) {
-    if (reply->elements >= 3) {
-        char *cmd = reply->element[0]->str;
-        int count = reply->element[2]->integer;
+    
+    char *cmd = reply->element[0]->str;
+    int count = reply->element[2]->integer;
  
-        /* Update counts based on the command type */
-        if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 || 
-            strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
-            config.pubsub_unsharded_count = count;
-        } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
-            config.pubsub_sharded_count = count;
-        }
-
-        /* Update pubsub mode based on the current counts */
-        if (config.pubsub_unsharded_count == 0 && config.pubsub_sharded_count == 0 && config.pubsub_mode) {
-            config.pubsub_mode = 0;
-            cliRefreshPrompt();
-        } else if (config.pubsub_unsharded_count + config.pubsub_sharded_count > 0 && !config.pubsub_mode) {
-            config.pubsub_mode = 1;
-            cliRefreshPrompt();
-        }
+    /* Update counts based on the command type */
+    if (strcmp(cmd, "subscribe") == 0 || strcmp(cmd, "psubscribe") == 0 || strcmp(cmd, "unsubscribe") == 0 || strcmp(cmd, "punsubscribe") == 0) {
+        config.pubsub_unsharded_count = count;
+    } else if (strcmp(cmd, "ssubscribe") == 0 || strcmp(cmd, "sunsubscribe") == 0) {
+        config.pubsub_sharded_count = count;
     }
+
+    /* Update pubsub mode based on the current counts */
+    if (config.pubsub_unsharded_count + config.pubsub_sharded_count == 0 && config.pubsub_mode) {
+        config.pubsub_mode = 0;
+        cliRefreshPrompt();
+    } else if (config.pubsub_unsharded_count + config.pubsub_sharded_count > 0 && !config.pubsub_mode) {
+        config.pubsub_mode = 1;
+        cliRefreshPrompt();
+    }
+    
 }
 
 /* Simultaneously wait for pubsub messages from the server and input on stdin. */
@@ -2431,7 +2430,6 @@ static int cliSendCommand(int argc, char **argv, long repeat) {
             fflush(stdout);
             if (config.pubsub_mode || num_expected_pubsub_push > 0) {
                 if (isPubsubPush(config.last_reply)) {
-                    /* Handle pubsub mode */
                     handlePubSubMode(config.last_reply);   
 
                     if (num_expected_pubsub_push > 0 && !strcasecmp(config.last_reply->element[0]->str, command)) {
