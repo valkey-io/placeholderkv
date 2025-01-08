@@ -11096,12 +11096,10 @@ static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
     robj *o = data->key->value;
     robj *field = createStringObject(key, sdslen(key));
     robj *value = NULL;
+
     if (o->type == OBJ_HASH) {
         sds val = dictGetVal(de);
         value = createStringObject(val, sdslen(val));
-    } else if (o->type == OBJ_ZSET) {
-        double *val = (double *)dictGetVal(de);
-        value = createStringObjectFromLongDouble(*val, 0);
     } else {
         serverPanic("unexpected object type");
     }
@@ -11114,12 +11112,24 @@ static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
 static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
     ScanKeyCBData *data = privdata;
     robj *o = data->key->value;
-    serverAssert(o->type == OBJ_SET);
-    sds key = entry;
+    robj *value = NULL;
+    sds key = NULL;
+
+    if (o->type == OBJ_SET) {
+        key = entry;
+        /* no value */
+    } else if (o->type == OBJ_ZSET) {
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = node->ele;
+        value = createStringObjectFromLongDouble(node->score, 0);
+    } else {
+        serverPanic("unexpected object type");
+    }
     robj *field = createStringObject(key, sdslen(key));
 
-    data->fn(data->key, field, NULL, data->user_data);
+    data->fn(data->key, field, value, data->user_data);
     decrRefCount(field);
+    if (value) decrRefCount(value);
 }
 
 /* Scan api that allows a module to scan the elements in a hash, set or sorted set key
@@ -11183,7 +11193,7 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
     } else if (o->type == OBJ_HASH) {
         if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
     } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_SKIPLIST) d = ((zset *)o->ptr)->dict;
+        if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->ht;
     } else {
         errno = EINVAL;
         return 0;

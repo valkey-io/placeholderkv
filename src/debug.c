@@ -206,20 +206,20 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
             }
         } else if (o->encoding == OBJ_ENCODING_SKIPLIST) {
             zset *zs = o->ptr;
-            dictIterator *di = dictGetIterator(zs->dict);
-            dictEntry *de;
+            hashtableIterator iter;
+            hashtableInitIterator(&iter, zs->ht);
 
-            while ((de = dictNext(di)) != NULL) {
-                sds sdsele = dictGetKey(de);
-                double *score = dictGetVal(de);
-                const int len = fpconv_dtoa(*score, buf);
+            void *next;
+            while (hashtableNext(&iter, &next)) {
+                zskiplistNode *node = next;
+                const int len = fpconv_dtoa(node->score, buf);
                 buf[len] = '\0';
                 memset(eledigest, 0, 20);
-                mixDigest(eledigest, sdsele, sdslen(sdsele));
+                mixDigest(eledigest, node->ele, sdslen(node->ele));
                 mixDigest(eledigest, buf, strlen(buf));
                 xorDigest(digest, eledigest, 20);
             }
-            dictReleaseIterator(di);
+            hashtableResetIterator(&iter);
         } else {
             serverPanic("Unknown sorted set encoding");
         }
@@ -284,13 +284,11 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
  * a different digest. */
 void computeDatasetDigest(unsigned char *final) {
     unsigned char digest[20];
-    robj *o;
-    int j;
     uint32_t aux;
 
     memset(final, 0, 20); /* Start with a clean result */
 
-    for (j = 0; j < server.dbnum; j++) {
+    for (int j = 0; j < server.dbnum; j++) {
         serverDb *db = server.db + j;
         if (kvstoreSize(db->keys) == 0) continue;
         kvstoreIterator *kvs_it = kvstoreIteratorInit(db->keys);
@@ -300,7 +298,9 @@ void computeDatasetDigest(unsigned char *final) {
         mixDigest(final, &aux, sizeof(aux));
 
         /* Iterate this DB writing every entry */
-        while (kvstoreIteratorNext(kvs_it, (void **)&o)) {
+        void *next;
+        while (kvstoreIteratorNext(kvs_it, &next)) {
+            robj *o = next;
             sds key;
             robj *keyobj;
 
@@ -929,7 +929,7 @@ void debugCommand(client *c) {
         switch (o->encoding) {
         case OBJ_ENCODING_SKIPLIST: {
             zset *zs = o->ptr;
-            d = zs->dict;
+            ht = zs->ht;
         } break;
         case OBJ_ENCODING_HT: d = o->ptr; break;
         case OBJ_ENCODING_HASHTABLE: ht = o->ptr; break;
