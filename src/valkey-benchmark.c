@@ -42,6 +42,8 @@
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <argp.h>
+#include <argz.h>
 
 #include <sdscompat.h> /* Use hiredis' sds compat header that maps sds calls to their hi_ variants */
 #include <sds.h>       /* Use hiredis sds. */
@@ -1291,289 +1293,6 @@ static void genBenchmarkRandomData(char *data, int count) {
     }
 }
 
-/* Returns number of consumed options. */
-int parseOptions(int argc, char **argv) {
-    int i;
-    int lastarg;
-    int exit_status = 1;
-    char *tls_usage;
-
-    for (i = 1; i < argc; i++) {
-        lastarg = (i == (argc - 1));
-
-        if (!strcmp(argv[i], "-c")) {
-            if (lastarg) goto invalid;
-            config.numclients = atoi(argv[++i]);
-        } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
-            sds version = cliVersion();
-            printf("valkey-benchmark %s\n", version);
-            sdsfree(version);
-            exit(0);
-        } else if (!strcmp(argv[i], "-n")) {
-            if (lastarg) goto invalid;
-            config.requests = atoi(argv[++i]);
-        } else if (!strcmp(argv[i], "-k")) {
-            if (lastarg) goto invalid;
-            config.keepalive = atoi(argv[++i]);
-        } else if (!strcmp(argv[i], "-h")) {
-            if (lastarg) goto invalid;
-            sdsfree(config.conn_info.hostip);
-            config.conn_info.hostip = sdsnew(argv[++i]);
-        } else if (!strcmp(argv[i], "-p")) {
-            if (lastarg) goto invalid;
-            config.conn_info.hostport = atoi(argv[++i]);
-            if (config.conn_info.hostport < 0 || config.conn_info.hostport > 65535) {
-                fprintf(stderr, "Invalid server port.\n");
-                exit(1);
-            }
-        } else if (!strcmp(argv[i], "-s")) {
-            if (lastarg) goto invalid;
-            config.hostsocket = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "-x")) {
-            config.stdinarg = 1;
-        } else if (!strcmp(argv[i], "-a")) {
-            if (lastarg) goto invalid;
-            config.conn_info.auth = sdsnew(argv[++i]);
-        } else if (!strcmp(argv[i], "--user")) {
-            if (lastarg) goto invalid;
-            config.conn_info.user = sdsnew(argv[++i]);
-        } else if (!strcmp(argv[i], "-u") && !lastarg) {
-            parseRedisUri(argv[++i], "redis-benchmark", &config.conn_info, &config.tls);
-            if (config.conn_info.hostport < 0 || config.conn_info.hostport > 65535) {
-                fprintf(stderr, "Invalid server port.\n");
-                exit(1);
-            }
-            config.input_dbnumstr = sdsfromlonglong(config.conn_info.input_dbnum);
-        } else if (!strcmp(argv[i], "-3")) {
-            config.resp3 = 1;
-        } else if (!strcmp(argv[i], "-d")) {
-            if (lastarg) goto invalid;
-            config.datasize = atoi(argv[++i]);
-            if (config.datasize < 1) config.datasize = 1;
-            if (config.datasize > 1024 * 1024 * 1024) config.datasize = 1024 * 1024 * 1024;
-        } else if (!strcmp(argv[i], "-P")) {
-            if (lastarg) goto invalid;
-            config.pipeline = atoi(argv[++i]);
-            if (config.pipeline <= 0) config.pipeline = 1;
-        } else if (!strcmp(argv[i], "-r")) {
-            if (lastarg) goto invalid;
-            const char *next = argv[++i], *p = next;
-            if (*p == '-') {
-                p++;
-                if (*p < '0' || *p > '9') goto invalid;
-            }
-            config.randomkeys = 1;
-            config.randomkeys_keyspacelen = atoi(next);
-            if (config.randomkeys_keyspacelen < 0) config.randomkeys_keyspacelen = 0;
-        } else if (!strcmp(argv[i], "-q")) {
-            config.quiet = 1;
-        } else if (!strcmp(argv[i], "--csv")) {
-            config.csv = 1;
-        } else if (!strcmp(argv[i], "-l")) {
-            config.loop = 1;
-        } else if (!strcmp(argv[i], "-I")) {
-            config.idlemode = 1;
-        } else if (!strcmp(argv[i], "-e")) {
-            fprintf(stderr, "WARNING: -e option has no effect. "
-                            "We now immediately exit on error to avoid false results.\n");
-        } else if (!strcmp(argv[i], "--seed")) {
-            if (lastarg) goto invalid;
-            int rand_seed = atoi(argv[++i]);
-            srandom(rand_seed);
-            init_genrand64(rand_seed);
-        } else if (!strcmp(argv[i], "-t")) {
-            if (lastarg) goto invalid;
-            /* We get the list of tests to run as a string in the form
-             * get,set,lrange,...,test_N. Then we add a comma before and
-             * after the string in order to make sure that searching
-             * for ",testname," will always get a match if the test is
-             * enabled. */
-            config.tests = sdsnew(",");
-            config.tests = sdscat(config.tests, (char *)argv[++i]);
-            config.tests = sdscat(config.tests, ",");
-            sdstolower(config.tests);
-        } else if (!strcmp(argv[i], "--dbnum")) {
-            if (lastarg) goto invalid;
-            config.conn_info.input_dbnum = atoi(argv[++i]);
-            config.input_dbnumstr = sdsfromlonglong(config.conn_info.input_dbnum);
-        } else if (!strcmp(argv[i], "--precision")) {
-            if (lastarg) goto invalid;
-            config.precision = atoi(argv[++i]);
-            if (config.precision < 0) config.precision = DEFAULT_LATENCY_PRECISION;
-            if (config.precision > MAX_LATENCY_PRECISION) config.precision = MAX_LATENCY_PRECISION;
-        } else if (!strcmp(argv[i], "--threads")) {
-            if (lastarg) goto invalid;
-            config.num_threads = atoi(argv[++i]);
-            if (config.num_threads > MAX_THREADS) {
-                fprintf(stderr, "WARNING: Too many threads, limiting threads to %d.\n", MAX_THREADS);
-                config.num_threads = MAX_THREADS;
-            } else if (config.num_threads < 0)
-                config.num_threads = 0;
-        } else if (!strcmp(argv[i], "--cluster")) {
-            config.cluster_mode = 1;
-        } else if (!strcmp(argv[i], "--rfr")) {
-            if (argv[++i]) {
-                if (!strcmp(argv[i], "all")) {
-                    config.read_from_replica = FROM_ALL;
-                } else if (!strcmp(argv[i], "yes")) {
-                    config.read_from_replica = FROM_REPLICA_ONLY;
-                } else if (!strcmp(argv[i], "no")) {
-                    config.read_from_replica = FROM_PRIMARY_ONLY;
-                } else {
-                    goto invalid;
-                }
-            } else
-                goto invalid;
-        } else if (!strcmp(argv[i], "--enable-tracking")) {
-            config.enable_tracking = 1;
-        } else if (!strcmp(argv[i], "--help")) {
-            exit_status = 0;
-            goto usage;
-#ifdef USE_OPENSSL
-        } else if (!strcmp(argv[i], "--tls")) {
-            config.tls = 1;
-        } else if (!strcmp(argv[i], "--sni")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.sni = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "--cacertdir")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.cacertdir = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "--cacert")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.cacert = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "--insecure")) {
-            config.sslconfig.skip_cert_verify = 1;
-        } else if (!strcmp(argv[i], "--cert")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.cert = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "--key")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.key = strdup(argv[++i]);
-        } else if (!strcmp(argv[i], "--tls-ciphers")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.ciphers = strdup(argv[++i]);
-#ifdef TLS1_3_VERSION
-        } else if (!strcmp(argv[i], "--tls-ciphersuites")) {
-            if (lastarg) goto invalid;
-            config.sslconfig.ciphersuites = strdup(argv[++i]);
-#endif
-#endif
-        } else {
-            /* Assume the user meant to provide an option when the arg starts
-             * with a dash. We're done otherwise and should use the remainder
-             * as the command and arguments for running the benchmark. */
-            if (argv[i][0] == '-') goto invalid;
-            return i;
-        }
-    }
-
-    return i;
-
-invalid:
-    printf("Invalid option \"%s\" or option argument missing\n\n", argv[i]);
-
-usage:
-    tls_usage =
-#ifdef USE_OPENSSL
-        " --tls              Establish a secure TLS connection.\n"
-        " --sni <host>       Server name indication for TLS.\n"
-        " --cacert <file>    CA Certificate file to verify with.\n"
-        " --cacertdir <dir>  Directory where trusted CA certificates are stored.\n"
-        "                    If neither cacert nor cacertdir are specified, the default\n"
-        "                    system-wide trusted root certs configuration will apply.\n"
-        " --insecure         Allow insecure TLS connection by skipping cert validation.\n"
-        " --cert <file>      Client certificate to authenticate with.\n"
-        " --key <file>       Private key file to authenticate with.\n"
-        " --tls-ciphers <list> Sets the list of preferred ciphers (TLSv1.2 and below)\n"
-        "                    in order of preference from highest to lowest separated by colon (\":\").\n"
-        "                    See the ciphers(1ssl) manpage for more information about the syntax of this string.\n"
-#ifdef TLS1_3_VERSION
-        " --tls-ciphersuites <list> Sets the list of preferred ciphersuites (TLSv1.3)\n"
-        "                    in order of preference from highest to lowest separated by colon (\":\").\n"
-        "                    See the ciphers(1ssl) manpage for more information about the syntax of this string,\n"
-        "                    and specifically for TLSv1.3 ciphersuites.\n"
-#endif
-#endif
-        "";
-
-    printf(
-        "%s%s%s", /* Split to avoid strings longer than 4095 (-Woverlength-strings). */
-        "Usage: valkey-benchmark [OPTIONS] [COMMAND ARGS...]\n\n"
-        "Options:\n"
-        " -h <hostname>      Server hostname (default 127.0.0.1)\n"
-        " -p <port>          Server port (default 6379)\n"
-        " -s <socket>        Server socket (overrides host and port)\n"
-        " -a <password>      Password for Valkey Auth\n"
-        " --user <username>  Used to send ACL style 'AUTH username pass'. Needs -a.\n"
-        " -u <uri>           Server URI on format valkey://user:password@host:port/dbnum\n"
-        "                    User, password and dbnum are optional. For authentication\n"
-        "                    without a username, use username 'default'. For TLS, use\n"
-        "                    the scheme 'valkeys'.\n"
-        " -c <clients>       Number of parallel connections (default 50).\n"
-        "                    Note: If --cluster is used then number of clients has to be\n"
-        "                    the same or higher than the number of nodes.\n"
-        " -n <requests>      Total number of requests (default 100000)\n"
-        " -d <size>          Data size of SET/GET value in bytes (default 3)\n"
-        " --dbnum <db>       SELECT the specified db number (default 0)\n"
-        " -3                 Start session in RESP3 protocol mode.\n"
-        " --threads <num>    Enable multi-thread mode.\n"
-        " --cluster          Enable cluster mode.\n"
-        "                    If the command is supplied on the command line in cluster\n"
-        "                    mode, the key must contain \"{tag}\". Otherwise, the\n"
-        "                    command will not be sent to the right cluster node.\n"
-        " --rfr <mode>       Enable read from replicas in cluster mode.\n"
-        "                    This command must be used with the --cluster option.\n"
-        "                    There are three modes for reading from replicas:\n"
-        "                    'no' - sends read requests to primaries only (default) \n"
-        "                    'yes' - sends read requests to replicas only.\n"
-        "                    'all' - sends read requests to all nodes.\n"
-        "                    Since write commands will not be accepted by replicas,\n"
-        "                    it is recommended to enable read from replicas only for read command tests.\n"
-        " --enable-tracking  Send CLIENT TRACKING on before starting benchmark.\n"
-        " -k <boolean>       1=keep alive 0=reconnect (default 1)\n"
-        " -r <keyspacelen>   Use random keys for SET/GET/INCR, random values for SADD,\n"
-        "                    random members and scores for ZADD.\n"
-        "                    Using this option the benchmark will expand the string\n"
-        "                    __rand_int__ inside an argument with a 12 digits number in\n"
-        "                    the specified range from 0 to keyspacelen-1. The\n"
-        "                    substitution changes every time a command is executed.\n"
-        "                    Default tests use this to hit random keys in the specified\n"
-        "                    range.\n"
-        "                    Note: If -r is omitted, all commands in a benchmark will\n"
-        "                    use the same key.\n"
-        " -P <numreq>        Pipeline <numreq> requests. Default 1 (no pipeline).\n"
-        " -q                 Quiet. Just show query/sec values\n"
-        " --precision        Number of decimal places to display in latency output (default 0)\n"
-        " --csv              Output in CSV format\n"
-        " -l                 Loop. Run the tests forever\n"
-        " -t <tests>         Only run the comma separated list of tests. The test\n"
-        "                    names are the same as the ones produced as output.\n"
-        "                    The -t option is ignored if a specific command is supplied\n"
-        "                    on the command line.\n"
-        " -I                 Idle mode. Just open N idle connections and wait.\n"
-        " -x                 Read last argument from STDIN.\n"
-        " --seed <num>       Set the seed for random number generator. Default seed is based on time.\n",
-        tls_usage,
-        " --help             Output this help and exit.\n"
-        " --version          Output version and exit.\n\n"
-        "Examples:\n\n"
-        " Run the benchmark with the default configuration against 127.0.0.1:6379:\n"
-        "   $ valkey-benchmark\n\n"
-        " Use 20 parallel clients, for a total of 100k requests, against 192.168.1.1:\n"
-        "   $ valkey-benchmark -h 192.168.1.1 -p 6379 -n 100000 -c 20\n\n"
-        " Fill 127.0.0.1:6379 with about 1 million keys only using the SET test:\n"
-        "   $ valkey-benchmark -t set -n 1000000 -r 100000000\n\n"
-        " Benchmark 127.0.0.1:6379 for a few commands producing CSV output:\n"
-        "   $ valkey-benchmark -t ping,set,get -n 100000 --csv\n\n"
-        " Benchmark a specific command line:\n"
-        "   $ valkey-benchmark -r 10000 -n 10000 eval 'return redis.call(\"ping\")' 0\n\n"
-        " Fill a list with 10000 random elements:\n"
-        "   $ valkey-benchmark -r 10000 -n 10000 lpush mylist __rand_int__\n\n"
-        " On user specified command lines __rand_int__ is replaced with a random integer\n"
-        " with a range of values selected by the -r option.\n");
-    exit(exit_status);
-}
-
 long long showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
@@ -1631,10 +1350,355 @@ int test_is_selected(const char *name) {
     return strstr(config.tests, buf) != NULL;
 }
 
+enum OPTION_CODES {
+    VK_OPT_HOST = 'h',
+    VK_OPT_PORT = 'p',
+    VK_OPT_SOCKET = 's',
+    VK_OPT_PASSWORD = 'a',
+    VK_OPT_URI = 'u',
+    VK_OPT_NUM_CLIENTS = 'c',
+    VK_OPT_NUM_REQUESTS = 'n',
+    VK_OPT_DATA_SIZE = 'd',
+    VK_OPT_RESP3 = '3',
+    VK_OPT_KEEPALIVE = 'k',
+    VK_OPT_RANDOM_KEYS = 'r',
+    VK_OPT_PIPELINE = 'P',
+    VK_OPT_QUIET = 'q',
+    VK_OPT_LOOP = 'l',
+    VK_OPT_TESTS = 't',
+    VK_OPT_IDLE = 'I',
+    VK_OPT_STDIN = 'x',
+    VK_OPT_VERSION = 'v',
+
+    /* Deprecated Options */
+    VK_OPT_SHOW_SERVER_ERRORS = 'e',
+
+    VK_OPT_USER = 0x100,
+    VK_OPT_DBNUM,
+    VK_OPT_NUM_THREADS,
+    VK_OPT_CLUSTER,
+    VK_OPT_RFR,
+    VK_OPT_ENABLE_TRACKING,
+    VK_OPT_PRECISION,
+    VK_OPT_CSV,
+    VK_OPT_SEED,
+
+#ifdef USE_OPENSSL
+    VK_OPT_TLS,
+    VK_OPT_SNI,
+    VK_OPT_CACERT,
+    VK_OPT_CACERTDIR,
+    VK_OPT_INSECURE,
+    VK_OPT_CERT,
+    VK_OPT_KEY,
+    VK_OPT_TLS_CIPHERS,
+#ifdef TLS1_3_VERSION
+    VK_OPT_TLS_CIPHERSUITES,
+#endif
+#endif
+
+};
+
+struct argp_option options[] = {
+    {0, 0, 0, 0, "General Options:", 7},
+    {0, VK_OPT_HOST, "hostname", 0, "Server hostname (default 127.0.0.1)."},
+    {0, VK_OPT_PORT, "port", 0, "Server port (default 6379)."},
+    {0, VK_OPT_SOCKET, "socket", 0, "Server socket (overrides host and port)."},
+    {0, VK_OPT_PASSWORD, "password", 0, "Password for Valkey Auth."},
+    {"user", VK_OPT_USER, "username", 0, "Used to send ACL style 'AUTH username pass'. Needs -a."},
+    {0, VK_OPT_URI, "uri", 0, "Server URI on format valkey://user:password@host:port/dbnum. "
+                              "User, password and dbnum are optional. For authentication "
+                              "without a username, use username 'default'. For TLS, use "
+                              "the scheme 'valkeys'."},
+    {0, VK_OPT_NUM_CLIENTS, "clients", 0, "Number of parallel connections (default 50). "
+                                          "Note: If --cluster is used then number of clients has to be "
+                                          "the same or higher than the number of nodes."},
+    {0, VK_OPT_NUM_REQUESTS, "requests", 0, "Total number of requests (default 100000)."},
+    {0, VK_OPT_DATA_SIZE, "size", 0, "Data size of SET/GET value in bytes (default 3)."},
+    {"dbnum", VK_OPT_DBNUM, "db", 0, "SELECT the specified db number (default 0)."},
+    {0, VK_OPT_RESP3, 0, 0, "Start session in RESP3 protocol mode."},
+    {"threads", VK_OPT_NUM_THREADS, "num", 0, "Enable multi-thread mode."},
+    {"cluster", VK_OPT_CLUSTER, 0, 0, "Enable cluster mode. "
+                                      "If the command is supplied on the command line in cluster "
+                                      "mode, the key must contain \"{tag}\". Otherwise, the "
+                                      "command will not be sent to the right cluster node."},
+    {"rfr", VK_OPT_RFR, "mode", 0, "Enable read from replicas in cluster mode. "
+                                   "This command must be used with the --cluster option. "
+                                   "There are three modes for reading from replicas: "
+                                   "'no' - sends read requests to primaries only (default); "
+                                   "'yes' - sends read requests to replicas only; "
+                                   "'all' - sends read requests to all nodes. "
+                                   "Since write commands will not be accepted by replicas, "
+                                   "it is recommended to enable read from replicas only for read command tests."},
+    {"enable-tracking", VK_OPT_ENABLE_TRACKING, 0, 0, "Send CLIENT TRACKING o n before starting benchmark"},
+    {0, VK_OPT_KEEPALIVE, "boolean", 0, "1=keep alive 0=reconnect (default 1)."},
+    {0, VK_OPT_RANDOM_KEYS, "keyspacelen", 0, "Use random keys for SET/GET/INCR, random values for SADD, "
+                                              "random members and scores for ZADD. "
+                                              "Using this option the benchmark will expand the string "
+                                              "__rand_int__ inside an argument with a 12 digits number in "
+                                              "the specified range from 0 to keyspacelen-1. The "
+                                              "substitution changes every time a command is executed. "
+                                              "Default tests use this to hit random keys in the specified range. "
+                                              "Note: If -r is omitted, all commands in a benchmark will "
+                                              "use the same key."},
+    {0, VK_OPT_PIPELINE, "numreq", 0, "Pipeline <numreq> requests. Default 1 (no pipeline)."},
+    {0, VK_OPT_QUIET, 0, 0, "Quiet. Just show query/sec values."},
+    {"precision", VK_OPT_PRECISION, "decimal_places", 0, "Number of decimal places to display in latency output (default 0)."},
+    {"csv", VK_OPT_CSV, 0, 0, "Output in CSV format."},
+    {0, VK_OPT_LOOP, 0, 0, "Loop. Run the tests forever."},
+    {0, VK_OPT_TESTS, "tests", 0, "Only run the comma separated list of tests. The test "
+                                  "names are the same as the ones produced as output. "
+                                  "The -t option is ignored if a specific command is supplied "
+                                  "on the command line."},
+    {0, VK_OPT_IDLE, 0, 0, "Idle mode. Just open N idle connections and wait."},
+    {0, VK_OPT_STDIN, 0, 0, "Read last argument from STDIN."},
+    {"seed", VK_OPT_SEED, "num", 0, "Set the seed for random number generator. Default seed is based on time."},
+    {"version", VK_OPT_VERSION, 0, 0, "Output version and exit."},
+    {0, VK_OPT_SHOW_SERVER_ERRORS, 0, OPTION_HIDDEN, "[DEPRECATED] If server replies with errors, show them on stdout."},
+
+#ifdef USE_OPENSSL
+    {0, 0, 0, 0, "TLS Options:", 8},
+    {"tls", VK_OPT_TLS, 0, 0, "Establish a secure TLS connection."},
+    {"sni", VK_OPT_SNI, "host", 0, "Server name indication for TLS."},
+    {"cacert", VK_OPT_CACERT, "file", 0, "CA Certificate file to verify with."},
+    {"cacertdir", VK_OPT_CACERTDIR, "dir", 0, "Directory where trusted CA certificates are stored. "
+                                              "If neither cacert nor cacertdir are specified, the default "
+                                              "system-wide trusted root certs configuration will apply"},
+    {"insecure", VK_OPT_INSECURE, 0, 0, "Allow insecure TLS connection by skipping cert validation."},
+    {"cert", VK_OPT_CERT, "file", 0, "Client certificate to authenticate with."},
+    {"key", VK_OPT_KEY, "file", 0, "Private key file to authenticate with."},
+    {"tls-ciphers", VK_OPT_TLS_CIPHERS, "list", 0, "Sets the list of preferred ciphers (TLSv1.2 and below). "
+                                                   "in order of preference from highest to lowest separated by colon (\":\"). "
+                                                   "See the ciphers(1ssl) manpage for more information about the syntax of this string."},
+#ifdef TLS1_3_VERSION
+    {"tls-ciphersuites", VK_OPT_TLS_CIPHERSUITES, "list", 0, "Sets the list of preferred ciphersuites (TLSv1.3). "
+                                                             "in order of preference from highest to lowest separated by colon (\":\"). "
+                                                             "See the ciphers(1ssl) manpage for more information about the syntax of this string, "
+                                                             "and specifically for TLSv1.3 ciphersuites."},
+#endif
+#endif
+    {0}};
+
+struct command {
+    char *argz;
+    size_t argz_len;
+};
+
+static int parse_opt(int key, char *arg, struct argp_state *state) {
+    UNUSED(state);
+
+    switch (key) {
+    case VK_OPT_NUM_CLIENTS:
+        config.numclients = atoi(arg);
+        break;
+    case VK_OPT_VERSION: {
+        sds version = cliVersion();
+        printf("valkey-benchmark %s\n", version);
+        sdsfree(version);
+        exit(0);
+    }
+    case VK_OPT_NUM_REQUESTS:
+        config.requests = atoi(arg);
+        break;
+    case VK_OPT_KEEPALIVE:
+        config.keepalive = atoi(arg);
+        break;
+    case VK_OPT_HOST:
+        sdsfree(config.conn_info.hostip);
+        config.conn_info.hostip = sdsnew(arg);
+        break;
+    case VK_OPT_PORT:
+        config.conn_info.hostport = atoi(arg);
+        if (config.conn_info.hostport < 0 || config.conn_info.hostport > 65535) {
+            fprintf(stderr, "Invalid server port.\n");
+            return -1;
+        }
+        break;
+    case VK_OPT_SOCKET:
+        config.hostsocket = strdup(arg);
+        break;
+    case VK_OPT_STDIN:
+        config.stdinarg = 1;
+        break;
+    case VK_OPT_PASSWORD:
+        config.conn_info.auth = sdsnew(arg);
+        break;
+    case VK_OPT_USER:
+        config.conn_info.user = sdsnew(arg);
+        break;
+    case VK_OPT_URI:
+        parseRedisUri(arg, "redis-benchmark", &config.conn_info, &config.tls);
+        if (config.conn_info.hostport < 0 || config.conn_info.hostport > 65535) {
+            fprintf(stderr, "Invalid server port.\n");
+            return -1;
+        }
+        config.input_dbnumstr = sdsfromlonglong(config.conn_info.input_dbnum);
+        break;
+    case VK_OPT_RESP3:
+        config.resp3 = 1;
+        break;
+    case VK_OPT_DATA_SIZE:
+        config.datasize = atoi(arg);
+        if (config.datasize < 1) config.datasize = 1;
+        if (config.datasize > 1024 * 1024 * 1024) config.datasize = 1024 * 1024 * 1024;
+        break;
+    case VK_OPT_PIPELINE:
+        config.pipeline = atoi(arg);
+        if (config.pipeline <= 0) config.pipeline = 1;
+        break;
+    case VK_OPT_RANDOM_KEYS: {
+        const char *next = arg, *p = next;
+        if (*p == '-') {
+            p++;
+            if (*p < '0' || *p > '9') {
+                fprintf(stderr, "Invalid number.\n");
+                return -1;
+            }
+        }
+        config.randomkeys = 1;
+        config.randomkeys_keyspacelen = atoi(next);
+        if (config.randomkeys_keyspacelen < 0) config.randomkeys_keyspacelen = 0;
+        break;
+    }
+    case VK_OPT_QUIET:
+        config.quiet = 1;
+        break;
+    case VK_OPT_CSV:
+        config.csv = 1;
+        break;
+    case VK_OPT_LOOP:
+        config.loop = 1;
+        break;
+    case VK_OPT_IDLE:
+        config.idlemode = 1;
+        break;
+    case VK_OPT_SHOW_SERVER_ERRORS:
+        fprintf(stderr, "WARNING: -e option has no effect. "
+                        "We now immediately exit on error to avoid false results.\n");
+        break;
+    case VK_OPT_SEED: {
+        int rand_seed = atoi(arg);
+        srandom(rand_seed);
+        init_genrand64(rand_seed);
+        break;
+    }
+    case VK_OPT_TESTS:
+        /* We get the list of tests to run as a string in the form
+         * get,set,lrange,...,test_N. Then we add a comma before and
+         * after the string in order to make sure that searching
+         * for ",testname," will always get a match if the test is
+         * enabled. */
+        config.tests = sdsnew(",");
+        config.tests = sdscat(config.tests, (char *)arg);
+        config.tests = sdscat(config.tests, ",");
+        sdstolower(config.tests);
+        break;
+    case VK_OPT_DBNUM:
+        config.conn_info.input_dbnum = atoi(arg);
+        config.input_dbnumstr = sdsfromlonglong(config.conn_info.input_dbnum);
+        break;
+    case VK_OPT_PRECISION:
+        config.precision = atoi(arg);
+        if (config.precision < 0) config.precision = DEFAULT_LATENCY_PRECISION;
+        if (config.precision > MAX_LATENCY_PRECISION) config.precision = MAX_LATENCY_PRECISION;
+        break;
+    case VK_OPT_NUM_THREADS:
+        config.num_threads = atoi(arg);
+        if (config.num_threads > MAX_THREADS) {
+            fprintf(stderr, "WARNING: Too many threads, limiting threads to %d.\n", MAX_THREADS);
+            config.num_threads = MAX_THREADS;
+        } else if (config.num_threads < 0) {
+            config.num_threads = 0;
+        }
+        break;
+    case VK_OPT_CLUSTER:
+        config.cluster_mode = 1;
+        break;
+    case VK_OPT_RFR:
+        if (!strcmp(arg, "all")) {
+            config.read_from_replica = FROM_ALL;
+        } else if (!strcmp(arg, "yes")) {
+            config.read_from_replica = FROM_REPLICA_ONLY;
+        } else if (!strcmp(arg, "no")) {
+            config.read_from_replica = FROM_PRIMARY_ONLY;
+        } else {
+            fprintf(stderr, "Invalid value for --rfr option. Valid values are 'yes', 'no', and 'all'.\n");
+            return -1;
+        }
+        break;
+    case VK_OPT_ENABLE_TRACKING:
+        config.enable_tracking = 1;
+        break;
+#ifdef USE_OPENSSL
+    case VK_OPT_TLS:
+        config.tls = 1;
+        break;
+    case VK_OPT_SNI:
+        config.sslconfig.sni = strdup(arg);
+        break;
+    case VK_OPT_CACERTDIR:
+        config.sslconfig.cacertdir = strdup(arg);
+        break;
+    case VK_OPT_CACERT:
+        config.sslconfig.cacert = strdup(arg);
+        break;
+    case VK_OPT_INSECURE:
+        config.sslconfig.skip_cert_verify = 1;
+        break;
+    case VK_OPT_CERT:
+        config.sslconfig.cert = strdup(arg);
+        break;
+    case VK_OPT_KEY:
+        config.sslconfig.key = strdup(arg);
+        break;
+    case VK_OPT_TLS_CIPHERS:
+        config.sslconfig.ciphers = strdup(arg);
+        break;
+#ifdef TLS1_3_VERSION
+    case VK_OPT_TLS_CIPHERSUITES:
+        config.sslconfig.ciphersuites = strdup(arg);
+        break;
+#endif
+#endif
+    case ARGP_KEY_ARG: {
+        struct command *command = (struct command *)state->input;
+        error_t err = argz_add(&command->argz, &command->argz_len, arg);
+        if (err == ENOMEM) {
+            fprintf(stderr, "Error parsing command line argumen: Out-of-memory");
+            return -err;
+        }
+        break;
+    }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int i;
     char *data, *cmd, *tag;
     int len;
+
+    setenv("ARGP_HELP_FMT", "long-opt-col=2,rmargin=100", 1);
+
+    struct argp argp = {
+        options,
+        parse_opt,
+        "[COMMAND ARGS...]",
+        " \vExamples:\n\n"
+        " Run the benchmark with the default configuration against 127.0.0.1:6379:\n"
+        "   $ valkey-benchmark\n\n"
+        " Use 20 parallel clients, for a total of 100k requests, against 192.168.1.1:\n"
+        "   $ valkey-benchmark -h 192.168.1.1 -p 6379 -n 100000 -c 20\n\n"
+        " Fill 127.0.0.1:6379 with about 1 million keys only using the SET test:\n"
+        "   $ valkey-benchmark -t set -n 1000000 -r 100000000\n\n"
+        " Benchmark 127.0.0.1:6379 for a few commands producing CSV output:\n"
+        "   $ valkey-benchmark -t ping,set,get -n 100000 --csv\n\n"
+        " Benchmark a specific command line:\n"
+        "   $ valkey-benchmark -r 10000 -n 10000 eval 'return redis.call(\"ping\")' 0\n\n"
+        " Fill a list with 10000 random elements:\n"
+        "   $ valkey-benchmark -r 10000 -n 10000 lpush mylist __rand_int__\n\n"
+        " On user specified command lines __rand_int__ is replaced with a random integer\n"
+        " with a range of values selected by the -r option.\n"};
 
     client c;
 
@@ -1680,9 +1744,12 @@ int main(int argc, char **argv) {
     config.enable_tracking = 0;
     config.resp3 = 0;
 
-    i = parseOptions(argc, argv);
-    argc -= i;
-    argv += i;
+    struct command command = {NULL, 0};
+
+    int ret = argp_parse(&argp, argc, argv, 0, 0, &command);
+    if (ret < 0) {
+        return -ret;
+    }
 
     tag = "";
 
@@ -1761,7 +1828,7 @@ int main(int argc, char **argv) {
                         "'sudo sysctl -w net.inet.tcp.msl=1000' for Mac OS X in order "
                         "to use a lot of clients/requests\n");
     }
-    if (argc > 0 && config.tests != NULL) {
+    if (command.argz != NULL && config.tests != NULL) {
         fprintf(stderr, "WARNING: Option -t is ignored.\n");
     }
 
@@ -1785,37 +1852,37 @@ int main(int argc, char **argv) {
                "latency_ms\",\"max_latency_ms\"\n");
     }
     /* Run benchmark with command in the remainder of the arguments. */
-    if (argc) {
-        sds title = sdsnew(argv[0]);
-        for (i = 1; i < argc; i++) {
-            title = sdscatlen(title, " ", 1);
-            title = sdscatlen(title, (char *)argv[i], strlen(argv[i]));
-        }
-        sds *sds_args = getSdsArrayFromArgv(argc, argv, 0);
-        if (!sds_args) {
-            fprintf(stderr, "Invalid quoted string\n");
-            return 1;
-        }
+    if (command.argz != NULL) {
         if (config.stdinarg) {
-            sds_args = sds_realloc(sds_args, (argc + 1) * sizeof(sds));
-            sds_args[argc] = readArgFromStdin();
-            argc++;
+            sds sin_arg = readArgFromStdin();
+            argz_add(&command.argz, &command.argz_len, sin_arg);
+            sdsfree(sin_arg);
         }
+
+        size_t args_num = argz_count(command.argz, command.argz_len);
+        char **args = zmalloc((args_num + 1) * sizeof(char *));
+        argz_extract(command.argz, command.argz_len, args);
+
         /* Setup argument length */
-        size_t *argvlen = zmalloc(argc * sizeof(size_t));
-        for (i = 0; i < argc; i++) argvlen[i] = sdslen(sds_args[i]);
+        size_t *argvlen = zmalloc(args_num * sizeof(size_t));
+        for (size_t i = 0; i < args_num; i++) argvlen[i] = strlen(args[i]);
+
+        sds title = sdsnewlen(command.argz, command.argz_len);
+        argz_stringify(title, command.argz_len, ' ');
+
         do {
-            len = redisFormatCommandArgv(&cmd, argc, (const char **)sds_args, argvlen);
+            len = redisFormatCommandArgv(&cmd, args_num, (const char **)args, argvlen);
             // adjust the datasize to the parsed command
             config.datasize = len;
             benchmark(title, cmd, len);
             free(cmd);
         } while (config.loop);
-        sdsfreesplitres(sds_args, argc);
 
+        zfree(args);
+        zfree(argvlen);
+        free(command.argz);
         sdsfree(title);
         if (config.redis_config != NULL) freeServerConfig(config.redis_config);
-        zfree(argvlen);
         return 0;
     }
 
