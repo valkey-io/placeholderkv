@@ -1676,8 +1676,12 @@ int clusterCountNonFailingReplicas(clusterNode *n) {
     return ok_replicas;
 }
 
-/* Low level cleanup of the node structure. Only called by clusterDelNode(). */
-void freeClusterNode(clusterNode *n) {
+/* Low level cleanup of the node structure.
+ *
+ * When delete = 1 is passed, it is called by clusterDelNode and we will delete
+ * the node from the cluster nodes dict. When delete = 0 is passed, we only free
+ * the node resources because the node is not added to the cluster nodes dict. */
+void freeClusterNode(clusterNode *n, int delete) {
     sds nodename;
     int j;
 
@@ -1689,9 +1693,11 @@ void freeClusterNode(clusterNode *n) {
     if (nodeIsReplica(n) && n->replicaof) clusterNodeRemoveReplica(n->replicaof, n);
 
     /* Unlink from the set of nodes. */
-    nodename = sdsnewlen(n->name, CLUSTER_NAMELEN);
-    serverAssert(dictDelete(server.cluster->nodes, nodename) == DICT_OK);
-    sdsfree(nodename);
+    if (delete) {
+        nodename = sdsnewlen(n->name, CLUSTER_NAMELEN);
+        serverAssert(dictDelete(server.cluster->nodes, nodename) == DICT_OK);
+        sdsfree(nodename);
+    }
     sdsfree(n->hostname);
     sdsfree(n->human_nodename);
     sdsfree(n->announce_client_ipv4);
@@ -1754,7 +1760,7 @@ void clusterDelNode(clusterNode *delnode) {
     clusterRemoveNodeFromShard(delnode);
 
     /* 4) Free the node, unlinking it from the cluster. */
-    freeClusterNode(delnode);
+    freeClusterNode(delnode, 1);
 }
 
 /* Node lookup by name */
@@ -3254,11 +3260,14 @@ int clusterProcessPacket(clusterLink *link) {
                      * to reduce the amount of time needed to stabilize the shard ID. */
                     clusterNode *node = createClusterNode(NULL, CLUSTER_NODE_HANDSHAKE);
                     if (nodeIp2String(node->ip, link, hdr->myip) != C_OK) {
-                        /* We cannot get the IP info from the link, it probably means the connection is closed. */
-                        serverLog(LL_NOTICE, "Closing link even though we received a MEET packet on it, "
-                                             "because the connection has an error");
+                        /* Unable to retrieve the node's IP address from the connection. Without a
+                         * valid IP, the node becomes unusable in the cluster. This failure might be
+                         * due to the connection being closed. To avoid leaving the cluster in an
+                         * inconsistent state, we close the link and free the node. */
+                        serverLog(LL_NOTICE, "Closing link and freeing node due to failure to retrieve IP "
+                                             "from the connection, possibly caused by a closed connection.");
                         freeClusterLink(link);
-                        freeClusterNode(node);
+                        freeClusterNode(node, 0);
                         return 0;
                     }
                     getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
