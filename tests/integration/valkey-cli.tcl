@@ -681,14 +681,13 @@ if {!$::tls} { ;# fake_redis_node doesn't support TLS
     }
 
     test "valkey-cli pubsub mode with multiple shard channel subscriptions" {
-
         set fd [open_cli]
 
         write_cli $fd ":get pubsub"
         set pubsub_status [string trim [read_cli $fd]]
         assert_equal "0" $pubsub_status
 
-        write_cli $fd "SSUBSCRIBE schannel1 schannel2 schannel3"
+        write_cli $fd "SSUBSCRIBE {schannel}1 {schannel}2 {schannel}3"
         set response [read_cli $fd]
 
         write_cli $fd ":get pubsub"
