@@ -588,6 +588,7 @@ start_server {tags {"introspection"}} {
             rdma-rx-size
             rdma-bind
             rdma-port
+            io-uring-enabled
         }
 
         if {!$::tls} {
