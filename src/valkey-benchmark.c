@@ -43,7 +43,6 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <argp.h>
-#include <argz.h>
 
 #include <sdscompat.h> /* Use hiredis' sds compat header that maps sds calls to their hi_ variants */
 #include <sds.h>       /* Use hiredis sds. */
@@ -1480,9 +1479,21 @@ struct argp_option options[] = {
     {0}};
 
 struct command {
-    char *argz;
-    size_t argz_len;
+    const char **args;
+    size_t args_num;
 };
+
+static error_t command_add_arg(struct command *cmd, const char *arg) {
+    void *ptr = zrealloc(cmd->args, sizeof(char *) * (cmd->args_num + 1));
+    if (ptr == NULL) {
+        zfree(cmd->args);
+        return errno;
+    }
+    cmd->args = ptr;
+    cmd->args[cmd->args_num] = arg;
+    cmd->args_num++;
+    return 0;
+}
 
 static int parse_opt(int key, char *arg, struct argp_state *state) {
     UNUSED(state);
@@ -1662,7 +1673,7 @@ static int parse_opt(int key, char *arg, struct argp_state *state) {
 #endif
     case ARGP_KEY_ARG: {
         struct command *command = (struct command *)state->input;
-        error_t err = argz_add(&command->argz, &command->argz_len, arg);
+        error_t err = command_add_arg(command, arg);
         if (err == ENOMEM) {
             fprintf(stderr, "Error parsing command line argumen: Out-of-memory");
             return -err;
@@ -1828,7 +1839,7 @@ int main(int argc, char **argv) {
                         "'sudo sysctl -w net.inet.tcp.msl=1000' for Mac OS X in order "
                         "to use a lot of clients/requests\n");
     }
-    if (command.argz != NULL && config.tests != NULL) {
+    if (command.args != NULL && config.tests != NULL) {
         fprintf(stderr, "WARNING: Option -t is ignored.\n");
     }
 
@@ -1852,35 +1863,33 @@ int main(int argc, char **argv) {
                "latency_ms\",\"max_latency_ms\"\n");
     }
     /* Run benchmark with command in the remainder of the arguments. */
-    if (command.argz != NULL) {
+    if (command.args != NULL) {
+        sds sin_arg = NULL;
         if (config.stdinarg) {
-            sds sin_arg = readArgFromStdin();
-            argz_add(&command.argz, &command.argz_len, sin_arg);
-            sdsfree(sin_arg);
+            sin_arg = readArgFromStdin();
+            command_add_arg(&command, sin_arg);
         }
 
-        size_t args_num = argz_count(command.argz, command.argz_len);
-        char **args = zmalloc((args_num + 1) * sizeof(char *));
-        argz_extract(command.argz, command.argz_len, args);
-
         /* Setup argument length */
-        size_t *argvlen = zmalloc(args_num * sizeof(size_t));
-        for (size_t i = 0; i < args_num; i++) argvlen[i] = strlen(args[i]);
+        size_t *argvlen = zmalloc(command.args_num * sizeof(size_t));
+        for (size_t i = 0; i < command.args_num; i++) argvlen[i] = strlen(command.args[i]);
 
-        sds title = sdsnewlen(command.argz, command.argz_len);
-        argz_stringify(title, command.argz_len, ' ');
+        sds title = sdsnewlen(command.args[0], argvlen[0]);
+        for (size_t i = 1; i < command.args_num; i++) title = sdscatfmt(title, " %s", command.args[i]);
 
         do {
-            len = redisFormatCommandArgv(&cmd, args_num, (const char **)args, argvlen);
+            len = redisFormatCommandArgv(&cmd, command.args_num, (const char **)command.args, argvlen);
             // adjust the datasize to the parsed command
             config.datasize = len;
             benchmark(title, cmd, len);
             free(cmd);
         } while (config.loop);
 
-        zfree(args);
+        zfree(command.args);
         zfree(argvlen);
-        free(command.argz);
+        if (sin_arg != NULL) {
+            sdsfree(sin_arg);
+        }
         sdsfree(title);
         if (config.redis_config != NULL) freeServerConfig(config.redis_config);
         return 0;
