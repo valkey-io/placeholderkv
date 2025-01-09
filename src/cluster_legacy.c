@@ -3250,6 +3250,8 @@ int clusterProcessPacket(clusterLink *link) {
                         /* Unable to retrieve the node's IP address from the connection. Without a
                          * valid IP, the node becomes unusable in the cluster. This failure might be
                          * due to the connection being closed. */
+                        serverLog(LL_NOTICE, "Closing link even though we received a MEET packet on it, "
+                                             "because the connection has an error");
                         freeClusterLink(link);
                         return 0;
                     }
