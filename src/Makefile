@@ -181,6 +181,11 @@ else
 	# Homebrew x86/ppc uses /usr/local as HOMEBREW_PREFIX
 	OPENSSL_PREFIX?=/usr/local/opt/openssl
 endif
+	# GNU libc argp library needs to be installed with homebrew:
+	# `brew install argp-standalone`
+	FINAL_LIBS+= -largp
+	FINAL_LDFLAGS+= -L/opt/homebrew/lib
+	FINAL_CFLAGS+= -I/opt/homebrew/include
 else
 ifeq ($(uname_S),AIX)
         # AIX
