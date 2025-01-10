@@ -77,7 +77,7 @@ typedef int aeCustomPollProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
 typedef struct aeFileEvent {
-    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER|MESSAGE_QUEUE) */
+    int mask; /* one of AE_(READABLE|WRITABLE|BARRIER|ERROR_QUEUE) */
     aeFileProc *rfileProc;
     aeFileProc *wfileProc;
     aeFileProc *errfileproc;

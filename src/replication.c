@@ -365,7 +365,6 @@ void incrementalTrimReplicationBacklog(size_t max_blocks) {
         fo->refcount--;
         trimmed_blocks++;
         server.repl_backlog->histlen -= fo->size;
-        serverLog(LL_WARNING, "Trimming backlog block! %lu length, %llu offset", fo->size, fo->repl_offset);
 
         /* Go to use next replication buffer block node. */
         listNode *next = listNextNode(first);

@@ -1096,7 +1096,7 @@ typedef struct ClientFlags {
     uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
-/* Tracking struct used to decremenet reference count of repl backlog block
+/* Tracking struct used to decrement reference count of repl backlog block
  * once written to replica by the kernel. */
 typedef struct zeroCopyRecord {
     replBufBlock *block;
@@ -1999,7 +1999,7 @@ struct valkeyServer {
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
     /* TCP Zero Copy */
     int tcp_tx_zerocopy; /* If true, use zero copy for writes when possible. */
-    int tcp_zerocopy_min_write_size; /* Minimum size for a write before we go thorugh zerocopy. */
+    int tcp_zerocopy_min_write_size; /* Minimum size for a write before we go through zerocopy. */
     int debug_zerocopy_bypass_loopback_check; /* Used to test zerocopy on loopback connections */
     unsigned int draining_clients;
     /* Synchronous replication. */
