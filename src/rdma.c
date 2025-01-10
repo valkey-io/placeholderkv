@@ -10,9 +10,10 @@
 
 #define VALKEYMODULE_CORE_MODULE
 #include "server.h"
-
-#if defined USE_RDMA && defined __linux__ /* currently RDMA is only supported on Linux */
 #include "connection.h"
+
+#if defined __linux__ /* currently RDMA is only supported on Linux */
+#if (USE_RDMA == 1 /* BUILD_YES */) || ((USE_RDMA == 2 /* BUILD_MODULE */) && (BUILD_RDMA_MODULE == 2))
 #include "connhelpers.h"
 
 #include <assert.h>
@@ -76,9 +77,12 @@ typedef enum ValkeyRdmaOpcode {
 #define VALKEY_RDMA_INVALID_OPCODE 0xffff
 #define VALKEY_RDMA_KEEPALIVE_MS 3000
 
+#define RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE (1 << 0)
+
 typedef struct rdma_connection {
     connection c;
     struct rdma_cm_id *cm_id;
+    int flags;
     int last_errno;
     listNode *pending_list_node;
 } rdma_connection;
@@ -128,11 +132,9 @@ typedef struct rdma_listener {
 static list *pending_list;
 
 static rdma_listener *rdma_listeners;
+static serverRdmaContextConfig *rdma_config;
 
 static ConnectionType CT_RDMA;
-
-static int valkey_rdma_rx_size = VALKEY_RDMA_DEFAULT_RX_SIZE;
-static int valkey_rdma_comp_vector = -1; /* -1 means a random one */
 
 static void serverRdmaError(char *err, const char *fmt, ...) {
     va_list ap;
@@ -272,7 +274,7 @@ static int rdmaSetupIoBuf(RdmaContext *ctx, struct rdma_cm_id *cm_id) {
 
     /* setup recv buf & MR */
     access = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
-    length = valkey_rdma_rx_size;
+    length = rdma_config->rx_size;
     ctx->rx.addr = page_aligned_zalloc(length);
     ctx->rx.length = length;
     ctx->rx.mr = ibv_reg_mr(ctx->pd, ctx->rx.addr, length, access);
@@ -295,6 +297,7 @@ static int rdmaCreateResource(RdmaContext *ctx, struct rdma_cm_id *cm_id) {
     struct ibv_comp_channel *comp_channel = NULL;
     struct ibv_cq *cq = NULL;
     struct ibv_pd *pd = NULL;
+    int comp_vector = rdma_config->completion_vector;
 
     if (ibv_query_device(cm_id->verbs, &device_attr)) {
         serverLog(LL_WARNING, "RDMA: ibv ibv query device failed");
@@ -317,8 +320,13 @@ static int rdmaCreateResource(RdmaContext *ctx, struct rdma_cm_id *cm_id) {
 
     ctx->comp_channel = comp_channel;
 
+    /* negative number means a random one */
+    if (comp_vector < 0) {
+        comp_vector = abs((int)random());
+    }
+
     cq = ibv_create_cq(cm_id->verbs, VALKEY_RDMA_MAX_WQE * 2, NULL, comp_channel,
-                       valkey_rdma_comp_vector % cm_id->verbs->num_comp_vectors);
+                       comp_vector % cm_id->verbs->num_comp_vectors);
     if (!cq) {
         serverLog(LL_WARNING, "RDMA: ibv create cq failed");
         return C_ERR;
@@ -688,7 +696,7 @@ static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientDat
     }
 
     /* uplayer should read all */
-    while (ctx->rx.pos < ctx->rx.offset) {
+    while (!(rdma_conn->flags & RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE) && ctx->rx.pos < ctx->rx.offset) {
         if (conn->read_handler && (callHandler(conn, conn->read_handler) == C_ERR)) {
             return;
         }
@@ -700,7 +708,7 @@ static void connRdmaEventHandler(struct aeEventLoop *el, int fd, void *clientDat
     }
 
     /* RDMA comp channel has no POLLOUT event, try to send remaining buffer */
-    if ((ctx->tx.offset < ctx->tx.length) && conn->write_handler) {
+    if (!(rdma_conn->flags & RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE) && ctx->tx.offset < ctx->tx.length && conn->write_handler) {
         callHandler(conn, conn->write_handler);
     }
 }
@@ -879,6 +887,9 @@ static void connRdmaAcceptHandler(aeEventLoop *el, int fd, void *privdata, int m
 }
 
 static int connRdmaSetRwHandler(connection *conn) {
+    rdma_connection *rdma_conn = (rdma_connection *)conn;
+    if (rdma_conn->flags & RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE) return C_OK;
+
     /* IB channel only has POLLIN event */
     if (conn->read_handler || conn->write_handler) {
         if (aeCreateFileEvent(server.el, conn->fd, AE_READABLE, conn->type->ae_handler, conn) == AE_ERR) {
@@ -1610,7 +1621,26 @@ int connRdmaListen(connListener *listener) {
         rdma_listener++;
     }
 
+    rdma_config = listener->priv;
     return C_OK;
+}
+
+static void connRdmaCloseListener(connListener *listener) {
+    /* Close old servers */
+    for (int i = 0; i < listener->count; i++) {
+        if (listener->fd[i] == -1) continue;
+
+        aeDeleteFileEvent(server.el, listener->fd[i], AE_READABLE);
+        listener->fd[i] = -1;
+        struct rdma_listener *rdma_listener = &rdma_listeners[i];
+        rdma_destroy_id(rdma_listener->cm_id);
+        rdma_destroy_event_channel(rdma_listener->cm_channel);
+    }
+
+    listener->count = 0;
+    zfree(rdma_listeners);
+    rdma_listeners = NULL;
+    rdma_config = NULL;
 }
 
 static int connRdmaAddr(connection *conn, char *ip, size_t ip_len, int *port, int remote) {
@@ -1697,12 +1727,12 @@ static int rdmaProcessPendingData(void) {
     listNode *ln;
     rdma_connection *rdma_conn;
     connection *conn;
-    int processed;
+    int processed = 0;
 
-    processed = listLength(pending_list);
     listRewind(pending_list, &li);
     while ((ln = listNext(&li))) {
         rdma_conn = listNodeValue(ln);
+        if (rdma_conn->flags & RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE) continue;
         conn = &rdma_conn->c;
 
         /* a connection can be disconnected by remote peer, CM event mark state as CONN_STATE_CLOSED, kick connection
@@ -1717,13 +1747,30 @@ static int rdmaProcessPendingData(void) {
                 callHandler(conn, conn->write_handler);
             }
 
+            ++processed;
             continue;
         }
 
         connRdmaEventHandler(NULL, -1, rdma_conn, 0);
+        ++processed;
     }
 
     return processed;
+}
+
+static void postPoneUpdateRdmaState(struct connection *conn, int postpone) {
+    rdma_connection *rdma_conn = (rdma_connection *)conn;
+    if (postpone) {
+        rdma_conn->flags |= RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE;
+    } else {
+        rdma_conn->flags &= ~RDMA_CONN_FLAG_POSTPONE_UPDATE_STATE;
+    }
+}
+
+static void updateRdmaState(struct connection *conn) {
+    rdma_connection *rdma_conn = (rdma_connection *)conn;
+    connRdmaSetRwHandler(conn);
+    connRdmaEventHandler(NULL, -1, rdma_conn, 0);
 }
 
 static ConnectionType CT_RDMA = {
@@ -1740,6 +1787,7 @@ static ConnectionType CT_RDMA = {
     //.cluster_accept_handler = NULL,
     .is_local = connRdmaIsLocal,
     .listen = connRdmaListen,
+    .closeListener = connRdmaCloseListener,
     .addr = connRdmaAddr,
 
     /* create/close connection */
@@ -1767,18 +1815,9 @@ static ConnectionType CT_RDMA = {
     /* pending data */
     .has_pending_data = rdmaHasPendingData,
     .process_pending_data = rdmaProcessPendingData,
+    .postpone_update_state = postPoneUpdateRdmaState,
+    .update_state = updateRdmaState,
 };
-
-static struct connListener *rdmaListener(void) {
-    static struct connListener *listener = NULL;
-
-    if (listener) return listener;
-
-    listener = listenerByType(CONN_TYPE_RDMA);
-    serverAssert(listener != NULL);
-
-    return listener;
-}
 
 ConnectionType *connectionTypeRdma(void) {
     static ConnectionType *ct_rdma = NULL;
@@ -1791,133 +1830,28 @@ ConnectionType *connectionTypeRdma(void) {
     return ct_rdma;
 }
 
-/* rdma listener has different create/close logic from TCP, we can't re-use 'int changeListener(connListener *listener)'
- * directly */
-static int rdmaChangeListener(void) {
-    struct connListener *listener = rdmaListener();
-
-    /* Close old servers */
-    for (int i = 0; i < listener->count; i++) {
-        if (listener->fd[i] == -1) continue;
-
-        aeDeleteFileEvent(server.el, listener->fd[i], AE_READABLE);
-        listener->fd[i] = -1;
-        struct rdma_listener *rdma_listener = &rdma_listeners[i];
-        rdma_destroy_id(rdma_listener->cm_id);
-        rdma_destroy_event_channel(rdma_listener->cm_channel);
-    }
-
-    listener->count = 0;
-    zfree(rdma_listeners);
-    rdma_listeners = NULL;
-
-    closeListener(listener);
-
-    /* Just close the server if port disabled */
-    if (listener->port == 0) {
-        if (server.set_proc_title) serverSetProcTitle(NULL);
-        return VALKEYMODULE_OK;
-    }
-
-    /* Re-create listener */
-    if (connListen(listener) != C_OK) {
-        return VALKEYMODULE_ERR;
-    }
-
-    /* Create event handlers */
-    if (createSocketAcceptHandler(listener, listener->ct->accept_handler) != C_OK) {
-        serverPanic("Unrecoverable error creating %s accept handler.", listener->ct->get_type(NULL));
-    }
-
-    if (server.set_proc_title) serverSetProcTitle(NULL);
-
-    return VALKEYMODULE_OK;
+int RegisterConnectionTypeRdma(void) {
+    return connTypeRegister(&CT_RDMA);
 }
 
-#ifdef BUILD_RDMA_MODULE
+#else
+
+int RegisterConnectionTypeRdma(void) {
+    serverLog(LL_VERBOSE, "Connection type %s not builtin", CONN_TYPE_RDMA);
+    return C_ERR;
+}
+
+#endif
+
+#if BUILD_RDMA_MODULE == 2 /* BUILD_MODULE */
 
 #include "release.h"
 
-static long long rdmaGetPort(const char *name, void *privdata) {
-    UNUSED(name);
-    UNUSED(privdata);
-    struct connListener *listener = rdmaListener();
-
-    return listener->port;
-}
-
-static int rdmaSetPort(const char *name, long long val, void *privdata, ValkeyModuleString **err) {
-    UNUSED(name);
-    UNUSED(privdata);
-    UNUSED(err);
-    struct connListener *listener = rdmaListener();
-    listener->port = val;
-
-    return VALKEYMODULE_OK;
-}
-
-static ValkeyModuleString *rdma_bind;
-
-static void rdmaBuildBind(void *ctx) {
-    struct connListener *listener = rdmaListener();
-
-    if (rdma_bind) ValkeyModule_FreeString(NULL, rdma_bind);
-
-    sds rdma_bind_str = sdsjoin(listener->bindaddr, listener->bindaddr_count, " ");
-    rdma_bind = ValkeyModule_CreateString(ctx, rdma_bind_str, sdslen(rdma_bind_str));
-}
-
-static ValkeyModuleString *rdmaGetBind(const char *name, void *privdata) {
-    UNUSED(name);
-    UNUSED(privdata);
-
-    return rdma_bind;
-}
-
-static int rdmaSetBind(const char *name, ValkeyModuleString *val, void *privdata, ValkeyModuleString **err) {
-    UNUSED(name);
-    UNUSED(err);
-    struct connListener *listener = rdmaListener();
-    const char *bind = ValkeyModule_StringPtrLen(val, NULL);
-    int nexts;
-    sds *exts = sdssplitlen(bind, strlen(bind), " ", 1, &nexts);
-
-    if (nexts > CONFIG_BINDADDR_MAX) {
-        serverLog(LL_WARNING, "RDMA: Unsupported bind ( > %d)", CONFIG_BINDADDR_MAX);
-        return VALKEYMODULE_ERR;
-    }
-
-    /* Free old bind addresses */
-    for (int j = 0; j < listener->bindaddr_count; j++) {
-        zfree(listener->bindaddr[j]);
-    }
-
-    for (int j = 0; j < nexts; j++) listener->bindaddr[j] = zstrdup(exts[j]);
-    listener->bindaddr_count = nexts;
-
-    sdsfreesplitres(exts, nexts);
-    rdmaBuildBind(privdata);
-
-    return VALKEYMODULE_OK;
-}
-
-static int rdmaApplyListener(ValkeyModuleCtx *ctx, void *privdata, ValkeyModuleString **err) {
-    UNUSED(ctx);
-    UNUSED(privdata);
-    UNUSED(err);
-
-    return rdmaChangeListener();
-}
-
-static void rdmaListenerAddConfig(void *ctx) {
-    serverAssert(ValkeyModule_RegisterNumericConfig(ctx, "port", 0, VALKEYMODULE_CONFIG_DEFAULT, 0, 65535, rdmaGetPort,
-                                                    rdmaSetPort, rdmaApplyListener, NULL) == VALKEYMODULE_OK);
-    serverAssert(ValkeyModule_RegisterStringConfig(ctx, "bind", "", VALKEYMODULE_CONFIG_DEFAULT, rdmaGetBind,
-                                                   rdmaSetBind, rdmaApplyListener, ctx) == VALKEYMODULE_OK);
-    serverAssert(ValkeyModule_LoadConfigs(ctx) == VALKEYMODULE_OK);
-}
 
 int ValkeyModule_OnLoad(void *ctx, ValkeyModuleString **argv, int argc) {
+    UNUSED(argv);
+    UNUSED(argc);
+
     /* Connection modules MUST be part of the same build as valkey. */
     if (strcmp(REDIS_BUILD_ID_RAW, serverBuildIdRaw())) {
         serverLog(LL_NOTICE, "Connection type %s was not built together with the valkey-server used.", CONN_TYPE_RDMA);
@@ -1936,40 +1870,6 @@ int ValkeyModule_OnLoad(void *ctx, ValkeyModuleString **argv, int argc) {
 
     if (connTypeRegister(&CT_RDMA) != C_OK) return VALKEYMODULE_ERR;
 
-    rdmaListenerAddConfig(ctx);
-
-    struct connListener *listener = rdmaListener();
-    listener->ct = connectionTypeRdma();
-    listener->bindaddr = zcalloc_num(CONFIG_BINDADDR_MAX, sizeof(listener->bindaddr[0]));
-
-    for (int i = 0; i < argc; i++) {
-        robj *str = (robj *)argv[i];
-        int nexts;
-        sds *exts = sdssplitlen(str->ptr, strlen(str->ptr), "=", 1, &nexts);
-        if (nexts != 2) {
-            serverLog(LL_WARNING, "RDMA: Unsupported argument \"%s\"", (char *)str->ptr);
-            return VALKEYMODULE_ERR;
-        }
-
-        if (!strcasecmp(exts[0], "bind")) {
-            listener->bindaddr[listener->bindaddr_count++] = zstrdup(exts[1]);
-        } else if (!strcasecmp(exts[0], "port")) {
-            listener->port = atoi(exts[1]);
-        } else if (!strcasecmp(exts[0], "rx-size")) {
-            valkey_rdma_rx_size = atoi(exts[1]);
-        } else if (!strcasecmp(exts[0], "comp-vector")) {
-            valkey_rdma_comp_vector = atoi(exts[1]);
-        } else {
-            serverLog(LL_WARNING, "RDMA: Unsupported argument \"%s\"", (char *)str->ptr);
-            return VALKEYMODULE_ERR;
-        }
-
-        sdsfreesplitres(exts, nexts);
-    }
-
-    rdmaBuildBind(ctx);
-    if (valkey_rdma_comp_vector == -1) valkey_rdma_comp_vector = abs((int)random());
-
     return VALKEYMODULE_OK;
 }
 
@@ -1981,4 +1881,11 @@ int ValkeyModule_OnUnload(void *arg) {
 
 #endif /* BUILD_RDMA_MODULE */
 
-#endif /* USE_RDMA && __linux__ */
+#else /* __linux__ */
+
+int RegisterConnectionTypeRdma(void) {
+    serverLog(LL_VERBOSE, "Connection type %s is supported on Linux only", CONN_TYPE_RDMA);
+    return C_ERR;
+}
+
+#endif /* __linux__ */

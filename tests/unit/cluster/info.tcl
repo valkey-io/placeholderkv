@@ -41,3 +41,26 @@ test "errorstats: rejected call due to MOVED Redirection" {
 }
 
 } ;# start_cluster
+
+start_cluster 3 0 {tags {external:skip cluster} overrides {cluster-node-timeout 1000}} {
+    test "fail reason changed" {
+        # Kill one primary, so the cluster fail with not-full-coverage.
+        pause_process [srv 0 pid]
+        wait_for_condition 1000 50 {
+            [CI 1 cluster_state] eq {fail} &&
+            [CI 2 cluster_state] eq {fail}
+        } else {
+            fail "Cluster doesn't fail"
+        }
+        verify_log_message -1 "*At least one hash slot is not served by any available node*" 0
+        verify_log_message -2 "*At least one hash slot is not served by any available node*" 0
+
+        # Kill one more primary, so the cluster fail with minority-partition.
+        pause_process [srv -1 pid]
+        wait_for_log_messages -2 {"*minority partition*"} 0 1000 50
+
+        resume_process [srv 0 pid]
+        resume_process [srv -1 pid]
+        wait_for_cluster_state ok
+    }
+}

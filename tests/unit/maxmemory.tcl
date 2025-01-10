@@ -4,7 +4,7 @@ start_server {tags {"maxmemory" "external:skip"}} {
     set server_pid [s process_id]
 
     proc init_test {client_eviction} {
-        r flushdb
+        r flushdb sync
 
         set prev_maxmemory_clients [r config get maxmemory-clients]
         if $client_eviction {
@@ -145,45 +145,6 @@ start_server {tags {"maxmemory" "external:skip"}} {
 }
 
 start_server {tags {"maxmemory external:skip"}} {
-    test "Without maxmemory small integers are shared" {
-        r config set maxmemory 0
-        r set a 1
-        assert_refcount_morethan a 1
-    }
-
-    test "With maxmemory and non-LRU policy integers are still shared" {
-        r config set maxmemory 1073741824
-        r config set maxmemory-policy allkeys-random
-        r set a 1
-        assert_refcount_morethan a 1
-    }
-
-    test "With maxmemory and LRU policy integers are not shared" {
-        r config set maxmemory 1073741824
-        r config set maxmemory-policy allkeys-lru
-        r set a 1
-        r config set maxmemory-policy volatile-lru
-        r set b 1
-        assert_refcount 1 a
-        assert_refcount 1 b
-        r config set maxmemory 0
-    }
-
-    test "Shared integers are unshared with maxmemory and LRU policy" {
-        r set a 1
-        r set b 1
-        assert_refcount_morethan a 1
-        assert_refcount_morethan b 1
-        r config set maxmemory 1073741824
-        r config set maxmemory-policy allkeys-lru
-        r get a
-        assert_refcount 1 a
-        r config set maxmemory-policy volatile-lru
-        r get b
-        assert_refcount 1 b
-        r config set maxmemory 0
-    }
-
     foreach policy {
         allkeys-random allkeys-lru allkeys-lfu volatile-lru volatile-lfu volatile-random volatile-ttl
     } {
@@ -265,10 +226,10 @@ start_server {tags {"maxmemory external:skip"}} {
             # make sure to start with a blank instance
             r flushall
             # Get the current memory limit and calculate a new limit.
-            # We just add 100k to the current memory size so that it is
+            # We just add 400KiB to the current memory size so that it is
             # fast for us to reach that limit.
             set used [s used_memory]
-            set limit [expr {$used+100*1024}]
+            set limit [expr {$used+400*1024}]
             r config set maxmemory $limit
             r config set maxmemory-policy $policy
             # Now add keys until the limit is almost reached.
@@ -435,25 +396,37 @@ start_server {tags {"maxmemory external:skip"}} {
         r config set latency-tracking no
         r config set maxmemory 0
         r config set maxmemory-policy allkeys-random
+        set dbnum [expr {$::singledb ? 0 : 9}]
 
-        # Next rehash size is 8192, that will eat 64k memory
-        populate 4095 "" 1
+        # Populate some, then check table size and populate more up to one less
+        # than the soft maximum fill factor. Adding some more elements after
+        # this does not trigger rehashing, because rehashing would eat some
+        # kilobytes of memory.
+        populate 2000 a 1
+        set table_size [main_hash_table_size]
+        populate [main_hash_table_keys_before_rehashing_starts] b 1
 
+        # Now we are close to resizing. Check that rehashing didn't start.
+        assert_equal $table_size [main_hash_table_size]
+        assert_no_match "*Hash table 1 stats*" [r debug htstats $dbnum]
+
+        set dbsize_before [r dbsize]
         set used [s used_memory]
         set limit [expr {$used + 10*1024}]
         r config set maxmemory $limit
 
         # Adding a key to meet the 1:1 radio.
         r set k0 v0
-        # The dict has reached 4096, it can be resized in tryResizeHashTables in cron,
+        # The table has reached the soft max fill factor.
+        # It can be resized in tryResizeHashTables in cron,
         # or we add a key to let it check whether it can be resized.
         r set k1 v1
         # Next writing command will trigger evicting some keys if last
         # command trigger DB dict rehash
         r set k2 v2
-        # There must be 4098 keys because the server doesn't evict keys.
-        r dbsize
-    } {4098}
+        # There must be three more keys because the server doesn't evict keys.
+        assert_equal [r dbsize] [expr {$dbsize_before + 3}]
+    }
 }
 
 # Skip the following test when running with IO threads

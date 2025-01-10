@@ -58,13 +58,15 @@ TEST_MODULES = \
     eventloop.so \
     moduleconfigs.so \
     moduleconfigstwo.so \
+    moduleparameter.so \
     publish.so \
     usercall.so \
     postnotifications.so \
     moduleauthtwo.so \
     rdbloadsave.so \
     crash.so \
-    cluster.so
+    cluster.so \
+    helloscripting.so
 
 .PHONY: all
 

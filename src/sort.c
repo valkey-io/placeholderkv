@@ -34,6 +34,8 @@
 #include <math.h>   /* isnan() */
 #include "cluster.h"
 
+#include "valkey_strtod.h"
+
 zskiplistNode *zslGetElementByRank(zskiplist *zsl, unsigned long rank);
 
 serverSortOperation *createSortOperation(int type, robj *pattern) {
@@ -328,7 +330,7 @@ void sortCommandGeneric(client *c, int readonly) {
     switch (sortval->type) {
     case OBJ_LIST: vectorlen = listTypeLength(sortval); break;
     case OBJ_SET: vectorlen = setTypeSize(sortval); break;
-    case OBJ_ZSET: vectorlen = dictSize(((zset *)sortval->ptr)->dict); break;
+    case OBJ_ZSET: vectorlen = hashtableSize(((zset *)sortval->ptr)->ht); break;
     default: vectorlen = 0; serverPanic("Bad SORT type"); /* Avoid GCC warning */
     }
 
@@ -421,7 +423,7 @@ void sortCommandGeneric(client *c, int readonly) {
 
         /* Check if starting point is trivial, before doing log(N) lookup. */
         if (desc) {
-            long zsetlen = dictSize(((zset *)sortval->ptr)->dict);
+            long zsetlen = hashtableSize(((zset *)sortval->ptr)->ht);
 
             ln = zsl->tail;
             if (start > 0) ln = zslGetElementByRank(zsl, zsetlen - start);
@@ -443,19 +445,18 @@ void sortCommandGeneric(client *c, int readonly) {
         end -= start;
         start = 0;
     } else if (sortval->type == OBJ_ZSET) {
-        dict *set = ((zset *)sortval->ptr)->dict;
-        dictIterator *di;
-        dictEntry *setele;
-        sds sdsele;
-        di = dictGetIterator(set);
-        while ((setele = dictNext(di)) != NULL) {
-            sdsele = dictGetKey(setele);
-            vector[j].obj = createStringObject(sdsele, sdslen(sdsele));
+        hashtable *ht = ((zset *)sortval->ptr)->ht;
+        hashtableIterator iter;
+        hashtableInitIterator(&iter, ht);
+        void *next;
+        while (hashtableNext(&iter, &next)) {
+            zskiplistNode *node = next;
+            vector[j].obj = createStringObject(node->ele, sdslen(node->ele));
             vector[j].u.score = 0;
             vector[j].u.cmpobj = NULL;
             j++;
         }
-        dictReleaseIterator(di);
+        hashtableResetIterator(&iter);
     } else {
         serverPanic("Unknown type");
     }
@@ -479,9 +480,9 @@ void sortCommandGeneric(client *c, int readonly) {
             } else {
                 if (sdsEncodedObject(byval)) {
                     char *eptr;
-
-                    vector[j].u.score = strtod(byval->ptr, &eptr);
-                    if (eptr[0] != '\0' || errno == ERANGE || isnan(vector[j].u.score)) {
+                    errno = 0;
+                    vector[j].u.score = valkey_strtod(byval->ptr, &eptr);
+                    if (eptr[0] != '\0' || errno == ERANGE || errno == EINVAL || isnan(vector[j].u.score)) {
                         int_conversion_error = 1;
                     }
                 } else if (byval->encoding == OBJ_ENCODING_INT) {
@@ -577,7 +578,10 @@ void sortCommandGeneric(client *c, int readonly) {
         }
         if (outputlen) {
             listTypeTryConversion(sobj, LIST_CONV_AUTO, NULL, NULL);
-            setKey(c, c->db, storekey, sobj, 0);
+            setKey(c, c->db, storekey, &sobj, 0);
+            /* Ownership of sobj transferred to the db. Set to NULL to prevent
+             * freeing it below. */
+            sobj = NULL;
             notifyKeyspaceEvent(NOTIFY_LIST, "sortstore", storekey, c->db->id);
             server.dirty += outputlen;
         } else if (dbDelete(c->db, storekey)) {
@@ -585,7 +589,7 @@ void sortCommandGeneric(client *c, int readonly) {
             notifyKeyspaceEvent(NOTIFY_GENERIC, "del", storekey, c->db->id);
             server.dirty++;
         }
-        decrRefCount(sobj);
+        if (sobj != NULL) decrRefCount(sobj);
         addReplyLongLong(c, outputlen);
     }
 

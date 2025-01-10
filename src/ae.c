@@ -85,7 +85,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     if (eventLoop->events == NULL || eventLoop->fired == NULL) goto err;
     eventLoop->setsize = setsize;
     eventLoop->timeEventHead = NULL;
-    eventLoop->timeEventNextId = 0;
+    eventLoop->timeEventNextId = 1;
     eventLoop->stop = 0;
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
