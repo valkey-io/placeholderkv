@@ -14,7 +14,7 @@ ssize_t zeroCopyWriteToConn(connection *conn, char* data, size_t len) {
     UNUSED(len);
     return -1;
 }
-zeroCopyTracker *createZeroCopyTracker() { return NULL; }
+zeroCopyTracker *createZeroCopyTracker(void) { return NULL; }
 zeroCopyRecord *zeroCopyTrackerGet(zeroCopyTracker *tracker, uint32_t index) {
     UNUSED(tracker);
     UNUSED(index);
@@ -64,7 +64,7 @@ ssize_t zeroCopyWriteToConn(connection *conn, char* data, size_t len) {
     return connSend(conn, data, len, MSG_ZEROCOPY);
 }
 
-zeroCopyTracker *createZeroCopyTracker() {
+zeroCopyTracker *createZeroCopyTracker(void) {
     zeroCopyTracker *result = (zeroCopyTracker *) zmalloc(sizeof(zeroCopyTracker));
     result->start = 0;
     result->len = 0;
