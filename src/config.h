@@ -93,17 +93,13 @@
 #endif
 #endif
 
-/* MSG_ZEROCOPY. */
+/* MSG_ZEROCOPY and SO_LINGER. */
 #ifdef __linux__
 #if defined(SO_ZEROCOPY)
-#define HAVE_MSG_ZEROCOPY 1
-#endif
-#endif
-
-/* SO_LINGER. */
-#ifdef __linux__
 #if defined(SO_LINGER)
+#define HAVE_MSG_ZEROCOPY 1
 #define HAVE_SO_LINGER 1
+#endif
 #endif
 #endif
 

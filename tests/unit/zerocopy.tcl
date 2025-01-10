@@ -36,6 +36,7 @@ start_server {} {
         $primary config set repl-timeout 1200 ;# 20 minutes (for valgrind and slow machines)
         $replica config set repl-timeout 1200 ;# 20 minutes (for valgrind and slow machines)
         $primary config set client-output-buffer-limit "replica 0 0 0"
+        $primary config set repl-backlog-size [expr 64*1024]
         $replica replicaof $primary_host $primary_port
         wait_for_sync $replica
 
@@ -80,8 +81,6 @@ start_server {} {
         test {Zero copy writes trim backlog once received} {
             $primary config set tcp-zerocopy-min-write-size 0
 
-            # Set backlog to 64 KiB
-            $primary config set repl-backlog-size [expr 64*1024]
             assert {[s 0 repl_backlog_histlen] < [expr 64 * 1024 + 16*1024]}
 
             populate 100 "big_key:" 10240 0
@@ -108,8 +107,8 @@ start_server {} {
             # Pause handling of error queue events to simulate slow client
             $primary debug pause-errqueue-events 1
 
-            # Write 1 MiB, which should grow the repl backlog beyond the max
-            populate 1 "zerocopy_key:big:" [expr 1024 * 1024] 0
+            # Write 100 KiB, which should grow the repl backlog beyond the max
+            populate 1 "zerocopy_key:big:" [expr 100 * 1024] 0
             assert {[s 0 zero_copy_writes_in_flight] > 0}
             assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
 
@@ -138,8 +137,11 @@ start_server {} {
             # Pause handling of error queue events to simulate slow client
             $primary debug pause-errqueue-events 1
 
-            # Write 1 MiB, which should grow the repl backlog beyond the max
-            populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
+            # Pause the replica to ensure it doesn't attempt reconnect
+            pause_process $replica_pid
+
+            # Write 100 KiB, which should grow the repl backlog beyond the max
+            populate 1 "zerocopy_key:extra:" [expr 100 * 1024] 0
             assert {[s 0 zero_copy_writes_in_flight] > 0}
             assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
 
@@ -158,9 +160,6 @@ start_server {} {
             }
             assert_equal [s 0 zero_copy_clients_force_closed] 0
 
-            # Replica should be able to resync
-            wait_for_ofs_sync $primary $replica
-
             # Backlog should be trimmed to repl-backlog-size (plus up to PROTO_REPLY_CHUNK_BYTES/16KiB)
             wait_for_condition 100 100 {
                 [s 0 repl_backlog_histlen] < [expr 64*1024 + 16*1024]
@@ -168,6 +167,9 @@ start_server {} {
                 fail "Backlog should eventually be trimmed back to repl-backlog-size"
             }
 
+            # Replica should be able to resync
+            resume_process $replica_pid
+            wait_for_ofs_sync $primary $replica
         }
 
         test {In-flight zerocopy writes are forcefully closed when unresponsive replica is killed} {
@@ -175,6 +177,9 @@ start_server {} {
 
             # Pause handling of error queue events to simulate slow client
             $primary debug pause-errqueue-events 1
+
+            # Pause the replica to ensure it doesn't attempt reconnect
+            pause_process $replica_pid
 
             # Write 1 MiB, which should grow the repl backlog beyond the max
             populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
@@ -205,6 +210,7 @@ start_server {} {
             $primary debug pause-errqueue-events 0
 
             # Replica should be able to resync
+            resume_process $replica_pid
             wait_for_ofs_sync $primary $replica
         }
 
