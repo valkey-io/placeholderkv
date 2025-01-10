@@ -3901,7 +3901,7 @@ void clientCommandTracking(client *c) {
     struct ClientFlags options = {0};
     robj **prefix = NULL;
     size_t numprefix = 0;
-        initClientPubSubData(c);
+    initClientPubSubData(c);
 
     /* Parse the options. */
     for (int j = 3; j < c->argc; j++) {
