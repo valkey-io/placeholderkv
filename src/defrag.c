@@ -480,6 +480,7 @@ static void scanLaterSet(robj *ob, unsigned long *cursor) {
     *cursor = hashtableScanDefrag(ht, *cursor, activeDefragSdsHashtableCallback, NULL, activeDefragAlloc, HASHTABLE_SCAN_EMIT_REF);
 }
 
+/* Hashtable scan callback for hash datatype */
 static void activeDefragHashTypeEntry(void *privdata, void *element_ref) {
     UNUSED(privdata);
     hashTypeEntry **entry_ref = (hashTypeEntry **)element_ref;

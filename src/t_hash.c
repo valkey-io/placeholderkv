@@ -30,6 +30,10 @@
 #include "server.h"
 #include <math.h>
 
+/*-----------------------------------------------------------------------------
+ * Hash Entry API
+ *----------------------------------------------------------------------------*/
+
 struct hashTypeEntry {
     sds value;
     unsigned char field_offset;
@@ -37,7 +41,7 @@ struct hashTypeEntry {
 };
 
 /* takes ownership of value, does not take ownership of field */
-hashTypeEntry *hashTypeCreateEntry(const sds field, sds value) {
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value) {
     size_t field_size = sdscopytobuffer(NULL, 0, field, NULL);
 
     size_t total_size = sizeof(hashTypeEntry) + field_size;
@@ -63,12 +67,21 @@ static void hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value) {
     entry->value = value;
 }
 
+/* Returns allocation size of hashTypeEntry and data owned by hashTypeEntry,
+ * even if not embedded in the same allocation. */
 size_t hashTypeEntryAllocSize(hashTypeEntry *entry) {
     size_t size = zmalloc_usable_size(entry);
     size += sdsAllocSize(entry->value);
     return size;
 }
 
+/* Defragments a hashtable entry (field-value pair) if needed, using the
+ * provided defrag functions. The defrag functions return NULL if the allocation
+ * was not moved, otherwise they return a pointer to the new memory location.
+ * A separate sds defrag function is needed because of the unique memory layout
+ * of sds strings.
+ * If the location of the hashTypeEntry changed we return the new location,
+ * otherwise we return NULL. */
 hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds)) {
     hashTypeEntry *new_entry = defragfn(entry);
     if (new_entry) entry = new_entry;
@@ -76,9 +89,11 @@ hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void 
     sds new_value = sdsdefragfn(entry->value);
     if (new_value) entry->value = new_value;
 
-    return entry;
+    return new_entry;
 }
 
+/* Used for releasing memory to OS to avoid unnecessary CoW. Called when we've
+ * forked and memory won't be used again. See zmadvise_dontneed() */
 void dismissHashTypeEntry(hashTypeEntry *entry) {
     /* Only dismiss values memory since the field size usually is small. */
     dismissSds(entry->value);
@@ -603,8 +618,7 @@ static void hashTypeRandomElement(robj *hashobj, unsigned long hashsize, listpac
         field->sval = (unsigned char *)sds_field;
         field->slen = sdslen(sds_field);
         if (val) {
-            hashTypeEntry *hash_entry = entry;
-            sds sds_val = hashTypeEntryGetValue(hash_entry);
+            sds sds_val = hashTypeEntryGetValue(entry);
             val->sval = (unsigned char *)sds_val;
             val->slen = sdslen(sds_val);
         }
