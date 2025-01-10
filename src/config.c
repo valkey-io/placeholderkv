@@ -2548,9 +2548,7 @@ static int updateExtendedRedisCompat(const char **err) {
 static int applyTcpTxZerocopy(const char **err) {
     #ifndef HAVE_MSG_ZEROCOPY
     if (server.tcp_tx_zerocopy) {
-        static char msg[128];
-        snprintf(msg, sizeof(msg), "TCP zerocopy is not supported by this system")
-        *err = msg;
+        *err = "TCP zerocopy is not supported by this system";
         return 0;
     }
     return 1;

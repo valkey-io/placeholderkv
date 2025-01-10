@@ -37,31 +37,47 @@ start_server {} {
     $replica replicaof $primary_host $primary_port
     wait_for_sync $replica
 
-    test {Small writes do not go through zerocopy} {
-        set initial_zerocopy_writes [s 0 zero_copy_writes_processed]
-        set initial_zerocopy_mem [s 0 used_memory_zero_copy_tracking]
+    test {First zerocopy write allocates tracker} {
+        assert_equal [s 0 used_memory_zero_copy_tracking] 0
 
-        populate 1 "small_key:" 1024 0
+        # Note that we have no control over the actual write size to replica,
+        # so we set this to zero to force zero copy to be used.
+        $primary config set tcp-zerocopy-min-write-size 0
+
+        populate 1 "with_zcp:" 1024 0
+        wait_for_sync $replica
+
+        assert {[s 0 used_memory_zero_copy_tracking] > 0}
+    }
+
+    test {tcp-zerocopy-min-write-size enforcement} {
+        set initial_zerocopy_writes [s 0 zero_copy_writes_processed]
+
+        $primary config set tcp-zerocopy-min-write-size 10240
+
+        populate 1 "no_zcp:" 1024 0
         wait_for_sync $replica
 
         assert_equal [s 0 zero_copy_writes_processed] $initial_zerocopy_writes
-        assert_equal [s 0 used_memory_zero_copy_tracking] $initial_zerocopy_mem
         assert_equal [s 0 zero_copy_writes_in_flight] 0
-    }
 
-    test {Large writes go through zerocopy} {
-        set initial_zerocopy_writes [s 0 zero_copy_writes_processed]
-        set initial_zerocopy_mem [s 0 used_memory_zero_copy_tracking]
+        $primary config set tcp-zerocopy-min-write-size 0
 
-        populate 1 "big_key:" 10240 0
+        populate 1 "with_zcp:" 1024 0
         wait_for_sync $replica
 
-        assert_equal [s 0 zero_copy_writes_processed] [expr {$initial_zerocopy_writes + 1}]
-        assert {[s 0 used_memory_zero_copy_tracking] > $initial_zerocopy_mem}
-        assert_equal [s 0 zero_copy_writes_in_flight] 0
+        # In-flight zero copy writes should get their ACKs
+        wait_for_condition 100 100 {
+            [s 0 zero_copy_writes_in_flight] == 0
+        } else {
+            fail "In flight zero copy writes never completed"
+        }
+        assert {[s 0 zero_copy_writes_processed] > [expr {$initial_zerocopy_writes}]}
     }
 
     test {Zero copy writes trim backlog once received} {
+        $primary config set tcp-zerocopy-min-write-size 0
+
         # Set backlog to 64 KiB
         $primary config set repl-backlog-size [expr 64*1024]
         assert {[s 0 repl_backlog_histlen] < [expr 64 * 1024 + 16*1024]}
@@ -85,6 +101,8 @@ start_server {} {
     }
 
     test {Zero copy handles late ACKs gracefully} {
+        $primary config set tcp-zerocopy-min-write-size 0
+
         # Pause handling of error queue events to simulate slow client
         $primary debug pause-errqueue-events 1
 
@@ -113,6 +131,8 @@ start_server {} {
     }
 
     test {In-flight zerocopy writes are gracefully flushed when responsive replica is killed} {
+        $primary config set tcp-zerocopy-min-write-size 0
+
         # Pause handling of error queue events to simulate slow client
         $primary debug pause-errqueue-events 1
 
@@ -148,6 +168,8 @@ start_server {} {
     }
 
     test {In-flight zerocopy writes are forcefully closed when unresponsive replica is killed} {
+        $primary config set tcp-zerocopy-min-write-size 0
+
         # Pause handling of error queue events to simulate slow client
         $primary debug pause-errqueue-events 1
 
@@ -184,10 +206,8 @@ start_server {} {
     }
 
     test {Zero copy tracker grows and shrinks as needed} {
-        # Force enable zerocopy for all writes.
         $primary config set tcp-zerocopy-min-write-size 0
 
-        # Add an initial key to ensure our zero copy tracker is instantiated
         populate 1 "zerocopy_key:extra:" 1024 0
         set initial_zerocopy_mem [s 0 used_memory_zero_copy_tracking]
 
