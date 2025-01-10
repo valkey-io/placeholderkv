@@ -174,18 +174,15 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
     msg.msg_control = control;
     msg.msg_controllen = sizeof(control);
 
-    serverLog(LL_WARNING, "Handling zero copy messages");
 
     if (connRecvMsg(conn, &msg, MSG_ERRQUEUE) == -1) {
         if (errno == EAGAIN) {
-            serverLog(LL_WARNING, "No zero copy messages");
             return processed;
         }
         serverLog(LL_WARNING, "Got callback for error message but got recvmsg error: %s", strerror(errno));
         return processed;
     }
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-        serverLog(LL_WARNING, "Handling CMSG: len: %lu", cmsg->cmsg_len);
         if (cmsg->cmsg_level != SOL_IP || cmsg->cmsg_type != IP_RECVERR) {
             continue;
         }
@@ -206,7 +203,6 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
             zcp->active = 0;
             processed++;
         }
-        serverLog(LL_WARNING, "CMSG is zero copy for %u to %u", begin, end);
 
         /* Trim the front of the tracker up until the next outstanding write. */
         zeroCopyRecord *head = zeroCopyTrackerFront(tracker);
@@ -254,7 +250,6 @@ void processZeroCopyMessages(connection *conn) {
     serverAssert(c->zero_copy_tracker);
     zeroCopyTrackerProcessNotifications(c->zero_copy_tracker, conn);
     if (c->zero_copy_tracker->draining && c->zero_copy_tracker->len == 0) {
-        serverLog(LL_WARNING, "Done zcp draining on fd %d", conn->fd);
         c->zero_copy_tracker->draining = 0;
 
         /* Now, we can actually free the client. */

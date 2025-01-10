@@ -474,7 +474,6 @@ void feedReplicationBuffer(char *s, size_t len) {
             len -= copy;
             server.primary_repl_offset += copy;
             server.repl_backlog->histlen += copy;
-            serverLog(LL_WARNING, "adding new replica block of size %lu", size);
         }
         if (empty_backlog && raxSize(server.replicas_waiting_psync) > 0) {
             /* Increase refcount for pending replicas. */

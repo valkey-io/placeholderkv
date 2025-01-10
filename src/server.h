@@ -1112,22 +1112,6 @@ typedef struct zeroCopyTracker {
     int draining;
 } zeroCopyTracker;
 
-/* Tracking struct used to decremenet reference count of repl backlog block
- * once written to replica by the kernel. */
-typedef struct zeroCopyRecord {
-    replBufBlock *block;
-    int active;
-    int last_write_for_block;
-} zeroCopyRecord;
-
-typedef struct zeroCopyTracker {
-    zeroCopyRecord *records;
-    uint32_t start;
-    uint32_t len;
-    uint32_t capacity;
-    int draining;
-} zeroCopyTracker;
-
 typedef struct ClientPubSubData {
     dict *pubsub_channels;      /* channels a client is interested in (SUBSCRIBE) */
     dict *pubsub_patterns;      /* patterns a client is interested in (PSUBSCRIBE) */

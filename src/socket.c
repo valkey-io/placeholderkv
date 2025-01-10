@@ -516,7 +516,6 @@ int connRecvTimeout(connection *conn, long long ms) {
 }
 
 int connSetZeroCopy(connection *conn, int setting) {
-    serverLog(LL_NOTICE, "Setting zero copy to %d for fd %d", setting, conn->fd);
     return anetSetZeroCopy(NULL, conn->fd, setting);
 }
 

@@ -238,7 +238,6 @@ void installClientWriteHandler(client *c) {
  * If we fail and there is more data to write, compared to what the socket
  * buffers can hold, then we'll really install the handler. */
 void putClientInPendingWriteQueue(client *c) {
-    serverLog(LL_WARNING, "putClientInPendingWriteQueue %d", c->conn->fd);
     /* Schedule the client to write the output buffers to the socket only
      * if not already done and, for replicas, if the replica can actually receive
      * writes at this stage. */
@@ -254,7 +253,6 @@ void putClientInPendingWriteQueue(client *c) {
          * we'll not be able to write the whole reply at once. */
         c->flag.pending_write = 1;
         listLinkNodeHead(server.clients_pending_write, &c->clients_pending_write_node);
-        serverLog(LL_WARNING, "added to queue %d", c->conn->fd);
     }
 }
 
@@ -308,7 +306,6 @@ int prepareClientToWrite(client *c) {
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
     if (!clientHasPendingReplies(c)) putClientInPendingWriteQueue(c);
-    else serverLog(LL_WARNING, "already awaiting write on %d", c->conn->fd);
 
     /* Authorize the caller to queue in the output buffer of this client. */
     return C_OK;
@@ -1972,7 +1969,6 @@ void writeToReplica(client *c) {
                 ongoing_zero_copy_write->block = o;
                 ongoing_zero_copy_write->active = 1;
                 ongoing_zero_copy_write->last_write_for_block = 0;
-                serverLog(LL_WARNING, "Zero copy write #%u", c->zero_copy_tracker->start + c->zero_copy_tracker->len - 1);
                 connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
             }
         }
