@@ -48,7 +48,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 0
 
             populate 1 "with_zcp:" 1024 0
-            wait_for_sync $replica
+            wait_for_ofs_sync $replica
 
             assert {[s 0 used_memory_zero_copy_tracking] > 0}
         }
@@ -59,7 +59,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 10240
 
             populate 1 "no_zcp:" 1024 0
-            wait_for_sync $replica
+            wait_for_ofs_sync $replica
 
             assert_equal [s 0 zero_copy_writes_processed] $initial_zerocopy_writes
             assert_equal [s 0 zero_copy_writes_in_flight] 0
@@ -67,7 +67,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 0
 
             populate 1 "with_zcp:" 1024 0
-            wait_for_sync $replica
+            wait_for_ofs_sync $replica
 
             # In-flight zero copy writes should get their ACKs
             wait_for_condition 100 100 {
