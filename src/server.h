@@ -154,9 +154,9 @@ struct hdr_histogram;
 #define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
 #endif
 # ifdef HAVE_MSG_ZEROCOPY
-# define CONIFG_DEFAULT_TCP_TX_ZEROCOPY 1
+# define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 1
 # else
-# define CONIFG_DEFAULT_TCP_TX_ZEROCOPY 0
+# define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 0
 # endif
 #define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10*1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
 #define ZERO_COPY_MAX_DRAIN_TIME_SECONDS 3 /* Maximum time a connection using zero copy
