@@ -131,6 +131,7 @@ static int connSocketConnect(connection *conn,
 static void connSocketShutdown(connection *conn) {
     if (conn->fd == -1) return;
 
+    conn->state = CONN_STATE_SHUTDOWN;
     shutdown(conn->fd, SHUT_RDWR);
 }
 
@@ -493,6 +494,10 @@ int connRecvTimeout(connection *conn, long long ms) {
 int connSetZeroCopy(connection *conn, int setting) {
     serverLog(LL_NOTICE, "Setting zero copy to %d for fd %d", setting, conn->fd);
     return anetSetZeroCopy(NULL, conn->fd, setting);
+}
+
+int connSetForceClose(connection *conn, int enable) {
+    return anetSetForceClose(NULL, conn->fd, enable);
 }
 
 int RedisRegisterConnectionTypeSocket(void) {

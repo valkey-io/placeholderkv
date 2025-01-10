@@ -473,6 +473,7 @@ void feedReplicationBuffer(char *s, size_t len) {
             len -= copy;
             server.primary_repl_offset += copy;
             server.repl_backlog->histlen += copy;
+            serverLog(LL_WARNING, "adding new replica block of size %lu", size);
         }
         if (empty_backlog && raxSize(server.replicas_waiting_psync) > 0) {
             /* Increase refcount for pending replicas. */
@@ -4739,7 +4740,7 @@ void replicationCron(void) {
     if (listLength(server.repl_buffer_blocks) > 0) {
         replBufBlock *o = listNodeValue(listFirst(server.repl_buffer_blocks));
         serverAssert(o->refcount > 0 &&
-                     o->refcount <= (int)listLength(server.replicas) + 1 + (int)raxSize(server.replicas_waiting_psync) + server.draining_zero_copy_connections);
+                     o->refcount <= (int)listLength(server.replicas) + 1 + (int)raxSize(server.replicas_waiting_psync));
     }
 
     /* Refresh the number of replicas with lag <= min-replicas-max-lag. */

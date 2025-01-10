@@ -262,6 +262,7 @@ void installClientWriteHandler(client *c) {
  * If we fail and there is more data to write, compared to what the socket
  * buffers can hold, then we'll really install the handler. */
 void putClientInPendingWriteQueue(client *c) {
+    serverLog(LL_WARNING, "putClientInPendingWriteQueue %d", c->conn->fd);
     /* Schedule the client to write the output buffers to the socket only
      * if not already done and, for replicas, if the replica can actually receive
      * writes at this stage. */
@@ -275,6 +276,7 @@ void putClientInPendingWriteQueue(client *c) {
          * we'll not be able to write the whole reply at once. */
         c->flag.pending_write = 1;
         listLinkNodeHead(server.clients_pending_write, &c->clients_pending_write_node);
+        serverLog(LL_WARNING, "added to queue %d", c->conn->fd);
     }
 }
 
@@ -316,11 +318,13 @@ int prepareClientToWrite(client *c) {
      * is set. */
     if (c->flag.primary && !c->flag.primary_force_reply) return C_ERR;
 
-    if (!c->conn) return C_ERR; /* Fake client for AOF loading. */
+    /* Don't write to fake clients for AOF loading or shutdown clients. */
+    if (!c->conn || c->conn->state == CONN_STATE_SHUTDOWN) return C_ERR;
 
     /* Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data). */
     if (!clientHasPendingReplies(c)) putClientInPendingWriteQueue(c);
+    else serverLog(LL_WARNING, "already awaiting write on %d", c->conn->fd);
 
     /* Authorize the caller to queue in the output buffer of this client. */
     return C_OK;
@@ -1576,16 +1580,6 @@ void unlinkClient(client *c) {
         } else if (c->flag.repl_rdb_channel) {
             shutdown(c->conn->fd, SHUT_RDWR);
         }
-        if (c->zero_copy_tracker && c->zero_copy_tracker->len > 0) {
-            /* At this point, any existing in bound TCP data should be dropped, so we make the
-             * kernel forcibily reset the connection now. */
-            struct linger l = {
-                .l_onoff = 1,
-                .l_linger = 0
-            };
-            setsockopt(c->conn->fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
-        }
-
         connClose(c->conn);
         c->conn = NULL;
     }
@@ -1688,7 +1682,7 @@ void freeClient(client *c) {
     waitForClientIO(c);
 
     /* For connected clients, call the disconnection event of modules hooks. */
-    if (c->conn) {
+    if (c->conn && c->conn->state != CONN_STATE_SHUTDOWN) {
         moduleFireServerEvent(VALKEYMODULE_EVENT_CLIENT_CHANGE, VALKEYMODULE_SUBEVENT_CLIENT_CHANGE_DISCONNECTED, c);
     }
 
@@ -1719,6 +1713,22 @@ void freeClient(client *c) {
             c->flag.close_asap = 0;
             c->flag.close_after_reply = 0;
             replicationCachePrimary(c);
+            return;
+        }
+    }
+
+    /* For zero copy connections with active writes, we need to give the kernel
+     * some time to finish the writes it already has in flight. We will
+     * continue to monitor these clients and terminate them if this takes too
+     * long (e.g. if the receiver is not ACKing the FIN packet we send) */
+    if (c->zero_copy_tracker && c->zero_copy_tracker->len > 0) {
+        if (c->zero_copy_tracker->draining) {
+            if (c->last_interaction + ZERO_COPY_MAX_DRAIN_TIME_SECONDS > server.unixtime) {
+                /* Still draining */
+                return;
+            }
+        } else {
+            zeroCopyStartDraining(c);
             return;
         }
     }
@@ -2022,7 +2032,7 @@ void writeToReplica(client *c) {
         /* Send current block if it is not fully sent. */
         if (o->used > c->ref_block_pos) {
             size_t data_len = o->used - c->ref_block_pos;
-            int use_zerocopy = shouldUseZeroCopy(data_len);
+            int use_zerocopy = shouldUseZeroCopy(c->conn, data_len);
             if (use_zerocopy) {
                 /* Lazily enable zero copy at the socket level only on first use */
                 if (!c->zero_copy_tracker) {

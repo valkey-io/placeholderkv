@@ -145,6 +145,11 @@ struct hdr_histogram;
 #define DEFAULT_WAIT_BEFORE_RDB_CLIENT_FREE 60      /* Grace period in seconds for replica main \
                                                      * channel to establish psync. */
 #define LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT 100 /* Default: 0.1 seconds */
+#define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10*1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
+#define ZERO_COPY_MAX_DRAIN_TIME_SECONDS 3 /* Maximum time a connection using zero copy
+                                            * is kept alive for the purpose of flushing
+                                            * pending writes. If not flushed in this time,
+                                            * force close the connection with a RST packet. */
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -1251,6 +1256,7 @@ typedef struct zeroCopyTracker {
     uint32_t start;
     uint32_t len;
     uint32_t capacity;
+    int draining;
 } zeroCopyTracker;
 
 typedef struct client {
@@ -1548,6 +1554,7 @@ struct serverMemOverhead {
         size_t overhead_ht_main;
         size_t overhead_ht_expires;
     } *db;
+    size_t zero_copy_tracking;
 };
 
 /* Replication error behavior determines the replica behavior
@@ -1867,6 +1874,10 @@ struct valkeyServer {
     long long stat_client_outbuf_limit_disconnections; /* Total number of clients reached output buf length limit */
     long long stat_total_prefetch_entries;             /* Total number of prefetched dict entries */
     long long stat_total_prefetch_batches;             /* Total number of prefetched batches */
+    long long stat_zero_copy_writes_processed;         /* Total number of writes using zero copy */
+    long long stat_zero_copy_writes_in_flight;         /* Total number of writes using zero copy that are not yet finished by the kernel */
+    long long stat_zero_copy_clients_force_closed;     /* Total number of clients we force closed without finishing draining. */
+    size_t stat_zero_copy_tracking_memory;             /* Memory usage for zero copy related tracking */
     /* The following two are used to track instantaneous metrics, like
      * number of operations per second, network traffic. */
     struct {
@@ -2112,8 +2123,9 @@ struct valkeyServer {
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
     /* TCP Zero Copy */
     int tcp_tx_zerocopy; /* If true, use zero copy for writes when possible. */
-    int draining_zero_copy_connections; /* Count of connections that are to be
-                                         * closed once fully drained.*/
+    int tcp_zerocopy_min_write_size; /* Minimum size for a write before we go thorugh zerocopy. */
+    int debug_zerocopy_bypass_loopback_check; /* Used to test zerocopy on loopback connections */
+    unsigned int draining_clients;
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
     int get_ack_from_replicas;  /* If true we send REPLCONF GETACK. */

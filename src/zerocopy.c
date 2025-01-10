@@ -3,7 +3,8 @@
 
 #ifndef HAVE_MSG_ZEROCOPY
 
-int shouldUseZeroCopy(size_t len) {
+int shouldUseZeroCopy(connection *conn, size_t len) {
+    UNUSED(conn);
     UNUSED(len);
     return 0;
 }
@@ -41,6 +42,9 @@ zeroCopyRecord *zeroCopyTrackerEnd(zeroCopyTracker *tracker) {
 void freeZeroCopyTracker(zeroCopyTracker *tracker) {
     UNUSED(tracker);
 }
+void zeroCopyStartDraining(client *c) {
+    UNUSED(c);
+}
 void processZeroCopyMessages(connection *conn) {
     UNUSED(conn);
 }
@@ -49,8 +53,11 @@ void processZeroCopyMessages(connection *conn) {
 
 #include <linux/errqueue.h>
 
-int shouldUseZeroCopy(size_t len) {
-    return server.tcp_tx_zerocopy && len >= ZERO_COPY_MIN_WRITE_SIZE;
+int shouldUseZeroCopy(connection *conn, size_t len) {
+    /* Only writes that are over a given size, and not to a loopback
+     * connection, will see improvement with zerocopy*/
+    return server.tcp_tx_zerocopy && len >= (size_t) server.tcp_zerocopy_min_write_size &&
+           (!connIsLocal(conn) || server.debug_zerocopy_bypass_loopback_check);
 }
 
 ssize_t zeroCopyWriteToConn(connection *conn, char* data, size_t len) {
@@ -62,7 +69,10 @@ zeroCopyTracker *createZeroCopyTracker() {
     result->start = 0;
     result->len = 0;
     result->capacity = ZERO_COPY_RECORD_TRACKER_INIT_SIZE;
-    result->records = (zeroCopyRecord *) zmalloc(sizeof(zeroCopyRecord) * ZERO_COPY_RECORD_TRACKER_INIT_SIZE);
+    size_t records_size = sizeof(zeroCopyRecord) * ZERO_COPY_RECORD_TRACKER_INIT_SIZE;
+    result->records = (zeroCopyRecord *) zmalloc(records_size);
+    result->draining = 0;
+    server.stat_zero_copy_tracking_memory += sizeof(zeroCopyTracker) + records_size;
     return result;
 }
 
@@ -92,18 +102,22 @@ zeroCopyRecord *zeroCopyTrackerFront(zeroCopyTracker *tracker) {
 void zeroCopyTrackerResize(zeroCopyTracker *tracker, uint32_t target_capacity) {
     zeroCopyRecord *old = tracker->records;
     uint32_t old_capacity = tracker->capacity;
-    tracker->records = zmalloc(target_capacity * sizeof(zeroCopyRecord));
+    size_t new_size = target_capacity * sizeof(zeroCopyRecord);
+    tracker->records = zmalloc(new_size);
     /* Note this loop needs to be resilient to wraparound. */
     for (uint32_t i = tracker->start; i != tracker->start + tracker->len; i++) {
         tracker->records[i % target_capacity] = old[i % old_capacity];
     }
     tracker->capacity = target_capacity;
     zfree(old);
+    server.stat_zero_copy_tracking_memory -= old_capacity * sizeof(zeroCopyRecord);
+    server.stat_zero_copy_tracking_memory += new_size;
 }
 
 void zeroCopyTrackerPop(zeroCopyTracker *tracker) {
     tracker->start++;
     tracker->len--;
+    server.stat_zero_copy_writes_in_flight--;
     if (tracker->capacity > ZERO_COPY_RECORD_TRACKER_INIT_SIZE && tracker->len <= tracker->capacity * ZERO_COPY_DOWNSIZE_UTILIZATION_WATERMARK) {
         zeroCopyTrackerResize(tracker, tracker->capacity / 2);
     }
@@ -113,6 +127,8 @@ zeroCopyRecord *zeroCopyTrackerExtend(zeroCopyTracker *tracker) {
     if (tracker->len == tracker->capacity) {
         zeroCopyTrackerResize(tracker, tracker->capacity * 2);
     }
+    server.stat_zero_copy_writes_processed++;
+    server.stat_zero_copy_writes_in_flight++;
     return zeroCopyTrackerGet(tracker, tracker->start + tracker->len++);
 }
 
@@ -135,16 +151,21 @@ void freeZeroCopyTracker(zeroCopyTracker *tracker) {
     }
     incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
     zfree(tracker->records);
+
+    server.stat_zero_copy_tracking_memory -= tracker->capacity * sizeof(zeroCopyRecord);
+    server.stat_zero_copy_tracking_memory -= sizeof(zeroCopyTracker);
+
     zfree(tracker);
 }
 
-void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *conn) {
+int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *conn) {
     struct msghdr msg;
     memset(&msg, 0, sizeof(msg));
     struct iovec iov;
     char control[48 * 10];
     struct cmsghdr *cmsg;
     struct sock_extended_err *serr;
+    int processed = 0;
 
     iov.iov_base = NULL;
     iov.iov_len = 0;
@@ -158,10 +179,10 @@ void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *c
     if (connRecvMsg(conn, &msg, MSG_ERRQUEUE) == -1) {
         if (errno == EAGAIN) {
             serverLog(LL_WARNING, "No zero copy messages");
-            return;
+            return processed;
         }
         serverLog(LL_WARNING, "Got callback for error message but got recvmsg error: %s", strerror(errno));
-        return;
+        return processed;
     }
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
         serverLog(LL_WARNING, "Handling CMSG: len: %lu", cmsg->cmsg_len);
@@ -183,6 +204,7 @@ void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *c
         for (uint32_t i = begin; i != end + 1; i++) {
             zeroCopyRecord *zcp = zeroCopyTrackerGet(tracker, i);
             zcp->active = 0;
+            processed++;
         }
         serverLog(LL_WARNING, "CMSG is zero copy for %u to %u", begin, end);
 
@@ -201,18 +223,7 @@ void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *c
         if (tracker->len == 0)
             connSetErrorQueueHandler(conn, NULL);
     }
-}
-
-void zeroCopyDrainConnection(connection *conn) {
-    serverLog(LL_WARNING, "Handling drain callback on fd %d", conn->fd);
-    zeroCopyTracker *tracker = connGetPrivateData(conn);
-    zeroCopyTrackerProcessNotifications(tracker, conn);
-    if (tracker->len == 0) {
-        serverLog(LL_WARNING, "Done zcp draining on fd %d", conn->fd);
-        connClose(conn);
-        freeZeroCopyTracker(tracker);
-        server.draining_zero_copy_connections--;
-    }
+    return processed;
 }
 
 /* With zero copy enabled, connection teardown will attempt to cancel any unsent packets and
@@ -220,24 +231,36 @@ void zeroCopyDrainConnection(connection *conn) {
  * are already sent and waiting ACK and won't be freed in case of retransmission. This means we
  * cannot immediately drop all references on teardown, and instead have to wait for the tracker's
  * length to hit zero. */
-void zeroCopyStartDraining(zeroCopyTracker *tracker, connection *conn) {
-    // zeroCopyDrainingConnection *to_drain = (zeroCopyDrainingConnection*) zmalloc(sizeof(zeroCopyDrainingConnection));
-    // to_drain->conn = conn;
-    // to_drain->tracker = tracker;
-    // listAddNodeHead(server.draining_zero_copy_connections, to_drain);
+void zeroCopyStartDraining(client *c) {
+    serverAssert(c->zero_copy_tracker && !c->zero_copy_tracker->draining);
+    connShutdown(c->conn);
+
+    /* We will use this to determine when the client is idle, to forcibly close the connection */
+    c->last_interaction = server.unixtime;
 
     /* From this point on, the connection only handles the outgoing zero copy notifications. */
-    connSetWriteHandler(conn, NULL);
-    connSetReadHandler(conn, NULL);
-    connSetErrorQueueHandler(conn, zeroCopyDrainConnection);
-    connSetPrivateData(conn, (void *) tracker);
-    server.draining_zero_copy_connections++;
-    zeroCopyDrainConnection(conn);
+    connSetWriteHandler(c->conn, NULL);
+    connSetReadHandler(c->conn, NULL);
+    connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
+    c->zero_copy_tracker->draining = 1;
+    server.draining_clients++;
+
+    /* Optimistically try to process the error queue in case we can finish it now. */
+    processZeroCopyMessages(c->conn);
 }
 
 void processZeroCopyMessages(connection *conn) {
     client * c = (client *) connGetPrivateData(conn);
+    serverAssert(c->zero_copy_tracker);
     zeroCopyTrackerProcessNotifications(c->zero_copy_tracker, conn);
+    if (c->zero_copy_tracker->draining && c->zero_copy_tracker->len == 0) {
+        serverLog(LL_WARNING, "Done zcp draining on fd %d", conn->fd);
+        c->zero_copy_tracker->draining = 0;
+
+        /* Now, we can actually free the client. */
+        freeClient(c);
+        server.draining_clients--;
+    }
 }
 
 #endif

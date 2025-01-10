@@ -531,15 +531,12 @@ int aeWait(int fd, int mask, long long milliseconds) {
     pfd.fd = fd;
     if (mask & AE_READABLE) pfd.events |= POLLIN;
     if (mask & AE_WRITABLE) pfd.events |= POLLOUT;
-    if (mask & AE_ERROR_QUEUE) pfd.events |= POLLIN;
+    if (mask & AE_ERROR_QUEUE) pfd.events |= POLLERR;
 
     if ((retval = poll(&pfd, 1, milliseconds)) == 1) {
         if (pfd.revents & POLLIN) retmask |= AE_READABLE;
         if (pfd.revents & POLLOUT) retmask |= AE_WRITABLE;
-        if (pfd.revents & POLLERR) {
-            retmask |= AE_WRITABLE;
-            retmask |= AE_ERROR_QUEUE;
-        }
+        if (pfd.revents & POLLERR) retmask |= AE_ERROR_QUEUE;
         if (pfd.revents & POLLHUP) retmask |= AE_WRITABLE;
         return retmask;
     } else {

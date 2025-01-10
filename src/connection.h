@@ -51,6 +51,7 @@ typedef enum {
     CONN_STATE_CONNECTING,
     CONN_STATE_ACCEPTING,
     CONN_STATE_CONNECTED,
+    CONN_STATE_SHUTDOWN,
     CONN_STATE_CLOSED,
     CONN_STATE_ERROR
 } ConnectionState;
@@ -397,6 +398,7 @@ int connKeepAlive(connection *conn, int interval);
 int connSendTimeout(connection *conn, long long ms);
 int connRecvTimeout(connection *conn, long long ms);
 int connSetZeroCopy(connection *conn, int setting);
+int connSetForceClose(connection *conn, int enable);
 
 /* Get cert for the secure connection */
 static inline sds connGetPeerCert(connection *conn) {

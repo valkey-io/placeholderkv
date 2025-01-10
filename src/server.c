@@ -896,6 +896,18 @@ int clientsCronResizeOutputBuffer(client *c, mstime_t now_ms) {
     return 0;
 }
 
+int clientsCronHandleZeroCopyDraining(client *c, mstime_t now_ms) {
+    serverAssert(c->zero_copy_tracker->draining);
+    if (now_ms / 1000 > (c->last_interaction + ZERO_COPY_MAX_DRAIN_TIME_SECONDS)) {
+        server.stat_zero_copy_clients_force_closed++;
+        connSetForceClose(c->conn, 1);
+        freeClient(c);
+        server.draining_clients--;
+        return 1;
+    }
+    return 0;
+}
+
 /* This function is used in order to track clients using the biggest amount
  * of memory in the latest few seconds. This way we can provide such information
  * in the INFO output (clients section), without having to do an O(N) scan for
@@ -1106,6 +1118,7 @@ void clientsCron(void) {
         /* The following functions do different service checks on the client.
          * The protocol is that they return non-zero if the client was
          * terminated. */
+        if (c->zero_copy_tracker && c->zero_copy_tracker->draining && clientsCronHandleZeroCopyDraining(c, now)) continue;
         if (clientsCronHandleTimeout(c, now)) continue;
         if (clientsCronResizeQueryBuffer(c)) continue;
         if (clientsCronResizeOutputBuffer(c, now)) continue;
@@ -2630,6 +2643,8 @@ void resetServerStats(void) {
     server.stat_reply_buffer_expands = 0;
     memset(server.duration_stats, 0, sizeof(durationStats) * EL_DURATION_TYPE_NUM);
     server.el_cmd_cnt_max = 0;
+    server.stat_zero_copy_writes_processed = server.stat_zero_copy_writes_in_flight;
+    server.stat_zero_copy_clients_force_closed = 0;
     lazyfreeResetStats();
 }
 
@@ -2683,7 +2698,8 @@ void initServer(void) {
     server.tracking_pending_keys = listCreate();
     server.pending_push_messages = listCreate();
     server.clients_waiting_acks = listCreate();
-    server.draining_zero_copy_connections = 0;
+    server.debug_zerocopy_bypass_loopback_check = 0;
+    server.draining_clients = 0;
     server.get_ack_from_replicas = 0;
     server.paused_actions = 0;
     memset(server.client_pause_per_purpose, 0, sizeof(server.client_pause_per_purpose));
@@ -2773,6 +2789,7 @@ void initServer(void) {
     server.rdb_last_load_keys_loaded = 0;
     server.dirty = 0;
     server.crashed = 0;
+    server.stat_zero_copy_writes_in_flight = 0;
     resetServerStats();
     /* A few stats we don't want to reset: server startup time, and peak mem. */
     server.stat_starttime = time(NULL);
@@ -5612,7 +5629,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "clients_in_timeout_table:%llu\r\n", (unsigned long long)raxSize(server.clients_timeout_table),
                 "total_watched_keys:%lu\r\n", watched_keys,
                 "total_blocking_keys:%lu\r\n", blocking_keys,
-                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
+                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey,
+                "draining_clients:%d\r\n", server.draining_clients));
     }
 
     /* Memory */
@@ -5707,7 +5725,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "mem_overhead_db_hashtable_rehashing:%zu\r\n", mh->overhead_db_hashtable_rehashing,
                 "active_defrag_running:%d\r\n", server.active_defrag_running,
                 "lazyfree_pending_objects:%zu\r\n", lazyfreeGetPendingObjectsCount(),
-                "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount()));
+                "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount(),
+                "used_memory_zero_copy_tracking:%zu\r\n", mh->zero_copy_tracking));
         freeMemoryOverheadData(mh);
     }
 
@@ -5876,7 +5895,10 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
                 "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
-                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
+                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
+                "zero_copy_writes_processed:%lld\r\n",server.stat_zero_copy_writes_processed,
+                "zero_copy_writes_in_flight:%lld\r\n",server.stat_zero_copy_writes_in_flight,
+                "zero_copy_clients_force_closed:%lld\r\n",server.stat_zero_copy_clients_force_closed));
         info = genValkeyInfoStringACLStats(info);
     }
 

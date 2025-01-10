@@ -100,6 +100,13 @@
 #endif
 #endif
 
+/* SO_LINGER. */
+#ifdef __linux__
+#if defined(SO_LINGER)
+#define HAVE_SO_LINGER 1
+#endif
+#endif
+
 /* Test for polling API */
 #ifdef __linux__
 #define HAVE_EPOLL 1

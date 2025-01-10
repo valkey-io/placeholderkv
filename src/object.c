@@ -1231,6 +1231,9 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
     mh->dataset_perc = (float)mh->dataset * 100 / net_usage;
     mh->bytes_per_key = mh->total_keys ? (mh->dataset / mh->total_keys) : 0;
 
+    if (server.tcp_tx_zerocopy)
+        mh->zero_copy_tracking = server.stat_zero_copy_tracking_memory;
+
     return mh;
 }
 
