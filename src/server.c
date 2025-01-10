@@ -2744,6 +2744,7 @@ void initServer(void) {
     server.pending_push_messages = listCreate();
     server.clients_waiting_acks = listCreate();
     server.debug_zerocopy_bypass_loopback_check = 0;
+    server.debug_pause_errqueue_events = 0;
     server.draining_clients = 0;
     server.get_ack_from_replicas = 0;
     server.paused_actions = 0;

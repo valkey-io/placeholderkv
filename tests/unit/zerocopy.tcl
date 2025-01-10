@@ -85,19 +85,16 @@ start_server {} {
     }
 
     test {Zero copy handles late ACKs gracefully} {
-        # Pause the replica process
-        pause_process $replica_pid
+        # Pause handling of error queue events to simulate slow client
+        $primary debug pause-errqueue-events 1
 
-        # Keep filling until we see the in flight zero copy writes is greater than 0
-        fill_until_zerocopy_acks_stop $primary
-
-        # Add an additional 1 MiB, which should grow the repl backlog beyond the max
-        populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
-
+        # Write 1 MiB, which should grow the repl backlog beyond the max
+        populate 1 "zerocopy_key:big:" [expr 1024 * 1024] 0
+        assert {[s 0 zero_copy_writes_in_flight] > 0}
         assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
 
-        # Resume the replica process
-        resume_process $replica_pid
+        # Resume the error queue events
+        $primary debug pause-errqueue-events 0
         wait_for_ofs_sync $primary $replica
 
         # In-flight zero copy writes should get their ACKs
@@ -116,12 +113,12 @@ start_server {} {
     }
 
     test {In-flight zerocopy writes are gracefully flushed when responsive replica is killed} {
-        # Accumulate some in flight writes
-        pause_process $replica_pid
-        fill_until_zerocopy_acks_stop $primary
+        # Pause handling of error queue events to simulate slow client
+        $primary debug pause-errqueue-events 1
 
-        # Add an additional 1 MiB, which should grow the repl backlog beyond the max
+        # Write 1 MiB, which should grow the repl backlog beyond the max
         populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
+        assert {[s 0 zero_copy_writes_in_flight] > 0}
         assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
 
         # Kill the replica client
@@ -130,8 +127,8 @@ start_server {} {
         # Should now be draining
         assert_equal [s 0 draining_clients] 1
 
-        # Resume the replica, and the draining should end gracefully
-        resume_process $replica_pid
+        # Unpause the error queue and the draining should end gracefully
+        $primary debug pause-errqueue-events 0
         wait_for_condition 100 100 {
             [s 0 draining_clients] eq 0
         } else {
@@ -151,12 +148,12 @@ start_server {} {
     }
 
     test {In-flight zerocopy writes are forcefully closed when unresponsive replica is killed} {
-        # Accumulate some in flight writes
-        pause_process $replica_pid
-        fill_until_zerocopy_acks_stop $primary
+        # Pause handling of error queue events to simulate slow client
+        $primary debug pause-errqueue-events 1
 
-        # Add an additional 1 MiB, which should grow the repl backlog beyond the max
+        # Write 1 MiB, which should grow the repl backlog beyond the max
         populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
+        assert {[s 0 zero_copy_writes_in_flight] > 0}
         assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
 
         # Kill the replica client
@@ -165,7 +162,7 @@ start_server {} {
         # Should now be draining
         assert_equal [s 0 draining_clients] 1
 
-        # Keep the replica paused, the primary should force close it after some time
+        # Keep the error queue paused, the primary should force close it after some time
         wait_for_condition 100 100 {
             [s 0 draining_clients] eq 0
         } else {
@@ -180,14 +177,14 @@ start_server {} {
             fail "Backlog should eventually be trimmed back to repl-backlog-size"
         }
 
-        resume_process $replica_pid
+        $primary debug pause-errqueue-events 0
 
         # Replica should be able to resync
         wait_for_ofs_sync $primary $replica
     }
 
     test {Zero copy tracker grows and shrinks as needed} {
-        # Force enable zerocopy for all writes to force many tracking entries.
+        # Force enable zerocopy for all writes.
         $primary config set tcp-zerocopy-min-write-size 0
 
         # Add an initial key to ensure our zero copy tracker is instantiated
@@ -195,13 +192,25 @@ start_server {} {
         set initial_zerocopy_mem [s 0 used_memory_zero_copy_tracking]
 
         # Accumulate a lot of in flight writes
-        pause_process $replica_pid
-        fill_until_zerocopy_acks_stop $primary
-        fill_until_zerocopy_in_flight_greater_than $primary 1024 1 1
+        $primary debug pause-errqueue-events 1
+        set success 0
+        for {set i 0} {$i < 1000000} {incr i} {
+            if {[status $primary zero_copy_writes_in_flight] <= 1024} {
+                populate 1 "zerocopy_key:small-$i:" 1 0
+            } else {
+                set success 1
+                break
+            }
+        }
+        if {$success == 0} {
+            fail "After one million writes, still don't have 1025 in flight zero copy writes"
+        }
+
+        # At 1025 in flight writes, our tracking buffer should have grown
         assert {[s 0 used_memory_zero_copy_tracking] > $initial_zerocopy_mem}
 
         # Flush the writes
-        resume_process $replica_pid
+        $primary debug pause-errqueue-events 0
         wait_for_condition 100 100 {
             [s 0 zero_copy_writes_in_flight] == 0
         } else {

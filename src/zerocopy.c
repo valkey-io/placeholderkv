@@ -240,9 +240,6 @@ void zeroCopyStartDraining(client *c) {
     connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
     c->zero_copy_tracker->draining = 1;
     server.draining_clients++;
-
-    /* Optimistically try to process the error queue in case we can finish it now. */
-    processZeroCopyMessages(c->conn);
 }
 
 void processZeroCopyMessages(connection *conn) {

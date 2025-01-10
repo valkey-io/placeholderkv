@@ -309,7 +309,7 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
 
     int call_write = (mask & AE_WRITABLE) && conn->write_handler;
     int call_read = (mask & AE_READABLE) && conn->read_handler;
-    int call_error_queue = (mask & AE_ERROR_QUEUE) && conn->error_queue_handler;
+    int call_error_queue = (mask & AE_ERROR_QUEUE) && conn->error_queue_handler && !server.debug_pause_errqueue_events;
 
     if (call_error_queue) {
         if (!callHandler(conn, conn->error_queue_handler)) return;

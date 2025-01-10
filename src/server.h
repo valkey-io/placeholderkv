@@ -2001,6 +2001,7 @@ struct valkeyServer {
     int tcp_tx_zerocopy; /* If true, use zero copy for writes when possible. */
     int tcp_zerocopy_min_write_size; /* Minimum size for a write before we go through zerocopy. */
     int debug_zerocopy_bypass_loopback_check; /* Used to test zerocopy on loopback connections */
+    int debug_pause_errqueue_events; /* Used to pause zerocopy notifications */
     unsigned int draining_clients;
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
