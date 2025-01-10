@@ -31,7 +31,7 @@ start_server {} {
     set replica_port [srv -1 port]
 
     # Only test if zerocopy is supported.
-    if {[lindex [r config get tcp-tx-zerocopy] 1] == "yes"} {
+    if {[lindex [$primary config get tcp-tx-zerocopy] 1] == "yes"} {
         $primary debug zerocopy-for-loopback 1
         $primary config set repl-timeout 1200 ;# 20 minutes (for valgrind and slow machines)
         $replica config set repl-timeout 1200 ;# 20 minutes (for valgrind and slow machines)
@@ -249,6 +249,8 @@ start_server {} {
             # Buffer should shrink back to original size
             assert_equal [s 0 used_memory_zero_copy_tracking] $initial_zerocopy_mem
         }
+    } else {
+        if {$::verbose} { puts "Skipping zero copy tests." }
     }
 }
 }
