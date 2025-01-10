@@ -1,24 +1,3 @@
-proc fill_until_zerocopy_in_flight_greater_than {primary count populate_count populate_size} {
-    set i 0
-    while 1 {
-        if {[expr $i * $populate_count * $populate_size] > [expr 10 * 1024 * 1024 * 1024]} {
-            # We wrote 10 GiB of data. Give up now.
-            fail "After 10 GiB of data, still don't have $count in flight zero copy writes"
-        }
-        incr i
-        if {[status $primary zero_copy_writes_in_flight] <= $count} {
-            populate $populate_count "zerocopy_key:$i:" $populate_size 0
-        } else {
-            break
-        }
-    }
-}
-
-proc fill_until_zerocopy_acks_stop {primary} {
-    # Fill using batches of ~1MiB
-    fill_until_zerocopy_in_flight_greater_than $primary 0 103 10240
-}
-
 start_server {tags {"repl zerocopy external:skip"}} {
 start_server {} {
     set primary [srv 0 client]
@@ -48,7 +27,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 0
 
             populate 1 "with_zcp:" 1024 0
-            wait_for_ofs_sync $replica
+            wait_for_ofs_sync $primary $replica
 
             assert {[s 0 used_memory_zero_copy_tracking] > 0}
         }
@@ -59,7 +38,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 10240
 
             populate 1 "no_zcp:" 1024 0
-            wait_for_ofs_sync $replica
+            wait_for_ofs_sync $primary $replica
 
             assert_equal [s 0 zero_copy_writes_processed] $initial_zerocopy_writes
             assert_equal [s 0 zero_copy_writes_in_flight] 0
@@ -67,7 +46,7 @@ start_server {} {
             $primary config set tcp-zerocopy-min-write-size 0
 
             populate 1 "with_zcp:" 1024 0
-            wait_for_ofs_sync $replica
+            wait_for_ofs_sync $primary $replica
 
             # In-flight zero copy writes should get their ACKs
             wait_for_condition 100 100 {
