@@ -6,7 +6,7 @@ if {$::singledb} {
     set ::dbnum 9
 }
 
-start_server {tags {"cli"}} {
+start_server {tags {"cli logreqres:skip"}} {
     proc open_cli {{opts ""} {infile ""}} {
         if { $opts == "" } {
             set opts "-n $::dbnum"
