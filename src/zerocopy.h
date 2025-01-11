@@ -15,9 +15,6 @@ zeroCopyRecord *zeroCopyTrackerFront(zeroCopyTracker *tracker);
 void zeroCopyTrackerPop(zeroCopyTracker *tracker);
 zeroCopyRecord *zeroCopyTrackerExtend(zeroCopyTracker *tracker);
 zeroCopyRecord *zeroCopyTrackerEnd(zeroCopyTracker *tracker);
-
-/* When connections are closed, they may leave orphan zero copy records that
- * are still in use by the kernel. */
 void zeroCopyStartDraining(client *c);
 
 /* Callback for when there is a new message on the connection's message queue.

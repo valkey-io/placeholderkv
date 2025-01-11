@@ -110,7 +110,7 @@ start_server {} {
             }
         }
 
-        test {In-flight zerocopy writes are gracefully flushed when responsive replica is killed} {
+        test {In-flight zerocopy writes are gracefully flushed when replica is killed} {
             $primary config set tcp-zerocopy-min-write-size 0
 
             # Pause handling of error queue events to simulate slow client
@@ -137,7 +137,6 @@ start_server {} {
             } else {
                 fail "Client never finished draining"
             }
-            assert_equal [s 0 zero_copy_clients_force_closed] 0
 
             # Backlog should be trimmed to repl-backlog-size (plus up to PROTO_REPLY_CHUNK_BYTES/16KiB)
             wait_for_condition 100 100 {
@@ -145,48 +144,6 @@ start_server {} {
             } else {
                 fail "Backlog should eventually be trimmed back to repl-backlog-size"
             }
-
-            # Replica should be able to resync
-            resume_process $replica_pid
-            wait_for_ofs_sync $primary $replica
-        }
-
-        test {In-flight zerocopy writes are forcefully closed when unresponsive replica is killed} {
-            $primary config set tcp-zerocopy-min-write-size 0
-
-            # Pause handling of error queue events to simulate slow client
-            $primary debug pause-errqueue-events 1
-
-            # Pause the replica to ensure it doesn't attempt reconnect
-            pause_process $replica_pid
-
-            # Write 1 MiB, which should grow the repl backlog beyond the max
-            populate 1 "zerocopy_key:extra:" [expr 1024 * 1024] 0
-            assert {[s 0 zero_copy_writes_in_flight] > 0}
-            assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
-
-            # Kill the replica client
-            assert {[$primary client kill type replica] > 0}
-
-            # Should now be draining
-            assert_equal [s 0 draining_clients] 1
-
-            # Keep the error queue paused, the primary should force close it after some time
-            wait_for_condition 100 100 {
-                [s 0 draining_clients] eq 0
-            } else {
-                fail "Client never finished draining"
-            }
-            assert_equal [s 0 zero_copy_clients_force_closed] 1
-
-            # Backlog should be trimmed to repl-backlog-size (plus up to PROTO_REPLY_CHUNK_BYTES/16KiB)
-            wait_for_condition 100 100 {
-                [s 0 repl_backlog_histlen] < [expr 64*1024 + 16*1024]
-            } else {
-                fail "Backlog should eventually be trimmed back to repl-backlog-size"
-            }
-
-            $primary debug pause-errqueue-events 0
 
             # Replica should be able to resync
             resume_process $replica_pid

@@ -1683,20 +1683,21 @@ void freeClient(client *c) {
         }
     }
 
-    /* For zero copy connections with active writes, we need to give the kernel
-     * some time to finish the writes it already has in flight. We will
-     * continue to monitor these clients and terminate them if this takes too
-     * long (e.g. if the receiver is not ACKing the FIN packet we send) */
+    /* For zero copy connections with active writes, we cannot close() the
+     * connection until the kernel has explicitly told us it is done with
+     * all buffers. This can happen due to kernel queueing or due to
+     * retransmissions. See
+     * https://lore.kernel.org/netdev/20220601024744.626323-1-frederik.deweerdt@gmail.com
+     * for the most recent discussion on this topic.
+     *
+     * Clients that we want to free will instead enter a draining mode, where
+     * the connection is shutdown and we wait for the kernel to finish with any
+     * pending writes or to give up on retransmission. */
     if (c->zero_copy_tracker && c->zero_copy_tracker->len > 0) {
-        if (c->zero_copy_tracker->draining) {
-            if (c->last_interaction + ZERO_COPY_MAX_DRAIN_TIME_SECONDS > server.unixtime) {
-                /* Still draining */
-                return;
-            }
-        } else {
+        if (!c->zero_copy_tracker->draining) {
             zeroCopyStartDraining(c);
-            return;
         }
+        return;
     }
 
     /* Log link disconnection with replica */

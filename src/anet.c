@@ -351,26 +351,6 @@ int anetSetZeroCopy(char *err, int fd, int setting) {
 #endif
 }
 
-int anetSetForceClose(char *err, int fd, int enable) {
-#ifdef HAVE_SO_LINGER
-    struct linger l = {
-        .l_onoff = enable,
-        .l_linger = 0,
-    };
-    if (setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l)) < 0) {
-        anetSetError(err, "setsockopt SO_LINGER: %s", strerror(errno));
-        return ANET_ERR;
-    }
-
-    return ANET_OK;
-#else
-    UNUSED(fd);
-    UNUSED(enable);
-    anetSetError(err, "anetSetForceClose unsupported on this platform");
-    return ANET_OK;
-#endif
-}
-
 /* Resolve the hostname "host" and set the string representation of the
  * IP address into the buffer pointed by "ipbuf".
  *

@@ -77,7 +77,8 @@ zeroCopyTracker *createZeroCopyTracker(void) {
 }
 
 zeroCopyRecord *zeroCopyTrackerGet(zeroCopyTracker *tracker, uint32_t index) {
-    /* These checks need to be resilient to wraparound, which will happen after ~4B writes. */
+    /* These checks need to be resilient to wraparound, which will happen after
+     * ~4 billion writes. */
     serverAssert(tracker->len != 0);
     /* No wraparound case */
     serverAssert(
@@ -222,19 +223,15 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
     return processed;
 }
 
-/* With zero copy enabled, connection teardown will attempt to cancel any unsent packets and
- * trigger immediate notifications where possible. However, it is also possible that some packets
- * are already sent and waiting ACK and won't be freed in case of retransmission. This means we
- * cannot immediately drop all references on teardown, and instead have to wait for the tracker's
- * length to hit zero. */
+/* Shutdown a connection and set it up to be eventually freed once all zero
+ * copy messages are done. */
 void zeroCopyStartDraining(client *c) {
     serverAssert(c->zero_copy_tracker && !c->zero_copy_tracker->draining);
     connShutdown(c->conn);
-
-    /* We will use this to determine when the client is idle, to forcibly close the connection */
     c->last_interaction = server.unixtime;
 
-    /* From this point on, the connection only handles the outgoing zero copy notifications. */
+    /* From this point on, the connection only handles the outgoing zero copy
+     * notifications. */
     connSetWriteHandler(c->conn, NULL);
     connSetReadHandler(c->conn, NULL);
     connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
@@ -248,10 +245,10 @@ void processZeroCopyMessages(connection *conn) {
     zeroCopyTrackerProcessNotifications(c->zero_copy_tracker, conn);
     if (c->zero_copy_tracker->draining && c->zero_copy_tracker->len == 0) {
         c->zero_copy_tracker->draining = 0;
-
-        /* Now, we can actually free the client. */
-        freeClient(c);
         server.draining_clients--;
+
+        /* This call should actually free the client now. */
+        freeClient(c);
     }
 }
 

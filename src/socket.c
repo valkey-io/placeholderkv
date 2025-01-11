@@ -517,10 +517,6 @@ int connSetZeroCopy(connection *conn, int setting) {
     return anetSetZeroCopy(NULL, conn->fd, setting);
 }
 
-int connSetForceClose(connection *conn, int enable) {
-    return anetSetForceClose(NULL, conn->fd, enable);
-}
-
 int RedisRegisterConnectionTypeSocket(void) {
     return connTypeRegister(&CT_Socket);
 }

@@ -159,10 +159,6 @@ struct hdr_histogram;
 # define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 0
 # endif
 #define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10*1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
-#define ZERO_COPY_MAX_DRAIN_TIME_SECONDS 3 /* Maximum time a connection using zero copy
-                                            * is kept alive for the purpose of flushing
-                                            * pending writes. If not flushed in this time,
-                                            * force close the connection with a RST packet. */
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -1756,7 +1752,6 @@ struct valkeyServer {
     long long stat_total_prefetch_batches;             /* Total number of prefetched batches */
     long long stat_zero_copy_writes_processed;         /* Total number of writes using zero copy */
     long long stat_zero_copy_writes_in_flight;         /* Total number of writes using zero copy that are not yet finished by the kernel */
-    long long stat_zero_copy_clients_force_closed;     /* Total number of clients we force closed without finishing draining. */
     size_t stat_zero_copy_tracking_memory;             /* Memory usage for zero copy related tracking */
     /* The following two are used to track instantaneous metrics, like
      * number of operations per second, network traffic. */

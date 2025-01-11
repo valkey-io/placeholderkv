@@ -68,7 +68,6 @@ int anetDisableTcpNoDelay(char *err, int fd);
 int anetSendTimeout(char *err, int fd, long long ms);
 int anetRecvTimeout(char *err, int fd, long long ms);
 int anetSetZeroCopy(char *err, int fd, int setting);
-int anetSetForceClose(char *err, int fd, int enable);
 int anetFdToString(int fd, char *ip, size_t ip_len, int *port, int remote);
 int anetKeepAlive(char *err, int fd, int interval);
 int anetFormatAddr(char *fmt, size_t fmt_len, char *ip, int port);

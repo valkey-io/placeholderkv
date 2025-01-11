@@ -93,19 +93,11 @@
 #endif
 #endif
 
-/* SO_LINGER. */
-#ifdef __linux__
-#if defined(SO_LINGER)
-#define HAVE_SO_LINGER 1
-#endif
-#endif
 
 /* MSG_ZEROCOPY */
 #ifdef __linux__
 #if defined(SO_ZEROCOPY)
-#if defined(HAVE_SO_LINGER) /* Zero copy implementation also relies on SO_LINGER. */
 #define HAVE_MSG_ZEROCOPY 1
-#endif
 #endif
 #endif
 

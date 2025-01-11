@@ -962,18 +962,6 @@ int clientsCronResizeOutputBuffer(client *c, mstime_t now_ms) {
     return 0;
 }
 
-int clientsCronHandleZeroCopyDraining(client *c, mstime_t now_ms) {
-    serverAssert(c->zero_copy_tracker->draining);
-    if (now_ms / 1000 > (c->last_interaction + ZERO_COPY_MAX_DRAIN_TIME_SECONDS)) {
-        server.stat_zero_copy_clients_force_closed++;
-        connSetForceClose(c->conn, 1);
-        freeClient(c);
-        server.draining_clients--;
-        return 1;
-    }
-    return 0;
-}
-
 /* This function is used in order to track clients using the biggest amount
  * of memory in the latest few seconds. This way we can provide such information
  * in the INFO output (clients section), without having to do an O(N) scan for
@@ -1185,7 +1173,6 @@ void clientsCron(void) {
         /* The following functions do different service checks on the client.
          * The protocol is that they return non-zero if the client was
          * terminated. */
-        if (c->zero_copy_tracker && c->zero_copy_tracker->draining && clientsCronHandleZeroCopyDraining(c, now)) continue;
         if (clientsCronHandleTimeout(c, now)) continue;
         if (clientsCronResizeQueryBuffer(c)) continue;
         if (clientsCronResizeOutputBuffer(c, now)) continue;
@@ -2689,7 +2676,6 @@ void resetServerStats(void) {
     memset(server.duration_stats, 0, sizeof(durationStats) * EL_DURATION_TYPE_NUM);
     server.el_cmd_cnt_max = 0;
     server.stat_zero_copy_writes_processed = server.stat_zero_copy_writes_in_flight;
-    server.stat_zero_copy_clients_force_closed = 0;
     lazyfreeResetStats();
 }
 
@@ -5955,7 +5941,6 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
                 "zero_copy_writes_processed:%lld\r\n",server.stat_zero_copy_writes_processed,
                 "zero_copy_writes_in_flight:%lld\r\n",server.stat_zero_copy_writes_in_flight,
-                "zero_copy_clients_force_closed:%lld\r\n",server.stat_zero_copy_clients_force_closed));
         info = genValkeyInfoStringACLStats(info);
     }
 
