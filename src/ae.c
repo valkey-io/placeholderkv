@@ -462,9 +462,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
             int fd = eventLoop->fired[j].fd;
             aeFileEvent *fe = &eventLoop->events[fd];
             int mask = eventLoop->fired[j].mask;
-            int fired_err_queue = 0;
-            int fired_write = 0;
-            int fired_read = 0;
+            int event_order[AE_NUM_EVENT_TYPES];
+            aeFileProc *prev_fired[AE_NUM_EVENT_TYPES - 1] = {0};
 
             /* Normally we execute the readable event first, and the writable
              * event later. This is useful as sometimes we may be able
@@ -478,37 +477,49 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
              * in the beforeSleep() hook, like fsyncing a file to disk,
              * before replying to a client. */
             int invert = fe->mask & AE_BARRIER;
-
-            /* Note the "fe->mask & mask & ..." code: maybe an already
-             * processed event removed an element that fired and we still
-             * didn't processed, so we check if the event is still valid. */
-            if (fe->mask & mask & AE_ERROR_QUEUE) {
-                fe->errfileproc(eventLoop, fd, fe->clientData, mask);
-                fired_err_queue = 1;
-                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-            }
-
-            /* Fire the readable event if the call sequence is not
-             * inverted. */
-            if (!invert && fe->mask & mask & AE_READABLE && (!fired_err_queue || fe->rfileProc != fe->errfileproc)) {
-                fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                fired_read = 1;
-                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-            }
-
-            /* Fire the writable event. */
-            if (fe->mask & mask & AE_WRITABLE && (!fired_err_queue || fe->wfileProc != fe->errfileproc) && (!fired_read || fe->wfileProc != fe->rfileProc)) {
-                fe->wfileProc(eventLoop, fd, fe->clientData, mask);
-                fired_write = 1;
-            }
-
-            /* If we have to invert the call, fire the readable event now
-             * after the writable one. */
             if (invert) {
-                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-                if (fe->mask & mask & AE_READABLE && (!fired_err_queue || fe->rfileProc != fe->errfileproc) && (!fired_write || fe->wfileProc != fe->rfileProc)) {
-                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired_read = 1;
+                event_order[0] = AE_ERROR_QUEUE;
+                event_order[1] = AE_WRITABLE;
+                event_order[2] = AE_READABLE;
+            } else {
+                event_order[0] = AE_ERROR_QUEUE;
+                event_order[1] = AE_READABLE;
+                event_order[2] = AE_WRITABLE;
+            }
+
+            /* Check if each event in our ordering should be fired based on the
+             * event mask. Also deduplicate event handlers, and refresh the
+             * events after each call. */
+            for (int i = 0; i < AE_NUM_EVENT_TYPES; i++) {
+                /* Note the "fe->mask & mask & ..." code: maybe an already
+                 * processed event removed an element that fired and we still
+                 * didn't processed, so we check if the event is still valid. */
+                if (fe->mask & mask & event_order[i]) {
+                    aeFileProc *to_fire = NULL;
+                    switch (event_order[i]) {
+                        case AE_READABLE:
+                            to_fire = fe->rfileProc;
+                            break;
+                        case AE_WRITABLE:
+                            to_fire = fe->wfileProc;
+                            break;
+                        case AE_ERROR_QUEUE:
+                            to_fire = fe->errfileproc;
+                            break;
+                    }
+                    int already_fired = 0;
+                    for (int j = 0; j < i; j++) {
+                        if (prev_fired[j] == to_fire) {
+                            already_fired = 1;
+                        }
+                    }
+                    if (!already_fired) {
+                        to_fire(eventLoop, fd, fe->clientData, mask);
+                        if (i != AE_NUM_EVENT_TYPES - 1) {
+                            prev_fired[i] = to_fire;
+                            fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
+                        }
+                    }
                 }
             }
 

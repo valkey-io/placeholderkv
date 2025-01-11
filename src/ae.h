@@ -49,6 +49,7 @@
                             to do that in a group fashion. */
 #define AE_ERROR_QUEUE 1<<3 /* Fire when descriptor has a message on the \
                                message queue. */
+#define AE_NUM_EVENT_TYPES 3 /* Total number of events we can fire in one pass */
 
 #define AE_FILE_EVENTS (1 << 0)
 #define AE_TIME_EVENTS (1 << 1)
