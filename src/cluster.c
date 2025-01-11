@@ -36,6 +36,7 @@
 #include "server.h"
 #include "cluster.h"
 #include "cluster_slot_stats.h"
+#include "module.h"
 
 #include <ctype.h>
 
@@ -276,9 +277,9 @@ void restoreCommand(client *c) {
     }
 
     /* Create the key and set the TTL if any */
-    dbAdd(c->db, key, obj);
+    dbAdd(c->db, key, &obj);
     if (ttl) {
-        setExpire(c, c->db, key, ttl);
+        obj = setExpire(c, c->db, key, ttl);
         if (!absttl) {
             /* Propagate TTL as absolute timestamp */
             robj *ttl_obj = createStringObjectFromLongLong(ttl);
@@ -422,6 +423,7 @@ void migrateCommand(client *c) {
     int may_retry = 1;
     int write_error = 0;
     int argv_rewritten = 0;
+    int errno_copy = 0;
 
     /* To support the KEYS option we need the following additional state. */
     int first_key = 3; /* Argument index of the first key. */
@@ -710,6 +712,10 @@ try_again:
      * It is very common for the cached socket to get closed, if just reopening
      * it works it's a shame to notify the error to the caller. */
 socket_err:
+    /* Take a copy of 'errno' prior cleanup as it can be overwritten and
+     * use copied variable for re-try check. */
+    errno_copy = errno;
+
     /* Cleanup we want to perform in both the retry and no retry case.
      * Note: Closing the migrate socket will also force SELECT next time. */
     sdsfree(cmd.io.buffer.ptr);
@@ -724,7 +730,7 @@ socket_err:
 
     /* Retry only if it's not a timeout and we never attempted a retry
      * (or the code jumping here did not set may_retry to zero). */
-    if (errno != ETIMEDOUT && may_retry) {
+    if (errno_copy != ETIMEDOUT && may_retry) {
         may_retry = 0;
         goto try_again;
     }
@@ -806,7 +812,7 @@ static int shouldReturnTlsInfo(void) {
 }
 
 unsigned int countKeysInSlot(unsigned int slot) {
-    return kvstoreDictSize(server.db->keys, slot);
+    return kvstoreHashtableSize(server.db->keys, slot);
 }
 
 void clusterCommandHelp(client *c) {
@@ -903,16 +909,16 @@ void clusterCommand(client *c) {
         unsigned int keys_in_slot = countKeysInSlot(slot);
         unsigned int numkeys = maxkeys > keys_in_slot ? keys_in_slot : maxkeys;
         addReplyArrayLen(c, numkeys);
-        kvstoreDictIterator *kvs_di = NULL;
-        dictEntry *de = NULL;
-        kvs_di = kvstoreGetDictIterator(server.db->keys, slot);
+        kvstoreHashtableIterator *kvs_di = NULL;
+        kvs_di = kvstoreGetHashtableIterator(server.db->keys, slot);
         for (unsigned int i = 0; i < numkeys; i++) {
-            de = kvstoreDictIteratorNext(kvs_di);
-            serverAssert(de != NULL);
-            sds sdskey = dictGetKey(de);
+            void *next;
+            serverAssert(kvstoreHashtableIteratorNext(kvs_di, &next));
+            robj *valkey = next;
+            sds sdskey = objectGetKey(valkey);
             addReplyBulkCBuffer(c, sdskey, sdslen(sdskey));
         }
-        kvstoreReleaseDictIterator(kvs_di);
+        kvstoreReleaseHashtableIterator(kvs_di);
     } else if ((!strcasecmp(c->argv[1]->ptr, "slaves") || !strcasecmp(c->argv[1]->ptr, "replicas")) && c->argc == 3) {
         /* CLUSTER REPLICAS <NODE ID> */
         clusterNode *n = clusterLookupNode(c->argv[2]->ptr, sdslen(c->argv[2]->ptr));
@@ -1000,7 +1006,7 @@ getNodeByQuery(client *c, struct serverCommand *cmd, robj **argv, int argc, int 
         /* If CLIENT_MULTI flag is not set EXEC is just going to return an
          * error. */
         if (!c->flag.multi) return myself;
-        ms = &c->mstate;
+        ms = c->mstate;
     } else {
         /* In order to have a single codepath create a fake Multi State
          * structure if the client is not in MULTI/EXEC state, this way
@@ -1017,7 +1023,7 @@ getNodeByQuery(client *c, struct serverCommand *cmd, robj **argv, int argc, int 
 
     /* Only valid for sharded pubsub as regular pubsub can operate on any node and bypasses this layer. */
     int pubsubshard_included =
-        (cmd_flags & CMD_PUBSUB) || (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_PUBSUB));
+        (cmd_flags & CMD_PUBSUB) || (c->cmd->proc == execCommand && (c->mstate->cmd_flags & CMD_PUBSUB));
 
     /* Check that all the keys are in the same hash slot, and obtain this
      * slot and the node associated. */
@@ -1170,7 +1176,7 @@ getNodeByQuery(client *c, struct serverCommand *cmd, robj **argv, int argc, int 
      * node is a replica and the request is about a hash slot our primary
      * is serving, we can reply without redirection. */
     int is_write_command =
-        (cmd_flags & CMD_WRITE) || (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
+        (cmd_flags & CMD_WRITE) || (c->cmd->proc == execCommand && (c->mstate->cmd_flags & CMD_WRITE));
     if ((c->flag.readonly || pubsubshard_included) && !is_write_command && clusterNodeIsReplica(myself) &&
         clusterNodeGetPrimary(myself) == n) {
         return myself;
@@ -1227,14 +1233,14 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
  * returns 1. Otherwise 0 is returned and no operation is performed. */
 int clusterRedirectBlockedClientIfNeeded(client *c) {
     clusterNode *myself = getMyClusterNode();
-    if (c->flag.blocked && (c->bstate.btype == BLOCKED_LIST || c->bstate.btype == BLOCKED_ZSET ||
-                            c->bstate.btype == BLOCKED_STREAM || c->bstate.btype == BLOCKED_MODULE)) {
+    if (c->flag.blocked && (c->bstate->btype == BLOCKED_LIST || c->bstate->btype == BLOCKED_ZSET ||
+                            c->bstate->btype == BLOCKED_STREAM || c->bstate->btype == BLOCKED_MODULE)) {
         dictEntry *de;
         dictIterator *di;
 
         /* If the client is blocked on module, but not on a specific key,
          * don't unblock it. */
-        if (c->bstate.btype == BLOCKED_MODULE && !moduleClientIsBlockedOnKeys(c)) return 0;
+        if (c->bstate->btype == BLOCKED_MODULE && !moduleClientIsBlockedOnKeys(c)) return 0;
 
         /* If the cluster is down, unblock the client with the right error.
          * If the cluster is configured to allow reads on cluster down, we
@@ -1246,7 +1252,7 @@ int clusterRedirectBlockedClientIfNeeded(client *c) {
         }
 
         /* All keys must belong to the same slot, so check first key only. */
-        di = dictGetIterator(c->bstate.keys);
+        di = dictGetIterator(c->bstate->keys);
         if ((de = dictNext(di)) != NULL) {
             robj *key = dictGetKey(de);
             int slot = keyHashSlot((char *)key->ptr, sdslen(key->ptr));
@@ -1428,7 +1434,7 @@ void clusterCommandSlots(client *c) {
      *           ... continued until done
      */
     int conn_type = 0;
-    if (connIsTLS(c->conn)) conn_type |= CACHE_CONN_TYPE_TLS;
+    if (shouldReturnTlsInfo()) conn_type |= CACHE_CONN_TYPE_TLS;
     if (isClientConnIpV6(c)) conn_type |= CACHE_CONN_TYPE_IPv6;
     if (c->resp == 3) conn_type |= CACHE_CONN_TYPE_RESP3;
 

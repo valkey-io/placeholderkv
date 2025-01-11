@@ -25,6 +25,7 @@
 #define CLUSTER_TODO_SAVE_CONFIG (1 << 2)
 #define CLUSTER_TODO_FSYNC_CONFIG (1 << 3)
 #define CLUSTER_TODO_HANDLE_MANUALFAILOVER (1 << 4)
+#define CLUSTER_TODO_BROADCAST_ALL (1 << 5)
 
 /* clusterLink encapsulates everything needed to talk with a remote node. */
 typedef struct clusterLink {
@@ -60,12 +61,14 @@ typedef struct clusterLink {
 #define nodeIsPrimary(n) ((n)->flags & CLUSTER_NODE_PRIMARY)
 #define nodeIsReplica(n) ((n)->flags & CLUSTER_NODE_REPLICA)
 #define nodeInHandshake(n) ((n)->flags & CLUSTER_NODE_HANDSHAKE)
+#define nodeInMeetState(n) ((n)->flags & CLUSTER_NODE_MEET)
 #define nodeHasAddr(n) (!((n)->flags & CLUSTER_NODE_NOADDR))
 #define nodeTimedOut(n) ((n)->flags & CLUSTER_NODE_PFAIL)
 #define nodeFailed(n) ((n)->flags & CLUSTER_NODE_FAIL)
 #define nodeCantFailover(n) ((n)->flags & CLUSTER_NODE_NOFAILOVER)
 #define nodeSupportsExtensions(n) ((n)->flags & CLUSTER_NODE_EXTENSIONS_SUPPORTED)
 #define nodeSupportsLightMsgHdr(n) ((n)->flags & CLUSTER_NODE_LIGHT_HDR_SUPPORTED)
+#define nodeInNormalState(n) (!((n)->flags & (CLUSTER_NODE_HANDSHAKE | CLUSTER_NODE_MEET | CLUSTER_NODE_PFAIL | CLUSTER_NODE_FAIL)))
 
 /* This structure represent elements of node->fail_reports. */
 typedef struct clusterNodeFailReport {
@@ -292,9 +295,8 @@ static_assert(offsetof(clusterMsg, data) == 2256, "unexpected field offset");
 
 /* Message flags better specify the packet content or are used to
  * provide some information about the node state. */
-#define CLUSTERMSG_FLAG0_PAUSED (1 << 0) /* Primary paused for manual failover. */
-#define CLUSTERMSG_FLAG0_FORCEACK                                                                                      \
-    (1 << 1)                               /* Give ACK to AUTH_REQUEST even if                                         \
+#define CLUSTERMSG_FLAG0_PAUSED (1 << 0)   /* Primary paused for manual failover. */
+#define CLUSTERMSG_FLAG0_FORCEACK (1 << 1) /* Give ACK to AUTH_REQUEST even if \
                                               primary is up. */
 #define CLUSTERMSG_FLAG0_EXT_DATA (1 << 2) /* Message contains extension data */
 
@@ -338,10 +340,12 @@ struct _clusterNode {
     mstime_t ping_sent;                     /* Unix time we sent latest ping */
     mstime_t pong_received;                 /* Unix time we received the pong */
     mstime_t data_received;                 /* Unix time we received any data */
+    mstime_t meet_sent;                     /* Unix time we sent latest meet packet */
     mstime_t fail_time;                     /* Unix time when FAIL flag was set */
-    mstime_t voted_time;                    /* Last time we voted for a replica of this primary */
     mstime_t repl_offset_time;              /* Unix time we received offset for this node */
     mstime_t orphaned_time;                 /* Starting time of orphaned primary condition */
+    mstime_t inbound_link_freed_time;       /* Last time we freed the inbound link for this node.
+                                               If it was never freed, it is the same as ctime */
     long long repl_offset;                  /* Last known repl offset for this node. */
     char ip[NET_IP_STR_LEN];                /* Latest known IP address of this node */
     sds announce_client_ipv4;               /* IPv4 for clients only. */
@@ -369,6 +373,7 @@ struct clusterState {
     clusterNode *myself; /* This node */
     uint64_t currentEpoch;
     int state;              /* CLUSTER_OK, CLUSTER_FAIL, ... */
+    int fail_reason;        /* Why the cluster state changes to fail. */
     int size;               /* Num of primary nodes with at least one slot */
     dict *nodes;            /* Hash table of name -> clusterNode structures */
     dict *shards;           /* Hash table of shard_id -> list (of nodes) structures */
@@ -377,13 +382,14 @@ struct clusterState {
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
     clusterNode *slots[CLUSTER_SLOTS];
     /* The following fields are used to take the replica state on elections. */
-    mstime_t failover_auth_time;  /* Time of previous or next election. */
-    int failover_auth_count;      /* Number of votes received so far. */
-    int failover_auth_sent;       /* True if we already asked for votes. */
-    int failover_auth_rank;       /* This replica rank for current auth request. */
-    uint64_t failover_auth_epoch; /* Epoch of the current election. */
-    int cant_failover_reason;     /* Why a replica is currently not able to
-                                     failover. See the CANT_FAILOVER_* macros. */
+    mstime_t failover_auth_time;      /* Time of previous or next election. */
+    int failover_auth_count;          /* Number of votes received so far. */
+    int failover_auth_sent;           /* True if we already asked for votes. */
+    int failover_auth_rank;           /* This replica rank for current auth request. */
+    int failover_failed_primary_rank; /* The rank of this instance in the context of all failed primary list. */
+    uint64_t failover_auth_epoch;     /* Epoch of the current election. */
+    int cant_failover_reason;         /* Why a replica is currently not able to
+                                       * failover. See the CANT_FAILOVER_* macros. */
     /* Manual failover state in common. */
     mstime_t mf_end; /* Manual failover time limit (ms unixtime).
                         It is zero if there is no MF in progress. */

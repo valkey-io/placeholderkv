@@ -192,7 +192,31 @@ start_server {tags {"repl external:skip"}} {
             } else {
                 fail "Master and replica have different digest: [$A debug digest] VS [$B debug digest]"
             }          
-            assert_match {*calls=1,*,rejected_calls=0,failed_calls=1*} [cmdrstat blpop $B]
+            assert_match {*calls=1,*,rejected_calls=1*,failed_calls=0} [cmdrstat blpop $B]
+        }
+        
+        test {Replica output bytes metric} {
+            # reset stats 
+            $A config resetstat
+            
+            set info [$A info stats]
+            set replica_bytes_output [getInfoProperty $info "total_net_repl_output_bytes"]
+            assert_equal $replica_bytes_output 0
+            
+            # sent set command to primary
+            $A set key value
+            
+            # wait for command propagation
+            wait_for_condition 50 100 {
+                [$B get key] eq {value}
+            } else {
+                fail "Replica did not receive the command"
+            }
+            
+            # get the new stats
+            set info [$A info stats]
+            set replica_bytes_output [getInfoProperty $info "total_net_repl_output_bytes"]
+            assert_morethan $replica_bytes_output 0
         }
     }
 }
@@ -1476,6 +1500,63 @@ start_server {tags {"repl external:skip"}} {
             assert_equal "set" [$slave type s]
         }
     }
+}
+
+foreach dualchannel {yes no} {
+    test "replica actually flushes db if use diskless load with flush-before-load dual-channel-replication-enabled=$dualchannel" {
+        start_server {tags {"repl"}} {
+            set replica [srv 0 client]
+            set replica_log [srv 0 stdout]
+            start_server {} {
+                set master [srv 0 client]
+                set master_host [srv 0 host]
+                set master_port [srv 0 port]
+
+                # Fill both replica and master with data
+                $master debug populate 100 master 100000
+                $replica debug populate 201 replica 100000
+                assert_equal [$replica dbsize] 201
+                # Set up master
+                $master config set save ""
+                $master config set rdbcompression no
+                $master config set repl-diskless-sync yes
+                $master config set repl-diskless-sync-delay 0
+                $master config set dual-channel-replication-enabled $dualchannel
+                # Set master with a slow rdb generation, so that we can easily intercept loading
+                # 10ms per key, with 1000 keys is 10 seconds
+                $master config set rdb-key-save-delay 10000
+                # Set up replica
+                $replica config set save ""
+                $replica config set repl-diskless-load flush-before-load
+                $replica config set dual-channel-replication-enabled $dualchannel
+                # Start the replication process...
+                $replica replicaof $master_host $master_port
+
+                wait_for_condition 100 100 {
+                    [s -1 loading] eq 1
+                } else {
+                    fail "Replica didn't start loading"
+                }
+
+                # Make sure that next sync will not start immediately so that we can catch the replica in between syncs
+                $master config set repl-diskless-sync-delay 5
+
+                # Kill the replica connection on the master
+                set killed [$master client kill type replica]
+
+                wait_for_condition 100 100 {
+                    [s -1 loading] eq 0
+                } else {
+                    fail "Replica didn't disconnect"
+                }
+
+                assert_equal [$replica dbsize] 0
+
+                # Speed up shutdown
+                $master config set rdb-key-save-delay 0
+            }
+        }
+    } {} {external:skip}
 }
 
 start_server {tags {"repl external:skip"}} {
