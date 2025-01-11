@@ -88,8 +88,16 @@ start_server {} {
 
             # Write 100 KiB, which should grow the repl backlog beyond the max
             populate 1 "zerocopy_key:big:" [expr 100 * 1024] 0
-            assert {[s 0 zero_copy_writes_in_flight] > 0}
-            assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
+            wait_for_condition 100 100 {
+                [s 0 zero_copy_writes_in_flight] > 0
+            } else {
+                fail "Expect in flight zero copy writes to be accumulated"
+            }
+            wait_for_condition 100 100 {
+                [s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]
+            } else {
+                fail "Expect replication backlog to grow beyond configuration"
+            }
 
             # Resume the error queue events
             $primary debug pause-errqueue-events 0
@@ -121,8 +129,16 @@ start_server {} {
 
             # Write 100 KiB, which should grow the repl backlog beyond the max
             populate 1 "zerocopy_key:extra:" [expr 100 * 1024] 0
-            assert {[s 0 zero_copy_writes_in_flight] > 0}
-            assert {[s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]}
+            wait_for_condition 100 100 {
+                [s 0 zero_copy_writes_in_flight] > 0
+            } else {
+                fail "Expect in flight zero copy writes to be accumulated"
+            }
+            wait_for_condition 100 100 {
+                [s 0 repl_backlog_histlen] > [expr 64*1024 + 16*1024]
+            } else {
+                fail "Expect replication backlog to grow beyond configuration"
+            }
 
             # Kill the replica client
             assert {[$primary client kill type replica] > 0}
@@ -153,8 +169,11 @@ start_server {} {
         test {Zero copy tracker grows and shrinks as needed} {
             $primary config set tcp-zerocopy-min-write-size 0
 
-            populate 1 "zerocopy_key:extra:" 1024 0
+            # Initialize the zero copy tracker
+            populate 1 "zerocopy_key:init:" 1024 0
+            wait_for_ofs_sync $primary $replica
             set initial_zerocopy_mem [s 0 used_memory_zero_copy_tracking]
+            assert {$initial_zerocopy_mem > 0}
 
             # Accumulate a lot of in flight writes
             $primary debug pause-errqueue-events 1
