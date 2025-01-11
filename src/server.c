@@ -5940,7 +5940,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
                 "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
                 "zero_copy_writes_processed:%lld\r\n",server.stat_zero_copy_writes_processed,
-                "zero_copy_writes_in_flight:%lld\r\n",server.stat_zero_copy_writes_in_flight,
+                "zero_copy_writes_in_flight:%lld\r\n",server.stat_zero_copy_writes_in_flight));
         info = genValkeyInfoStringACLStats(info);
     }
 
