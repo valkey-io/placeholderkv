@@ -53,10 +53,11 @@ void processZeroCopyMessages(connection *conn) {
 
 #include <linux/errqueue.h>
 
+/* Zero copy is only used for TCP connections that are not on loopback, and
+ * that are over the configured minimum size. */
 int shouldUseZeroCopy(connection *conn, size_t len) {
-    /* Only writes that are over a given size, and not to a loopback
-     * connection, will see improvement with zerocopy*/
-    return server.tcp_tx_zerocopy && len >= (size_t) server.tcp_zerocopy_min_write_size &&
+    return server.tcp_tx_zerocopy && conn->type == connectionTypeTcp() &&
+           len >= (size_t) server.tcp_zerocopy_min_write_size &&
            (!connIsLocal(conn) || server.debug_zerocopy_bypass_loopback_check);
 }
 
