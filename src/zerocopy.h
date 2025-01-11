@@ -6,7 +6,7 @@
 #define ZERO_COPY_RECORD_TRACKER_INIT_SIZE 1024
 #define ZERO_COPY_DOWNSIZE_UTILIZATION_WATERMARK 0.4
 
-int shouldUseZeroCopy(connection * conn, size_t len);
+int shouldUseZeroCopy(connection *conn, size_t len);
 ssize_t zeroCopyWriteToConn(connection *conn, char *buf, size_t len);
 zeroCopyTracker *createZeroCopyTracker(void);
 void freeZeroCopyTracker(zeroCopyTracker *tracker);
@@ -21,4 +21,4 @@ void zeroCopyStartDraining(client *c);
  * Assumes that the client object is stored as private data in the connection. */
 void processZeroCopyMessages(connection *conn);
 
-#endif  /* ZEROCOPY_H */
+#endif /* ZEROCOPY_H */

@@ -497,15 +497,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
                 if (fe->mask & mask & event_order[i]) {
                     aeFileProc *to_fire = NULL;
                     switch (event_order[i]) {
-                        case AE_READABLE:
-                            to_fire = fe->rfileProc;
-                            break;
-                        case AE_WRITABLE:
-                            to_fire = fe->wfileProc;
-                            break;
-                        case AE_ERROR_QUEUE:
-                            to_fire = fe->errfileproc;
-                            break;
+                    case AE_READABLE:
+                        to_fire = fe->rfileProc;
+                        break;
+                    case AE_WRITABLE:
+                        to_fire = fe->wfileProc;
+                        break;
+                    case AE_ERROR_QUEUE:
+                        to_fire = fe->errfileproc;
+                        break;
                     }
                     int already_fired = 0;
                     for (int j = 0; j < i; j++) {

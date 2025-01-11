@@ -8,13 +8,15 @@ int shouldUseZeroCopy(connection *conn, size_t len) {
     UNUSED(len);
     return 0;
 }
-ssize_t zeroCopyWriteToConn(connection *conn, char* data, size_t len) {
+ssize_t zeroCopyWriteToConn(connection *conn, char *data, size_t len) {
     UNUSED(conn);
     UNUSED(data);
     UNUSED(len);
     return -1;
 }
-zeroCopyTracker *createZeroCopyTracker(void) { return NULL; }
+zeroCopyTracker *createZeroCopyTracker(void) {
+    return NULL;
+}
 zeroCopyRecord *zeroCopyTrackerGet(zeroCopyTracker *tracker, uint32_t index) {
     UNUSED(tracker);
     UNUSED(index);
@@ -57,21 +59,21 @@ void processZeroCopyMessages(connection *conn) {
  * that are over the configured minimum size. */
 int shouldUseZeroCopy(connection *conn, size_t len) {
     return server.tcp_tx_zerocopy && conn->type == connectionTypeTcp() &&
-           len >= (size_t) server.tcp_zerocopy_min_write_size &&
+           len >= (size_t)server.tcp_zerocopy_min_write_size &&
            (!connIsLocal(conn) || server.debug_zerocopy_bypass_loopback_check);
 }
 
-ssize_t zeroCopyWriteToConn(connection *conn, char* data, size_t len) {
+ssize_t zeroCopyWriteToConn(connection *conn, char *data, size_t len) {
     return connSend(conn, data, len, MSG_ZEROCOPY);
 }
 
 zeroCopyTracker *createZeroCopyTracker(void) {
-    zeroCopyTracker *result = (zeroCopyTracker *) zmalloc(sizeof(zeroCopyTracker));
+    zeroCopyTracker *result = (zeroCopyTracker *)zmalloc(sizeof(zeroCopyTracker));
     result->start = 0;
     result->len = 0;
     result->capacity = ZERO_COPY_RECORD_TRACKER_INIT_SIZE;
     size_t records_size = sizeof(zeroCopyRecord) * ZERO_COPY_RECORD_TRACKER_INIT_SIZE;
-    result->records = (zeroCopyRecord *) zmalloc(records_size);
+    result->records = (zeroCopyRecord *)zmalloc(records_size);
     result->draining = 0;
     server.stat_zero_copy_tracking_memory += sizeof(zeroCopyTracker) + records_size;
     return result;
@@ -85,12 +87,12 @@ zeroCopyRecord *zeroCopyTrackerGet(zeroCopyTracker *tracker, uint32_t index) {
     serverAssert(
         tracker->start + tracker->len < tracker->start ||
         (index >= tracker->start &&
-        index < tracker->start + tracker->len));
+         index < tracker->start + tracker->len));
     /* Wraparound case */
     serverAssert(
         (tracker->start + tracker->len > tracker->start ||
-        index >= tracker->start ||
-        index < tracker->start + tracker->len));
+         index >= tracker->start ||
+         index < tracker->start + tracker->len));
     return &(tracker->records[index % tracker->capacity]);
 }
 
@@ -185,7 +187,7 @@ void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *c
         if (cmsg->cmsg_level != SOL_IP || cmsg->cmsg_type != IP_RECVERR) {
             continue;
         }
-        serr = (struct sock_extended_err *) CMSG_DATA(cmsg);
+        serr = (struct sock_extended_err *)CMSG_DATA(cmsg);
         if (serr->ee_errno != 0 || serr->ee_origin != SO_EE_ORIGIN_ZEROCOPY) {
             continue;
         }
@@ -237,7 +239,7 @@ void zeroCopyStartDraining(client *c) {
 }
 
 void processZeroCopyMessages(connection *conn) {
-    client * c = (client *) connGetPrivateData(conn);
+    client *c = (client *)connGetPrivateData(conn);
     serverAssert(c->zero_copy_tracker);
     zeroCopyTrackerProcessNotifications(c->zero_copy_tracker, conn);
     if (c->zero_copy_tracker->draining && c->zero_copy_tracker->len == 0) {

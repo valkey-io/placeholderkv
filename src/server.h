@@ -153,12 +153,12 @@ struct hdr_histogram;
 #else
 #define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
 #endif
-# ifdef HAVE_MSG_ZEROCOPY
-# define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 1
-# else
-# define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 0
-# endif
-#define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10*1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
+#ifdef HAVE_MSG_ZEROCOPY
+#define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 1
+#else
+#define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 0
+#endif
+#define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10 * 1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -1255,13 +1255,13 @@ typedef struct client {
      * before adding it the new value. */
     size_t last_memory_usage;
     /* Fields after this point are less frequently used */
-    listNode *client_list_node;        /* list node in client list */
+    listNode *client_list_node;         /* list node in client list */
     zeroCopyTracker *zero_copy_tracker; /* Circular buffer of active writes, indexed
-                                        * by sequence number. */
-    mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
-    size_t querybuf_peak;              /* Recent (100ms or more) peak of querybuf size. */
-    dictEntry *cur_script;             /* Cached pointer to the dictEntry of the script being executed. */
-    user *user;                        /* User associated with this connection */
+                                         * by sequence number. */
+    mstime_t buf_peak_last_reset_time;  /* keeps the last time the buffer peak value was reset */
+    size_t querybuf_peak;               /* Recent (100ms or more) peak of querybuf size. */
+    dictEntry *cur_script;              /* Cached pointer to the dictEntry of the script being executed. */
+    user *user;                         /* User associated with this connection */
     time_t obuf_soft_limit_reached_time;
     list *deferred_reply_errors; /* Used for module thread safe contexts. */
     robj *name;                  /* As set by CLIENT SETNAME. */
@@ -1998,10 +1998,10 @@ struct valkeyServer {
     /* Import Mode */
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
     /* TCP Zero Copy */
-    int tcp_tx_zerocopy; /* If true, use zero copy for writes when possible. */
-    int tcp_zerocopy_min_write_size; /* Minimum size for a write before we go through zerocopy. */
+    int tcp_tx_zerocopy;                      /* If true, use zero copy for writes when possible. */
+    int tcp_zerocopy_min_write_size;          /* Minimum size for a write before we go through zerocopy. */
     int debug_zerocopy_bypass_loopback_check; /* Used to test zerocopy on loopback connections */
-    int debug_pause_errqueue_events; /* Used to pause zerocopy notifications */
+    int debug_pause_errqueue_events;          /* Used to pause zerocopy notifications */
     unsigned int draining_clients;
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
