@@ -159,14 +159,12 @@ void freeZeroCopyTracker(zeroCopyTracker *tracker) {
     zfree(tracker);
 }
 
-int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *conn) {
-    struct msghdr msg;
-    memset(&msg, 0, sizeof(msg));
+void zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *conn) {
+    struct msghdr msg = {0};
     struct iovec iov;
-    char control[48 * 10];
+    char control[CMSG_SPACE(sizeof(struct sock_extended_err))];
     struct cmsghdr *cmsg;
     struct sock_extended_err *serr;
-    int processed = 0;
 
     iov.iov_base = NULL;
     iov.iov_len = 0;
@@ -175,13 +173,12 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
     msg.msg_control = control;
     msg.msg_controllen = sizeof(control);
 
-
     if (connRecvMsg(conn, &msg, MSG_ERRQUEUE) == -1) {
         if (errno == EAGAIN) {
-            return processed;
+            return;
         }
         serverLog(LL_WARNING, "Got callback for error message but got recvmsg error: %s", strerror(errno));
-        return processed;
+        return;
     }
     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
         if (cmsg->cmsg_level != SOL_IP || cmsg->cmsg_type != IP_RECVERR) {
@@ -202,7 +199,6 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
         for (uint32_t i = begin; i != end + 1; i++) {
             zeroCopyRecord *zcp = zeroCopyTrackerGet(tracker, i);
             zcp->active = 0;
-            processed++;
         }
 
         /* Trim the front of the tracker up until the next outstanding write. */
@@ -220,7 +216,7 @@ int zeroCopyTrackerProcessNotifications(zeroCopyTracker *tracker, connection *co
         if (tracker->len == 0)
             connSetErrorQueueHandler(conn, NULL);
     }
-    return processed;
+    return;
 }
 
 /* Shutdown a connection and set it up to be eventually freed once all zero
