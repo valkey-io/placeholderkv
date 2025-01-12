@@ -1359,9 +1359,9 @@ void rewriteConfigOctalOption(struct rewriteConfigState *state,
 
 /* Rewrite an unsigned number option. */
 void rewriteConfigUnsignedOption(struct rewriteConfigState *state,
-                              const char *option,
-                              unsigned long long value,
-                              unsigned long long defvalue) {
+                                 const char *option,
+                                 unsigned long long value,
+                                 unsigned long long defvalue) {
     int force = value != defvalue;
     sds line = sdscatprintf(sdsempty(), "%s %llu", option, value);
 
@@ -3522,17 +3522,17 @@ void addModuleNumericConfig(const char *module_name,
 }
 
 void addModuleUnsignedNumericConfig(const char *module_name,
-                            const char *name,
-                            int flags,
-                            void *privdata,
-                            unsigned long long default_val,
-                            int conf_flags,
-                            unsigned long long lower,
-                            unsigned long long upper) {
+                                    const char *name,
+                                    int flags,
+                                    void *privdata,
+                                    unsigned long long default_val,
+                                    int conf_flags,
+                                    unsigned long long lower,
+                                    unsigned long long upper) {
     sds config_name = sdscatfmt(sdsempty(), "%s.%s", module_name, name);
     unsigned long long config_dummy_address;
     standardConfig module_config = createULongLongConfig(config_name, NULL, flags | MODULE_CONFIG, lower, upper,
-                                                        config_dummy_address, default_val, conf_flags, NULL, NULL);
+                                                         config_dummy_address, default_val, conf_flags, NULL, NULL);
     module_config.data.numeric.config.ull = NULL;
     module_config.privdata = privdata;
     registerConfigValue(config_name, &module_config, 0);

@@ -145,8 +145,8 @@ int registerBlockCheck(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int argc
 
     result = ValkeyModule_RegisterNumericConfig(ctx, "numeric", -1, VALKEYMODULE_CONFIG_DEFAULT, -5, 2000, getNumericConfigCommand, setNumericConfigCommand, longlongApplyFunc, &longval);
     response_ok |= (result == VALKEYMODULE_OK);
-
-    result = ValkeyModule_RegisterUnsignedNumericConfig(ctx, "unsigned_numeric", 1, VALKEYMODULE_CONFIG_DEFAULT | VALKEYMODULE_CONFIG_UNSIGNED, 0, LLONG_MAX + 1000, getUnsignedNumericConfigCommand, setUnsignedNumericConfigCommand, unsignedlonglongApplyFunc, &mutable_ull_val);
+    
+    result = ValkeyModule_RegisterUnsignedNumericConfig(ctx, "unsigned_numeric", 1, VALKEYMODULE_CONFIG_DEFAULT | VALKEYMODULE_CONFIG_UNSIGNED, 0, LLONG_MAX * 1ULL + 1000, getUnsignedNumericConfigCommand, setUnsignedNumericConfigCommand, unsignedlonglongApplyFunc, &mutable_ull_val);
     response_ok |= (result == VALKEYMODULE_OK);
 
     result = ValkeyModule_LoadConfigs(ctx);
@@ -196,7 +196,7 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx, ValkeyModuleString **argv, int arg
     if (ValkeyModule_RegisterNumericConfig(ctx, "numeric", -1, VALKEYMODULE_CONFIG_DEFAULT, -5, 2000, getNumericConfigCommand, setNumericConfigCommand, longlongApplyFunc, &longval) == VALKEYMODULE_ERR) {
         return VALKEYMODULE_ERR;
     }
-    if (ValkeyModule_RegisterUnsignedNumericConfig(ctx, "unsigned_numeric", 1, VALKEYMODULE_CONFIG_DEFAULT | VALKEYMODULE_CONFIG_UNSIGNED, 0, LLONG_MAX + 1000, getUnsignedNumericConfigCommand, setUnsignedNumericConfigCommand, NULL, &mutable_ull_val) == VALKEYMODULE_ERR) {
+    if (ValkeyModule_RegisterUnsignedNumericConfig(ctx, "unsigned_numeric", 1, VALKEYMODULE_CONFIG_DEFAULT | VALKEYMODULE_CONFIG_UNSIGNED, 0, LLONG_MAX * 1ULL + 1000, getUnsignedNumericConfigCommand, setUnsignedNumericConfigCommand, NULL, &mutable_ull_val) == VALKEYMODULE_ERR) {
         return VALKEYMODULE_ERR;
     }
     size_t len;

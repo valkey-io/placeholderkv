@@ -465,9 +465,9 @@ typedef int (*ValkeyModuleConfigSetNumericFunc)(const char *name,
                                                 void *privdata,
                                                 ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetUnsignedNumericFunc)(const char *name,
-                                                unsigned long long val,
-                                                void *privdata,
-                                                ValkeyModuleString **err);
+                                                        unsigned long long val,
+                                                        void *privdata,
+                                                        ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetBoolFunc)(const char *name, int val, void *privdata, ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetEnumFunc)(const char *name, int val, void *privdata, ValkeyModuleString **err);
 /* Apply signature, identical to valkeymodule.h */
@@ -13033,15 +13033,15 @@ int VM_RegisterNumericConfig(ValkeyModuleCtx *ctx,
  * `CONFIG SET`, `CONFIG GET`, and `CONFIG REWRITE` commands. See
  * ValkeyModule_RegisterStringConfig for detailed information about configs. */
 int VM_RegisterUnsignedNumericConfig(ValkeyModuleCtx *ctx,
-                             const char *name,
-                             unsigned long long default_val,
-                             unsigned int flags,
-                             unsigned long long min,
-                             unsigned long long max,
-                             ValkeyModuleConfigGetUnsignedNumericFunc getfn,
-                             ValkeyModuleConfigSetUnsignedNumericFunc setfn,
-                             ValkeyModuleConfigApplyFunc applyfn,
-                             void *privdata) {
+                                     const char *name,
+                                     unsigned long long default_val,
+                                     unsigned int flags,
+                                     unsigned long long min,
+                                     unsigned long long max,
+                                     ValkeyModuleConfigGetUnsignedNumericFunc getfn,
+                                     ValkeyModuleConfigSetUnsignedNumericFunc setfn,
+                                     ValkeyModuleConfigApplyFunc applyfn,
+                                     void *privdata) {
     ValkeyModule *module = ctx->module;
     if (moduleConfigValidityCheck(module, name, flags, NUMERIC_CONFIG)) {
         return VALKEYMODULE_ERR;

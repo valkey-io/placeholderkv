@@ -980,9 +980,9 @@ typedef int (*ValkeyModuleConfigSetNumericFunc)(const char *name,
                                                 void *privdata,
                                                 ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetUnsignedNumericFunc)(const char *name,
-                                                unsigned long long val,
-                                                void *privdata,
-                                                ValkeyModuleString **err);
+                                                        unsigned long long val,
+                                                        void *privdata,
+                                                        ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetBoolFunc)(const char *name, int val, void *privdata, ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigSetEnumFunc)(const char *name, int val, void *privdata, ValkeyModuleString **err);
 typedef int (*ValkeyModuleConfigApplyFunc)(ValkeyModuleCtx *ctx, void *privdata, ValkeyModuleString **err);
@@ -1715,15 +1715,15 @@ VALKEYMODULE_API int (*ValkeyModule_RegisterNumericConfig)(ValkeyModuleCtx *ctx,
                                                            ValkeyModuleConfigApplyFunc applyfn,
                                                            void *privdata) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_RegisterUnsignedNumericConfig)(ValkeyModuleCtx *ctx,
-                                                           const char *name,
-                                                           unsigned long long default_val,
-                                                           unsigned int flags,
-                                                           unsigned long long min,
-                                                           unsigned long long max,
-                                                           ValkeyModuleConfigGetUnsignedNumericFunc getfn,
-                                                           ValkeyModuleConfigSetUnsignedNumericFunc setfn,
-                                                           ValkeyModuleConfigApplyFunc applyfn,
-                                                           void *privdata) VALKEYMODULE_ATTR;
+                                                                   const char *name,
+                                                                   unsigned long long default_val,
+                                                                   unsigned int flags,
+                                                                   unsigned long long min,
+                                                                   unsigned long long max,
+                                                                   ValkeyModuleConfigGetUnsignedNumericFunc getfn,
+                                                                   ValkeyModuleConfigSetUnsignedNumericFunc setfn,
+                                                                   ValkeyModuleConfigApplyFunc applyfn,
+                                                                   void *privdata) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_RegisterStringConfig)(ValkeyModuleCtx *ctx,
                                                           const char *name,
                                                           const char *default_val,
