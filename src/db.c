@@ -1004,13 +1004,6 @@ void dictScanCallback(void *privdata, const dictEntry *de) {
         if (!data->only_keys) {
             val = dictGetVal(de);
         }
-    } else if (o->type == OBJ_ZSET) {
-        key = sdsdup(keysds);
-        if (!data->only_keys) {
-            char buf[MAX_LONG_DOUBLE_CHARS];
-            int len = ld2string(buf, sizeof(buf), *(double *)dictGetVal(de), LD_STR_AUTO);
-            val = sdsnewlen(buf, len);
-        }
     } else {
         serverPanic("Type not handled in dict SCAN callback.");
     }
@@ -1021,13 +1014,26 @@ void dictScanCallback(void *privdata, const dictEntry *de) {
 
 void hashtableScanCallback(void *privdata, void *entry) {
     scanData *data = (scanData *)privdata;
+    sds val = NULL;
+    sds key = NULL;
+
     robj *o = data->o;
     list *keys = data->keys;
     data->sampled++;
 
-    /* currently only implemented for SET scan */
-    serverAssert(o && o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HASHTABLE);
-    sds key = (sds)entry; /* Specific for OBJ_SET */
+    /* This callback is only used for scanning elements within a key (hash
+     * fields, set elements, etc.) so o must be set here. */
+    serverAssert(o != NULL);
+
+    /* get key */
+    if (o->type == OBJ_SET) {
+        key = (sds)entry;
+    } else if (o->type == OBJ_ZSET) {
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = node->ele;
+    } else {
+        serverPanic("Type not handled in hashset SCAN callback.");
+    }
 
     /* Filter element if it does not match the pattern. */
     if (data->pattern) {
@@ -1036,7 +1042,23 @@ void hashtableScanCallback(void *privdata, void *entry) {
         }
     }
 
+    if (o->type == OBJ_SET) {
+        /* no value, key used by reference */
+    } else if (o->type == OBJ_ZSET) {
+        /* zset data is copied */
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = sdsdup(node->ele);
+        if (!data->only_keys) {
+            char buf[MAX_LONG_DOUBLE_CHARS];
+            int len = ld2string(buf, sizeof(buf), node->score, LD_STR_AUTO);
+            val = sdsnewlen(buf, len);
+        }
+    } else {
+        serverPanic("Type not handled in hashset SCAN callback.");
+    }
+
     listAddNodeTail(keys, key);
+    if (val) listAddNodeTail(keys, val);
 }
 
 /* Try to parse a SCAN cursor stored at object 'o':
@@ -1184,7 +1206,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
         shallow_copied_list_items = 1;
     } else if (o->type == OBJ_ZSET && o->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = o->ptr;
-        dict_table = zs->dict;
+        hashtable_table = zs->ht;
         /* scanning ZSET allocates temporary strings even though it's a dict */
         shallow_copied_list_items = 0;
     }
