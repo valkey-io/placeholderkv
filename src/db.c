@@ -101,6 +101,7 @@ void updateLFU(robj *val) {
 robj *lookupKey(serverDb *db, robj *key, int flags) {
     int dict_index = getKVStoreIndexForKey(key->ptr);
     robj *val = dbFindWithDictIndex(db, key->ptr, dict_index);
+    int is_expired = 0;
     if (val) {
         /* Forcing deletion of expired keys on a replica makes the replica
          * inconsistent with the primary. We forbid it on readonly replicas, but
@@ -117,6 +118,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         if (expireIfNeededWithDictIndex(db, key, val, expire_flags, dict_index) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
+            is_expired = 1;
         }
     }
 
@@ -141,7 +143,12 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         /* TODO: Use separate hits stats for WRITE */
     } else {
         if (!(flags & (LOOKUP_NONOTIFY | LOOKUP_WRITE))) notifyKeyspaceEvent(NOTIFY_KEY_MISS, "keymiss", key, db->id);
-        if (!(flags & (LOOKUP_NOSTATS | LOOKUP_WRITE))) server.stat_keyspace_misses++;
+        if (!(flags & (LOOKUP_NOSTATS | LOOKUP_WRITE))) {
+            server.stat_keyspace_misses++;
+            if (is_expired) {
+                server.stat_keyspace_expiration_misses++;
+            }
+        }
         /* TODO: Use separate misses stats and notify event for WRITE */
     }
 

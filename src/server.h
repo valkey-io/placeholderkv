@@ -932,7 +932,6 @@ typedef struct readyList {
 #define SELECTOR_FLAG_ALLCOMMANDS (1 << 2) /* The user can run all commands. */
 #define SELECTOR_FLAG_ALLCHANNELS (1 << 3) /* The user can mention any Pub/Sub \
                                               channel. */
-
 typedef struct {
     sds name;         /* The username as an SDS string. */
     uint32_t flags;   /* See USER_FLAG_* */
@@ -1671,6 +1670,7 @@ struct valkeyServer {
     monotime stat_last_eviction_exceeded_time;     /* Timestamp of current eviction start, unit us */
     long long stat_keyspace_hits;                  /* Number of successful lookups of keys */
     long long stat_keyspace_misses;                /* Number of failed lookups of keys */
+    long long stat_keyspace_expiration_misses;     /* Number of failed lookups of keys due to expiration */
     long long stat_active_defrag_hits;             /* number of allocations moved */
     long long stat_active_defrag_misses;           /* number of allocations scanned but not moved */
     long long stat_active_defrag_key_hits;         /* number of keys with moved allocations */
