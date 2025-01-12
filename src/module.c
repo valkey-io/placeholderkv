@@ -63,6 +63,7 @@
 #include "valkeymodule.h"
 #include "io_threads.h"
 #include "functions.h"
+#include "module.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -74,6 +75,12 @@
  * structures that are never exposed to Modules, if not as void
  * pointers that have an API the module can call with them)
  * -------------------------------------------------------------------------- */
+
+struct moduleLoadQueueEntry {
+    sds path;
+    int argc;
+    robj **argv;
+};
 
 struct ValkeyModuleInfoCtx {
     struct ValkeyModule *module;
@@ -644,6 +651,48 @@ void *VM_PoolAlloc(ValkeyModuleCtx *ctx, size_t bytes) {
  * Helpers for modules API implementation
  * -------------------------------------------------------------------------- */
 
+static void initClientModuleData(client *c) {
+    if (c->module_data) return;
+    c->module_data = zcalloc(sizeof(ClientModuleData));
+}
+
+void freeClientModuleData(client *c) {
+    if (!c->module_data) return;
+    /* Free the ValkeyModuleBlockedClient held onto for reprocessing if not already freed. */
+    zfree(c->module_data->module_blocked_client);
+    zfree(c->module_data);
+    c->module_data = NULL;
+}
+
+void moduleEnqueueLoadModule(sds path, sds *argv, int argc) {
+    int i;
+    struct moduleLoadQueueEntry *loadmod;
+
+    loadmod = zmalloc(sizeof(struct moduleLoadQueueEntry));
+    loadmod->argv = argc ? zmalloc(sizeof(robj *) * argc) : NULL;
+    loadmod->path = sdsnew(path);
+    loadmod->argc = argc;
+    for (i = 0; i < argc; i++) {
+        loadmod->argv[i] = createRawStringObject(argv[i], sdslen(argv[i]));
+    }
+    listAddNodeTail(server.loadmodule_queue, loadmod);
+}
+
+sds moduleLoadQueueEntryToLoadmoduleOptionStr(ValkeyModule *module,
+                                              const char *config_option_str) {
+    sds line;
+
+    line = sdsnew(config_option_str);
+    line = sdscatlen(line, " ", 1);
+    line = sdscatsds(line, module->loadmod->path);
+    for (int i = 0; i < module->loadmod->argc; i++) {
+        line = sdscatlen(line, " ", 1);
+        line = sdscatsds(line, module->loadmod->argv[i]->ptr);
+    }
+
+    return line;
+}
+
 client *moduleAllocTempClient(void) {
     client *c = NULL;
 
@@ -685,11 +734,11 @@ void moduleReleaseTempClient(client *c) {
     c->flag.fake = 1;
     c->user = NULL; /* Root user */
     c->cmd = c->lastcmd = c->realcmd = c->io_parsed_cmd = NULL;
-    if (c->bstate.async_rm_call_handle) {
-        ValkeyModuleAsyncRMCallPromise *promise = c->bstate.async_rm_call_handle;
+    if (c->bstate && c->bstate->async_rm_call_handle) {
+        ValkeyModuleAsyncRMCallPromise *promise = c->bstate->async_rm_call_handle;
         promise->c = NULL; /* Remove the client from the promise so it will no longer be possible to abort it. */
         freeValkeyModuleAsyncRMCallPromise(promise);
-        c->bstate.async_rm_call_handle = NULL;
+        c->bstate->async_rm_call_handle = NULL;
     }
     moduleTempClients[moduleTempClientCount++] = c;
 }
@@ -861,7 +910,7 @@ static CallReply *moduleParseReply(client *c, ValkeyModuleCtx *ctx) {
 
 void moduleCallCommandUnblockedHandler(client *c) {
     ValkeyModuleCtx ctx;
-    ValkeyModuleAsyncRMCallPromise *promise = c->bstate.async_rm_call_handle;
+    ValkeyModuleAsyncRMCallPromise *promise = c->bstate->async_rm_call_handle;
     serverAssert(promise);
     ValkeyModule *module = promise->module;
     if (!promise->on_unblocked) {
@@ -6533,7 +6582,7 @@ ValkeyModuleCallReply *VM_Call(ValkeyModuleCtx *ctx, const char *cmdname, const 
             .ctx = (ctx->flags & VALKEYMODULE_CTX_AUTO_MEMORY) ? ctx : NULL,
         };
         reply = callReplyCreatePromise(promise);
-        c->bstate.async_rm_call_handle = promise;
+        c->bstate->async_rm_call_handle = promise;
         if (!(call_flags & CMD_CALL_PROPAGATE_AOF)) {
             /* No need for AOF propagation, set the relevant flags of the client */
             c->flag.module_prevent_aof_prop = 1;
@@ -7401,7 +7450,7 @@ void *VM_LoadDataTypeFromStringEncver(const ValkeyModuleString *str, const modul
     void *ret;
 
     rioInitWithBuffer(&payload, str->ptr);
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
 
     /* All VM_Save*() calls always write a version 2 compatible format, so we
      * need to make sure we read the same.
@@ -7433,7 +7482,7 @@ ValkeyModuleString *VM_SaveDataTypeToString(ValkeyModuleCtx *ctx, void *data, co
     ValkeyModuleIO io;
 
     rioInitWithBuffer(&payload, sdsempty());
-    moduleInitIOContext(io, (moduleType *)mt, &payload, NULL, -1);
+    moduleInitIOContext(&io, (moduleType *)mt, &payload, NULL, -1);
     mt->rdb_save(&io, data);
     if (io.ctx) {
         moduleFreeContext(io.ctx);
@@ -7631,7 +7680,7 @@ void VM__Assert(const char *estr, const char *file, int line) {
  * command. The call is skipped if the latency is smaller than the configured
  * latency-monitor-threshold. */
 void VM_LatencyAddSample(const char *event, mstime_t latency) {
-    if (latency >= server.latency_monitor_threshold) latencyAddSample(event, latency);
+    latencyAddSampleIfNeeded(event, latency);
 }
 
 /* --------------------------------------------------------------------------
@@ -7643,7 +7692,7 @@ void VM_LatencyAddSample(const char *event, mstime_t latency) {
 
 /* Returns 1 if the client already in the moduleUnblocked list, 0 otherwise. */
 int isModuleClientUnblocked(client *c) {
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
 
     return bc->unblocked == 1;
 }
@@ -7661,7 +7710,7 @@ int isModuleClientUnblocked(client *c) {
  * The structure ValkeyModuleBlockedClient will be always deallocated when
  * running the list of clients blocked by a module that need to be unblocked. */
 void unblockClientFromModule(client *c) {
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
 
     /* Call the disconnection callback if any. Note that
      * bc->disconnect_callback is set to NULL if the client gets disconnected
@@ -7729,9 +7778,10 @@ ValkeyModuleBlockedClient *moduleBlockClient(ValkeyModuleCtx *ctx,
     client *c = ctx->client;
     int islua = scriptIsRunning();
     int ismulti = server.in_exec;
+    initClientBlockingState(c);
 
-    c->bstate.module_blocked_handle = zmalloc(sizeof(ValkeyModuleBlockedClient));
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    c->bstate->module_blocked_handle = zmalloc(sizeof(ValkeyModuleBlockedClient));
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
     ctx->module->blocked_clients++;
 
     /* We need to handle the invalid operation of calling modules blocking
@@ -7759,7 +7809,7 @@ ValkeyModuleBlockedClient *moduleBlockClient(ValkeyModuleCtx *ctx,
     if (timeout_ms) {
         mstime_t now = mstime();
         if (timeout_ms > LLONG_MAX - now) {
-            c->bstate.module_blocked_handle = NULL;
+            c->bstate->module_blocked_handle = NULL;
             addReplyError(c, "timeout is out of range"); /* 'timeout_ms+now' would overflow */
             return bc;
         }
@@ -7767,20 +7817,20 @@ ValkeyModuleBlockedClient *moduleBlockClient(ValkeyModuleCtx *ctx,
     }
 
     if (islua || ismulti) {
-        c->bstate.module_blocked_handle = NULL;
+        c->bstate->module_blocked_handle = NULL;
         addReplyError(c, islua ? "Blocking module command called from Lua script"
                                : "Blocking module command called from transaction");
     } else if (ctx->flags & VALKEYMODULE_CTX_BLOCKED_REPLY) {
-        c->bstate.module_blocked_handle = NULL;
+        c->bstate->module_blocked_handle = NULL;
         addReplyError(c, "Blocking module command called from a Reply callback context");
     } else if (!auth_reply_callback && clientHasModuleAuthInProgress(c)) {
-        c->bstate.module_blocked_handle = NULL;
+        c->bstate->module_blocked_handle = NULL;
         addReplyError(c, "Clients undergoing module based authentication can only be blocked on auth");
     } else {
         if (keys) {
             blockForKeys(c, BLOCKED_MODULE, keys, numkeys, timeout, flags & VALKEYMODULE_BLOCK_UNBLOCK_DELETED);
         } else {
-            c->bstate.timeout = timeout;
+            c->bstate->timeout = timeout;
             blockClient(c, BLOCKED_MODULE);
         }
     }
@@ -7876,7 +7926,7 @@ void moduleUnregisterAuthCBs(ValkeyModule *module) {
 /* Search for & attempt next module auth callback after skipping the ones already attempted.
  * Returns the result of the module auth callback. */
 int attemptNextAuthCb(client *c, robj *username, robj *password, robj **err) {
-    int handle_next_callback = c->module_auth_ctx == NULL;
+    int handle_next_callback = (!c->module_data || c->module_data->module_auth_ctx == NULL);
     ValkeyModuleAuthCtx *cur_auth_ctx = NULL;
     listNode *ln;
     listIter li;
@@ -7886,7 +7936,7 @@ int attemptNextAuthCb(client *c, robj *username, robj *password, robj **err) {
         cur_auth_ctx = listNodeValue(ln);
         /* Skip over the previously attempted auth contexts. */
         if (!handle_next_callback) {
-            handle_next_callback = cur_auth_ctx == c->module_auth_ctx;
+            handle_next_callback = cur_auth_ctx == c->module_data->module_auth_ctx;
             continue;
         }
         /* Remove the module auth complete flag before we attempt the next cb. */
@@ -7895,7 +7945,8 @@ int attemptNextAuthCb(client *c, robj *username, robj *password, robj **err) {
         moduleCreateContext(&ctx, cur_auth_ctx->module, VALKEYMODULE_CTX_NONE);
         ctx.client = c;
         *err = NULL;
-        c->module_auth_ctx = cur_auth_ctx;
+        initClientModuleData(c);
+        c->module_data->module_auth_ctx = cur_auth_ctx;
         result = cur_auth_ctx->auth_cb(&ctx, username, password, err);
         moduleFreeContext(&ctx);
         if (result == VALKEYMODULE_AUTH_HANDLED) break;
@@ -7911,8 +7962,8 @@ int attemptNextAuthCb(client *c, robj *username, robj *password, robj **err) {
  * return the result of the reply callback. */
 int attemptBlockedAuthReplyCallback(client *c, robj *username, robj *password, robj **err) {
     int result = VALKEYMODULE_AUTH_NOT_HANDLED;
-    if (!c->module_blocked_client) return result;
-    ValkeyModuleBlockedClient *bc = (ValkeyModuleBlockedClient *)c->module_blocked_client;
+    if (!c->module_data || !c->module_data->module_blocked_client) return result;
+    ValkeyModuleBlockedClient *bc = (ValkeyModuleBlockedClient *)c->module_data->module_blocked_client;
     bc->client = c;
     if (bc->auth_reply_cb) {
         ValkeyModuleCtx ctx;
@@ -7925,7 +7976,7 @@ int attemptBlockedAuthReplyCallback(client *c, robj *username, robj *password, r
         moduleFreeContext(&ctx);
     }
     moduleInvokeFreePrivDataCallback(c, bc);
-    c->module_blocked_client = NULL;
+    c->module_data->module_blocked_client = NULL;
     c->lastcmd->microseconds += bc->background_duration;
     bc->module->blocked_clients--;
     zfree(bc);
@@ -7953,7 +8004,7 @@ int checkModuleAuthentication(client *c, robj *username, robj *password, robj **
         serverAssert(result == VALKEYMODULE_AUTH_HANDLED);
         return AUTH_BLOCKED;
     }
-    c->module_auth_ctx = NULL;
+    if (c->module_data) c->module_data->module_auth_ctx = NULL;
     if (result == VALKEYMODULE_AUTH_NOT_HANDLED) {
         c->flag.module_auth_has_result = 0;
         return AUTH_NOT_HANDLED;
@@ -7975,7 +8026,7 @@ int checkModuleAuthentication(client *c, robj *username, robj *password, robj **
  * This function returns 1 if client was served (and should be unblocked) */
 int moduleTryServeClientBlockedOnKey(client *c, robj *key) {
     int served = 0;
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
 
     /* Protect against re-processing: don't serve clients that are already
      * in the unblocking list for any reason (including VM_UnblockClient()
@@ -8187,14 +8238,14 @@ int moduleUnblockClientByHandle(ValkeyModuleBlockedClient *bc, void *privdata) {
 /* This API is used by the server core to unblock a client that was blocked
  * by a module. */
 void moduleUnblockClient(client *c) {
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
     moduleUnblockClientByHandle(bc, NULL);
 }
 
 /* Return true if the client 'c' was blocked by a module using
  * VM_BlockClientOnKeys(). */
 int moduleClientIsBlockedOnKeys(client *c) {
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
     return bc->blocked_on_keys;
 }
 
@@ -8304,7 +8355,7 @@ void moduleHandleBlockedClients(void) {
         /* Hold onto the blocked client if module auth is in progress. The reply callback is invoked
          * when the client is reprocessed. */
         if (c && clientHasModuleAuthInProgress(c)) {
-            c->module_blocked_client = bc;
+            c->module_data->module_blocked_client = bc;
         } else {
             /* Free privdata if any. */
             moduleInvokeFreePrivDataCallback(c, bc);
@@ -8325,7 +8376,7 @@ void moduleHandleBlockedClients(void) {
         if (c && !clientHasModuleAuthInProgress(c)) {
             int had_errors = c->deferred_reply_errors ? !!listLength(c->deferred_reply_errors)
                                                       : (server.stat_total_error_replies != prev_error_replies);
-            updateStatsOnUnblock(c, bc->background_duration, reply_us, had_errors);
+            updateStatsOnUnblock(c, bc->background_duration, reply_us, (had_errors ? ERROR_COMMAND_FAILED : 0));
         }
 
         if (c != NULL) {
@@ -8366,9 +8417,9 @@ void moduleHandleBlockedClients(void) {
  * moduleBlockedClientTimedOut().
  */
 int moduleBlockedClientMayTimeout(client *c) {
-    if (c->bstate.btype != BLOCKED_MODULE) return 1;
+    if (c->bstate->btype != BLOCKED_MODULE) return 1;
 
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
     return (bc && bc->timeout_callback != NULL);
 }
 
@@ -8384,7 +8435,7 @@ int moduleBlockedClientMayTimeout(client *c) {
  * of the client synchronously. This ensures that we can reply to the client before
  * resetClient() is called. */
 void moduleBlockedClientTimedOut(client *c, int from_module) {
-    ValkeyModuleBlockedClient *bc = c->bstate.module_blocked_handle;
+    ValkeyModuleBlockedClient *bc = c->bstate->module_blocked_handle;
 
     /* Protect against re-processing: don't serve clients that are already
      * in the unblocking list for any reason (including VM_UnblockClient()
@@ -8411,7 +8462,8 @@ void moduleBlockedClientTimedOut(client *c, int from_module) {
     moduleFreeContext(&ctx);
 
     if (!from_module)
-        updateStatsOnUnblock(c, bc->background_duration, 0, server.stat_total_error_replies != prev_error_replies);
+        updateStatsOnUnblock(c, bc->background_duration, 0,
+                             ((server.stat_total_error_replies != prev_error_replies) ? ERROR_COMMAND_FAILED : 0));
 
     /* For timeout events, we do not want to call the disconnect callback,
      * because the blocked client will be automatically disconnected in
@@ -9522,16 +9574,16 @@ static void eventLoopHandleOneShotEvents(void) {
  * A client's user can be changed through the AUTH command, module
  * authentication, and when a client is freed. */
 void moduleNotifyUserChanged(client *c) {
-    if (c->auth_callback) {
-        c->auth_callback(c->id, c->auth_callback_privdata);
+    if (!c->module_data || !c->module_data->auth_callback) return;
 
-        /* The callback will fire exactly once, even if the user remains
-         * the same. It is expected to completely clean up the state
-         * so all references are cleared here. */
-        c->auth_callback = NULL;
-        c->auth_callback_privdata = NULL;
-        c->auth_module = NULL;
-    }
+    c->module_data->auth_callback(c->id, c->module_data->auth_callback_privdata);
+
+    /* The callback will fire exactly once, even if the user remains
+     * the same. It is expected to completely clean up the state
+     * so all references are cleared here. */
+    c->module_data->auth_callback = NULL;
+    c->module_data->auth_callback_privdata = NULL;
+    c->module_data->auth_module = NULL;
 }
 
 void revokeClientAuthentication(client *c) {
@@ -9562,9 +9614,9 @@ static void moduleFreeAuthenticatedClients(ValkeyModule *module) {
     listRewind(server.clients, &li);
     while ((ln = listNext(&li)) != NULL) {
         client *c = listNodeValue(ln);
-        if (!c->auth_module) continue;
+        if (!c->module_data || !c->module_data->auth_module) continue;
 
-        ValkeyModule *auth_module = (ValkeyModule *)c->auth_module;
+        ValkeyModule *auth_module = (ValkeyModule *)c->module_data->auth_module;
         if (auth_module == module) {
             revokeClientAuthentication(c);
         }
@@ -9872,9 +9924,10 @@ static int authenticateClientWithUser(ValkeyModuleCtx *ctx,
     }
 
     if (callback) {
-        ctx->client->auth_callback = callback;
-        ctx->client->auth_callback_privdata = privdata;
-        ctx->client->auth_module = ctx->module;
+        initClientModuleData(ctx->client);
+        ctx->client->module_data->auth_callback = callback;
+        ctx->client->module_data->auth_callback_privdata = privdata;
+        ctx->client->module_data->auth_module = ctx->module;
     }
 
     if (client_id) {
@@ -11043,12 +11096,10 @@ static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
     robj *o = data->key->value;
     robj *field = createStringObject(key, sdslen(key));
     robj *value = NULL;
+
     if (o->type == OBJ_HASH) {
         sds val = dictGetVal(de);
         value = createStringObject(val, sdslen(val));
-    } else if (o->type == OBJ_ZSET) {
-        double *val = (double *)dictGetVal(de);
-        value = createStringObjectFromLongDouble(*val, 0);
     } else {
         serverPanic("unexpected object type");
     }
@@ -11061,12 +11112,24 @@ static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
 static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
     ScanKeyCBData *data = privdata;
     robj *o = data->key->value;
-    serverAssert(o->type == OBJ_SET);
-    sds key = entry;
+    robj *value = NULL;
+    sds key = NULL;
+
+    if (o->type == OBJ_SET) {
+        key = entry;
+        /* no value */
+    } else if (o->type == OBJ_ZSET) {
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = node->ele;
+        value = createStringObjectFromLongDouble(node->score, 0);
+    } else {
+        serverPanic("unexpected object type");
+    }
     robj *field = createStringObject(key, sdslen(key));
 
-    data->fn(data->key, field, NULL, data->user_data);
+    data->fn(data->key, field, value, data->user_data);
     decrRefCount(field);
+    if (value) decrRefCount(value);
 }
 
 /* Scan api that allows a module to scan the elements in a hash, set or sorted set key
@@ -11130,7 +11193,7 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
     } else if (o->type == OBJ_HASH) {
         if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
     } else if (o->type == OBJ_ZSET) {
-        if (o->encoding == OBJ_ENCODING_SKIPLIST) d = ((zset *)o->ptr)->dict;
+        if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->ht;
     } else {
         errno = EINVAL;
         return 0;

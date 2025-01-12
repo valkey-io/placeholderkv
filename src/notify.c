@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "module.h"
 
 /* This file implements keyspace events notification via Pub/Sub and
  * described at https://valkey.io/topics/notifications */

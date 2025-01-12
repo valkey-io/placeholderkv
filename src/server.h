@@ -701,171 +701,10 @@ typedef enum {
 #define OBJ_STREAM 6   /* Stream object. */
 #define OBJ_TYPE_MAX 7 /* Maximum number of object types */
 
-/* Extract encver / signature from a module type ID. */
-#define VALKEYMODULE_TYPE_ENCVER_BITS 10
-#define VALKEYMODULE_TYPE_ENCVER_MASK ((1 << VALKEYMODULE_TYPE_ENCVER_BITS) - 1)
-#define VALKEYMODULE_TYPE_ENCVER(id) ((id) & VALKEYMODULE_TYPE_ENCVER_MASK)
-#define VALKEYMODULE_TYPE_SIGN(id) \
-    (((id) & ~((uint64_t)VALKEYMODULE_TYPE_ENCVER_MASK)) >> VALKEYMODULE_TYPE_ENCVER_BITS)
-
-/* Bit flags for moduleTypeAuxSaveFunc */
-#define VALKEYMODULE_AUX_BEFORE_RDB (1 << 0)
-#define VALKEYMODULE_AUX_AFTER_RDB (1 << 1)
-
-struct ValkeyModule;
-struct ValkeyModuleIO;
-struct ValkeyModuleDigest;
-struct ValkeyModuleCtx;
-struct moduleLoadQueueEntry;
-struct ValkeyModuleKeyOptCtx;
-struct ValkeyModuleCommand;
-struct clusterState;
-
-/* Each module type implementation should export a set of methods in order
- * to serialize and deserialize the value in the RDB file, rewrite the AOF
- * log, create the digest for "DEBUG DIGEST", and free the value when a key
- * is deleted. */
-typedef void *(*moduleTypeLoadFunc)(struct ValkeyModuleIO *io, int encver);
-typedef void (*moduleTypeSaveFunc)(struct ValkeyModuleIO *io, void *value);
-typedef int (*moduleTypeAuxLoadFunc)(struct ValkeyModuleIO *rdb, int encver, int when);
-typedef void (*moduleTypeAuxSaveFunc)(struct ValkeyModuleIO *rdb, int when);
-typedef void (*moduleTypeRewriteFunc)(struct ValkeyModuleIO *io, struct serverObject *key, void *value);
-typedef void (*moduleTypeDigestFunc)(struct ValkeyModuleDigest *digest, void *value);
-typedef size_t (*moduleTypeMemUsageFunc)(const void *value);
-typedef void (*moduleTypeFreeFunc)(void *value);
-typedef size_t (*moduleTypeFreeEffortFunc)(struct serverObject *key, const void *value);
-typedef void (*moduleTypeUnlinkFunc)(struct serverObject *key, void *value);
-typedef void *(*moduleTypeCopyFunc)(struct serverObject *fromkey, struct serverObject *tokey, const void *value);
-typedef int (*moduleTypeDefragFunc)(struct ValkeyModuleDefragCtx *ctx, struct serverObject *key, void **value);
-typedef size_t (*moduleTypeMemUsageFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value, size_t sample_size);
-typedef void (*moduleTypeFreeFunc2)(struct ValkeyModuleKeyOptCtx *ctx, void *value);
-typedef size_t (*moduleTypeFreeEffortFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value);
-typedef void (*moduleTypeUnlinkFunc2)(struct ValkeyModuleKeyOptCtx *ctx, void *value);
-typedef void *(*moduleTypeCopyFunc2)(struct ValkeyModuleKeyOptCtx *ctx, const void *value);
-typedef int (*moduleTypeAuthCallback)(struct ValkeyModuleCtx *ctx, void *username, void *password, const char **err);
-
-
-/* The module type, which is referenced in each value of a given type, defines
- * the methods and links to the module exporting the type. */
-typedef struct ValkeyModuleType {
-    uint64_t id; /* Higher 54 bits of type ID + 10 lower bits of encoding ver. */
-    struct ValkeyModule *module;
-    moduleTypeLoadFunc rdb_load;
-    moduleTypeSaveFunc rdb_save;
-    moduleTypeRewriteFunc aof_rewrite;
-    moduleTypeMemUsageFunc mem_usage;
-    moduleTypeDigestFunc digest;
-    moduleTypeFreeFunc free;
-    moduleTypeFreeEffortFunc free_effort;
-    moduleTypeUnlinkFunc unlink;
-    moduleTypeCopyFunc copy;
-    moduleTypeDefragFunc defrag;
-    moduleTypeAuxLoadFunc aux_load;
-    moduleTypeAuxSaveFunc aux_save;
-    moduleTypeMemUsageFunc2 mem_usage2;
-    moduleTypeFreeEffortFunc2 free_effort2;
-    moduleTypeUnlinkFunc2 unlink2;
-    moduleTypeCopyFunc2 copy2;
-    moduleTypeAuxSaveFunc aux_save2;
-    int aux_save_triggers;
-    char name[10]; /* 9 bytes name + null term. Charset: A-Z a-z 0-9 _- */
-} moduleType;
-
-/* In Object 'robj' structures of type OBJ_MODULE, the value pointer
- * is set to the following structure, referencing the moduleType structure
- * in order to work with the value, and at the same time providing a raw
- * pointer to the value, as created by the module commands operating with
- * the module type.
- *
- * So for example in order to free such a value, it is possible to use
- * the following code:
- *
- *  if (robj->type == OBJ_MODULE) {
- *      moduleValue *mt = robj->ptr;
- *      mt->type->free(mt->value);
- *      zfree(mt); // We need to release this in-the-middle struct as well.
- *  }
- */
-typedef struct moduleValue {
-    moduleType *type;
-    void *value;
-} moduleValue;
-
-/* This structure represents a module inside the system. */
-struct ValkeyModule {
-    void *handle;                         /* Module dlopen() handle. */
-    char *name;                           /* Module name. */
-    int ver;                              /* Module version. We use just progressive integers. */
-    int apiver;                           /* Module API version as requested during initialization.*/
-    list *types;                          /* Module data types. */
-    list *usedby;                         /* List of modules using APIs from this one. */
-    list *using;                          /* List of modules we use some APIs of. */
-    list *filters;                        /* List of filters the module has registered. */
-    list *module_configs;                 /* List of configurations the module has registered */
-    int configs_initialized;              /* Have the module configurations been initialized? */
-    int in_call;                          /* RM_Call() nesting level */
-    int in_hook;                          /* Hooks callback nesting level for this module (0 or 1). */
-    int options;                          /* Module options and capabilities. */
-    int blocked_clients;                  /* Count of ValkeyModuleBlockedClient in this module. */
-    ValkeyModuleInfoFunc info_cb;         /* Callback for module to add INFO fields. */
-    ValkeyModuleDefragFunc defrag_cb;     /* Callback for global data defrag. */
-    struct moduleLoadQueueEntry *loadmod; /* Module load arguments for config rewrite. */
-    int num_commands_with_acl_categories; /* Number of commands in this module included in acl categories */
-    int onload;                           /* Flag to identify if the call is being made from Onload (0 or 1) */
-    size_t num_acl_categories_added;      /* Number of acl categories added by this module. */
-};
-typedef struct ValkeyModule ValkeyModule;
-
-/* This is a wrapper for the 'rio' streams used inside rdb.c in the server, so that
- * the user does not have to take the total count of the written bytes nor
- * to care about error conditions. */
-struct ValkeyModuleIO {
-    size_t bytes;                /* Bytes read / written so far. */
-    rio *rio;                    /* Rio stream. */
-    moduleType *type;            /* Module type doing the operation. */
-    int error;                   /* True if error condition happened. */
-    struct ValkeyModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
-    struct serverObject *key;    /* Optional name of key processed */
-    int dbid;                    /* The dbid of the key being processed, -1 when unknown. */
-    sds pre_flush_buffer;        /* A buffer that should be flushed before next write operation
-                                  * See rdbSaveSingleModuleAux for more details */
-};
-
-/* Macro to initialize an IO context. Note that the 'ver' field is populated
- * inside rdb.c according to the version of the value to load. */
-#define moduleInitIOContext(iovar, mtype, rioptr, keyptr, db) \
-    do {                                                      \
-        iovar.rio = rioptr;                                   \
-        iovar.type = mtype;                                   \
-        iovar.bytes = 0;                                      \
-        iovar.error = 0;                                      \
-        iovar.key = keyptr;                                   \
-        iovar.dbid = db;                                      \
-        iovar.ctx = NULL;                                     \
-        iovar.pre_flush_buffer = NULL;                        \
-    } while (0)
-
-/* This is a structure used to export DEBUG DIGEST capabilities to
- * modules. We want to capture both the ordered and unordered elements of
- * a data structure, so that a digest can be created in a way that correctly
- * reflects the values. See the DEBUG DIGEST command implementation for more
- * background. */
-struct ValkeyModuleDigest {
-    unsigned char o[20];      /* Ordered elements. */
-    unsigned char x[20];      /* Xored elements. */
-    struct serverObject *key; /* Optional name of key processed */
-    int dbid;                 /* The dbid of the key being processed */
-};
-
-/* Just start with a digest composed of all zero bytes. */
-#define moduleInitDigestContext(mdvar)       \
-    do {                                     \
-        memset(mdvar.o, 0, sizeof(mdvar.o)); \
-        memset(mdvar.x, 0, sizeof(mdvar.x)); \
-    } while (0)
+typedef struct ValkeyModuleType moduleType;
 
 /* Macro to check if the client is in the middle of module based authentication. */
-#define clientHasModuleAuthInProgress(c) ((c)->module_auth_ctx != NULL)
+#define clientHasModuleAuthInProgress(c) (((c)->module_data && (c)->module_data->module_auth_ctx != NULL))
 
 /* Objects encoding. Some kind of objects like Strings and Hashes can be
  * internally represented in multiple ways. The 'encoding' field of the object
@@ -1011,6 +850,7 @@ typedef struct multiState {
                              certain flag. */
     size_t argv_len_sums; /* mem used by all commands arguments */
     int alloc_count;      /* total number of multiCmd struct memory reserved. */
+    list watched_keys;
 } multiState;
 
 /* This structure holds the blocking operation state for a client.
@@ -1251,93 +1091,52 @@ typedef struct ClientFlags {
     uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
-typedef struct client {
-    uint64_t id; /* Client incremental unique ID. */
-    union {
-        uint64_t raw_flag;
-        struct ClientFlags flag;
-    };
-    connection *conn;
-    int resp;                            /* RESP protocol version. Can be 2 or 3. */
-    uint32_t capa;                       /* Client capabilities: CLIENT_CAPA* macros. */
-    serverDb *db;                        /* Pointer to currently SELECTed DB. */
-    robj *name;                          /* As set by CLIENT SETNAME. */
-    robj *lib_name;                      /* The client library name as set by CLIENT SETINFO. */
-    robj *lib_ver;                       /* The client library version as set by CLIENT SETINFO. */
-    sds querybuf;                        /* Buffer we use to accumulate client queries. */
-    size_t qb_pos;                       /* The position we have read in querybuf. */
-    size_t querybuf_peak;                /* Recent (100ms or more) peak of querybuf size. */
-    int argc;                            /* Num of arguments of current command. */
-    robj **argv;                         /* Arguments of current command. */
-    int argv_len;                        /* Size of argv array (may be more than argc) */
-    int original_argc;                   /* Num of arguments of original command if arguments were rewritten. */
-    robj **original_argv;                /* Arguments of original command if arguments were rewritten. */
-    size_t argv_len_sum;                 /* Sum of lengths of objects in argv list. */
-    volatile uint8_t io_read_state;      /* Indicate the IO read state of the client */
-    volatile uint8_t io_write_state;     /* Indicate the IO write state of the client */
-    uint8_t cur_tid;                     /* ID of IO thread currently performing IO for this client */
-    int nread;                           /* Number of bytes of the last read. */
-    int nwritten;                        /* Number of bytes of the last write. */
-    int read_flags;                      /* Client Read flags - used to communicate the client read state. */
-    uint16_t write_flags;                /* Client Write flags - used to communicate the client write state. */
-    struct serverCommand *cmd, *lastcmd; /* Last command executed. */
-    struct serverCommand *realcmd;       /* The original command that was executed by the client,
-                                           Used to update error stats in case the c->cmd was modified
-                                           during the command invocation (like on GEOADD for example). */
-    struct serverCommand *io_parsed_cmd; /* The command that was parsed by the IO thread. */
-    user *user;                          /* User associated with this connection. If the
-                                            user is set to NULL the connection can do
-                                            anything (admin). */
-    int reqtype;                         /* Request protocol type: PROTO_REQ_* */
-    int multibulklen;                    /* Number of multi bulk arguments left to read. */
-    long bulklen;                        /* Length of bulk argument in multi bulk request. */
-    list *reply;                         /* List of reply objects to send to the client. */
-    listNode *io_last_reply_block;       /* Last client reply block when sent to IO thread */
-    unsigned long long reply_bytes;      /* Tot bytes of objects in reply list. */
-    list *deferred_reply_errors;         /* Used for module thread safe contexts. */
-    size_t sentlen;                      /* Amount of bytes already sent in the current
-                                            buffer or object being sent. */
-    time_t ctime;                        /* Client creation time. */
-    long duration;                       /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
-    int slot;                            /* The slot the client is executing against. Set to -1 if no slot is being used */
-    dictEntry *cur_script;               /* Cached pointer to the dictEntry of the script being executed. */
-    time_t last_interaction;             /* Time of the last interaction, used for timeout */
-    time_t obuf_soft_limit_reached_time;
-    int repl_state;                            /* Replication state if this is a replica. */
-    int repl_start_cmd_stream_on_ack;          /* Install replica write handler on first ACK. */
-    int repldbfd;                              /* Replication DB file descriptor. */
-    off_t repldboff;                           /* Replication DB file offset. */
-    off_t repldbsize;                          /* Replication DB file size. */
-    sds replpreamble;                          /* Replication DB preamble. */
-    long long read_reploff;                    /* Read replication offset if this is a primary. */
-    long long reploff;                         /* Applied replication offset if this is a primary. */
-    long long repl_applied;                    /* Applied replication data count in querybuf, if this is a replica. */
-    long long repl_ack_off;                    /* Replication ack offset, if this is a replica. */
-    long long repl_aof_off;                    /* Replication AOF fsync ack offset, if this is a replica. */
-    long long repl_ack_time;                   /* Replication ack time, if this is a replica. */
-    long long repl_last_partial_write;         /* The last time the server did a partial write from the RDB child pipe to this
-                                                  replica  */
-    long long psync_initial_offset;            /* FULLRESYNC reply offset other replicas
-                                                  copying this replica output buffer
-                                                  should use. */
-    char replid[CONFIG_RUN_ID_SIZE + 1];       /* primary replication ID (if primary). */
-    int replica_listening_port;                /* As configured with: REPLCONF listening-port */
-    char *replica_addr;                        /* Optionally given by REPLCONF ip-address */
-    int replica_version;                       /* Version on the form 0xMMmmpp. */
-    short replica_capa;                        /* Replica capabilities: REPLICA_CAPA_* bitwise OR. */
-    short replica_req;                         /* Replica requirements: REPLICA_REQ_* */
-    uint64_t associated_rdb_client_id;         /* The client id of this replica's rdb connection */
-    time_t rdb_client_disconnect_time;         /* Time of the first freeClient call on this client. Used for delaying free. */
-    multiState mstate;                         /* MULTI/EXEC state */
-    blockingState bstate;                      /* blocking state */
-    long long woff;                            /* Last write global replication offset. */
-    list *watched_keys;                        /* Keys WATCHED for MULTI/EXEC CAS */
-    dict *pubsub_channels;                     /* channels a client is interested in (SUBSCRIBE) */
-    dict *pubsub_patterns;                     /* patterns a client is interested in (PSUBSCRIBE) */
-    dict *pubsubshard_channels;                /* shard level channels a client is interested in (SSUBSCRIBE) */
-    sds peerid;                                /* Cached peer ID. */
-    sds sockname;                              /* Cached connection target address. */
-    listNode *client_list_node;                /* list node in client list */
+typedef struct ClientPubSubData {
+    dict *pubsub_channels;      /* channels a client is interested in (SUBSCRIBE) */
+    dict *pubsub_patterns;      /* patterns a client is interested in (PSUBSCRIBE) */
+    dict *pubsubshard_channels; /* shard level channels a client is interested in (SSUBSCRIBE) */
+    /* If this client is in tracking mode and this field is non zero,
+     * invalidation messages for keys fetched by this client will be sent to
+     * the specified client ID. */
+    uint64_t client_tracking_redirection;
+    rax *client_tracking_prefixes; /* A dictionary of prefixes we are already
+                                      subscribed to in BCAST mode, in the
+                                      context of client side caching. */
+} ClientPubSubData;
+
+typedef struct ClientReplicationData {
+    int repl_state;                      /* Replication state if this is a replica. */
+    int repl_start_cmd_stream_on_ack;    /* Install replica write handler on first ACK. */
+    int repldbfd;                        /* Replication DB file descriptor. */
+    off_t repldboff;                     /* Replication DB file offset. */
+    off_t repldbsize;                    /* Replication DB file size. */
+    sds replpreamble;                    /* Replication DB preamble. */
+    long long read_reploff;              /* Read replication offset if this is a primary. */
+    long long reploff;                   /* Applied replication offset if this is a primary. */
+    long long repl_applied;              /* Applied replication data count in querybuf, if this is a replica. */
+    long long repl_ack_off;              /* Replication ack offset, if this is a replica. */
+    long long repl_aof_off;              /* Replication AOF fsync ack offset, if this is a replica. */
+    long long repl_ack_time;             /* Replication ack time, if this is a replica. */
+    long long repl_last_partial_write;   /* The last time the server did a partial write from the RDB child pipe to this
+                                            replica  */
+    long long psync_initial_offset;      /* FULLRESYNC reply offset other replicas
+                                            copying this replica output buffer
+                                            should use. */
+    char replid[CONFIG_RUN_ID_SIZE + 1]; /* primary replication ID (if primary). */
+    int replica_listening_port;          /* As configured with: REPLCONF listening-port */
+    char *replica_addr;                  /* Optionally given by REPLCONF ip-address */
+    int replica_version;                 /* Version on the form 0xMMmmpp. */
+    short replica_capa;                  /* Replica capabilities: REPLICA_CAPA_* bitwise OR. */
+    short replica_req;                   /* Replica requirements: REPLICA_REQ_* */
+    uint64_t associated_rdb_client_id;   /* The client id of this replica's rdb connection */
+    time_t rdb_client_disconnect_time;   /* Time of the first freeClient call on this client. Used for delaying free. */
+    listNode *ref_repl_buf_node;         /* Referenced node of replication buffer blocks,
+                                           see the definition of replBufBlock. */
+    size_t ref_block_pos;                /* Access position of referenced buffer block,
+                                           i.e. the next offset to send. */
+} ClientReplicationData;
+
+typedef struct ClientModuleData {
     void *module_blocked_client;               /* Pointer to the ValkeyModuleBlockedClient associated with this
                                                 * client. This is set in case of module authentication before the
                                                 * unblocked client is reprocessed to handle reply callbacks. */
@@ -1353,50 +1152,103 @@ typedef struct client {
     void *auth_module;                         /* The module that owns the callback, which is used
                                                 * to disconnect the client if the module is
                                                 * unloaded for cleanup. Opaque for the Server Core.*/
+} ClientModuleData;
 
-    /* If this client is in tracking mode and this field is non zero,
-     * invalidation messages for keys fetched by this client will be sent to
-     * the specified client ID. */
-    uint64_t client_tracking_redirection;
-    rax *client_tracking_prefixes; /* A dictionary of prefixes we are already
-                                      subscribed to in BCAST mode, in the
-                                      context of client side caching. */
+typedef struct client {
+    /* Basic client information and connection. */
+    uint64_t id; /* Client incremental unique ID. */
+    connection *conn;
+    /* Input buffer and command parsing fields */
+    sds querybuf;        /* Buffer we use to accumulate client queries. */
+    size_t qb_pos;       /* The position we have read in querybuf. */
+    robj **argv;         /* Arguments of current command. */
+    int argc;            /* Num of arguments of current command. */
+    int argv_len;        /* Size of argv array (may be more than argc) */
+    size_t argv_len_sum; /* Sum of lengths of objects in argv list. */
+    int reqtype;         /* Request protocol type: PROTO_REQ_* */
+    int multibulklen;    /* Number of multi bulk arguments left to read. */
+    long bulklen;        /* Length of bulk argument in multi bulk request. */
+    long long woff;      /* Last write global replication offset. */
+    /* Command execution state and command information */
+    struct serverCommand *cmd;           /* Current command. */
+    struct serverCommand *lastcmd;       /* Last command executed. */
+    struct serverCommand *realcmd;       /* The original command that was executed by the client */
+    struct serverCommand *io_parsed_cmd; /* The command that was parsed by the IO thread. */
+    time_t last_interaction;             /* Time of the last interaction, used for timeout */
+    serverDb *db;                        /* Pointer to currently SELECTed DB. */
+    /* Client state structs. */
+    ClientPubSubData *pubsub_data;    /* Required for: pubsub commands and tracking. lazily initialized when first needed */
+    ClientReplicationData *repl_data; /* Required for Replication operations. lazily initialized when first needed */
+    ClientModuleData *module_data;    /* Required for Module operations. lazily initialized when first needed */
+    multiState *mstate;               /* MULTI/EXEC state, lazily initialized when first needed */
+    blockingState *bstate;            /* Blocking state, lazily initialized when first needed */
+    /* Output buffer and reply handling */
+    long duration;                       /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
+    char *buf;                           /* Output buffer */
+    size_t buf_usable_size;              /* Usable size of buffer. */
+    list *reply;                         /* List of reply objects to send to the client. */
+    listNode *io_last_reply_block;       /* Last client reply block when sent to IO thread */
+    size_t io_last_bufpos;               /* The client's bufpos at the time it was sent to the IO thread */
+    unsigned long long reply_bytes;      /* Tot bytes of objects in reply list. */
+    size_t sentlen;                      /* Amount of bytes already sent in the current buffer or object being sent. */
+    listNode clients_pending_write_node; /* list node in clients_pending_write or in clients_pending_io_write list */
+    int bufpos;
+    int original_argc;    /* Num of arguments of original command if arguments were rewritten. */
+    robj **original_argv; /* Arguments of original command if arguments were rewritten. */
+    /* Client flags and state indicators */
+    union {
+        uint64_t raw_flag;
+        struct ClientFlags flag;
+    };
+    uint16_t write_flags;            /* Client Write flags - used to communicate the client write state. */
+    volatile uint8_t io_read_state;  /* Indicate the IO read state of the client */
+    volatile uint8_t io_write_state; /* Indicate the IO write state of the client */
+    uint8_t resp;                    /* RESP protocol version. Can be 2 or 3. */
+    uint8_t cur_tid;                 /* ID of IO thread currently performing IO for this client */
+    /* In updateClientMemoryUsage() we track the memory usage of
+     * each client and add it to the sum of all the clients of a given type,
+     * however we need to remember what was the old contribution of each
+     * client, and in which category the client was, in order to remove it
+     * before adding it the new value. */
+    uint8_t last_memory_type;
+    uint8_t capa;                    /* Client capabilities: CLIENT_CAPA* macros. */
+    listNode pending_read_list_node; /* IO thread only ?*/
+    /* Statistics and metrics */
+    unsigned long long net_input_bytes;           /* Total network input bytes read from this client. */
+    unsigned long long net_input_bytes_curr_cmd;  /* Total network input bytes read for the* execution of this client's current command. */
+    unsigned long long net_output_bytes;          /* Total network output bytes sent to this client. */
+    unsigned long long commands_processed;        /* Total count of commands this client executed. */
+    unsigned long long net_output_bytes_curr_cmd; /* Total network output bytes sent to this client, by the current command. */
+    size_t buf_peak;                              /* Peak used size of buffer in last 5 sec interval. */
+    int nwritten;                                 /* Number of bytes of the last write. */
+    int nread;                                    /* Number of bytes of the last read. */
+    int read_flags;                               /* Client Read flags - used to communicate the client read state. */
+    int slot;                                     /* The slot the client is executing against. Set to -1 if no slot is being used */
+    listNode *mem_usage_bucket_node;
+    clientMemUsageBucket *mem_usage_bucket;
     /* In updateClientMemoryUsage() we track the memory usage of
      * each client and add it to the sum of all the clients of a given type,
      * however we need to remember what was the old contribution of each
      * client, and in which category the client was, in order to remove it
      * before adding it the new value. */
     size_t last_memory_usage;
-    int last_memory_type;
-
-    listNode *mem_usage_bucket_node;
-    clientMemUsageBucket *mem_usage_bucket;
-
-    listNode *ref_repl_buf_node; /* Referenced node of replication buffer blocks,
-                                  * see the definition of replBufBlock. */
-    size_t ref_block_pos;        /* Access position of referenced buffer block,
-                                  * i.e. the next offset to send. */
-
-    /* list node in clients_pending_write or in clients_pending_io_write list */
-    listNode clients_pending_write_node;
-    listNode pending_read_list_node; /* list node in clients_pending_io_read list */
-    /* Response buffer */
-    size_t buf_peak;                   /* Peak used size of buffer in last 5 sec interval. */
+    /* Fields after this point are less frequently used */
+    listNode *client_list_node;        /* list node in client list */
     mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
-    int bufpos;
-    size_t io_last_bufpos;  /* The client's bufpos at the time it was sent to the IO thread */
-    size_t buf_usable_size; /* Usable size of buffer. */
-    char *buf;
+    size_t querybuf_peak;              /* Recent (100ms or more) peak of querybuf size. */
+    dictEntry *cur_script;             /* Cached pointer to the dictEntry of the script being executed. */
+    user *user;                        /* User associated with this connection */
+    time_t obuf_soft_limit_reached_time;
+    list *deferred_reply_errors; /* Used for module thread safe contexts. */
+    robj *name;                  /* As set by CLIENT SETNAME. */
+    robj *lib_name;              /* The client library name as set by CLIENT SETINFO. */
+    robj *lib_ver;               /* The client library version as set by CLIENT SETINFO. */
+    sds peerid;                  /* Cached peer ID. */
+    sds sockname;                /* Cached connection target address. */
+    time_t ctime;                /* Client creation time. */
 #ifdef LOG_REQ_RES
     clientReqResInfo reqres;
 #endif
-    unsigned long long net_input_bytes;          /* Total network input bytes read from this client. */
-    unsigned long long net_input_bytes_curr_cmd; /* Total network input bytes read for the
-                                                  * execution of this client's current command. */
-    unsigned long long net_output_bytes;         /* Total network output bytes sent to this client. */
-    unsigned long long commands_processed;       /* Total count of commands this client executed. */
-    unsigned long long
-        net_output_bytes_curr_cmd; /* Total network output bytes sent to this client, by the current command. */
 } client;
 
 /* When a command generates a lot of discrete elements to the client output buffer, it is much faster to
@@ -1416,12 +1268,6 @@ typedef struct aclInfo {
 struct saveparam {
     time_t seconds;
     int changes;
-};
-
-struct moduleLoadQueueEntry {
-    sds path;
-    int argc;
-    robj **argv;
 };
 
 struct sentinelLoadQueueEntry {
@@ -1477,7 +1323,7 @@ typedef struct zskiplist {
 } zskiplist;
 
 typedef struct zset {
-    dict *dict;
+    hashtable *ht;
     zskiplist *zsl;
 } zset;
 
@@ -2692,7 +2538,7 @@ extern dictType objectKeyPointerValueDictType;
 extern dictType objectKeyHeapPointerValueDictType;
 extern hashtableType setHashtableType;
 extern dictType BenchmarkDictType;
-extern dictType zsetDictType;
+extern hashtableType zsetHashtableType;
 extern hashtableType kvstoreKeysHashtableType;
 extern hashtableType kvstoreExpiresHashtableType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
@@ -2715,59 +2561,6 @@ extern dict *modules;
 
 /* Command metadata */
 void populateCommandLegacyRangeSpec(struct serverCommand *c);
-
-/* Modules */
-void moduleInitModulesSystem(void);
-void moduleInitModulesSystemLast(void);
-void modulesCron(void);
-int moduleLoad(const char *path, void **argv, int argc, int is_loadex);
-int moduleUnload(sds name, const char **errmsg);
-void moduleLoadFromQueue(void);
-int moduleGetCommandKeysViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
-int moduleGetCommandChannelsViaAPI(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
-moduleType *moduleTypeLookupModuleByID(uint64_t id);
-moduleType *moduleTypeLookupModuleByName(const char *name);
-moduleType *moduleTypeLookupModuleByNameIgnoreCase(const char *name);
-void moduleTypeNameByID(char *name, uint64_t moduleid);
-const char *moduleTypeModuleName(moduleType *mt);
-const char *moduleNameFromCommand(struct serverCommand *cmd);
-void moduleFreeContext(struct ValkeyModuleCtx *ctx);
-void moduleCallCommandUnblockedHandler(client *c);
-int isModuleClientUnblocked(client *c);
-void unblockClientFromModule(client *c);
-void moduleHandleBlockedClients(void);
-void moduleBlockedClientTimedOut(client *c, int from_module);
-void modulePipeReadable(aeEventLoop *el, int fd, void *privdata, int mask);
-size_t moduleCount(void);
-void moduleAcquireGIL(void);
-int moduleTryAcquireGIL(void);
-void moduleReleaseGIL(void);
-void moduleNotifyKeyspaceEvent(int type, const char *event, robj *key, int dbid);
-void firePostExecutionUnitJobs(void);
-void moduleCallCommandFilters(client *c);
-void modulePostExecutionUnitOperations(void);
-void ModuleForkDoneHandler(int exitcode, int bysignal);
-int TerminateModuleForkChild(int child_pid, int wait);
-ssize_t rdbSaveModulesAux(rio *rdb, int when);
-int moduleAllDatatypesHandleErrors(void);
-int moduleAllModulesHandleReplAsyncLoad(void);
-sds modulesCollectInfo(sds info, dict *sections_dict, int for_crash_report, int sections);
-void moduleFireServerEvent(uint64_t eid, int subid, void *data);
-void processModuleLoadingProgressEvent(int is_aof);
-int moduleTryServeClientBlockedOnKey(client *c, robj *key);
-void moduleUnblockClient(client *c);
-int moduleBlockedClientMayTimeout(client *c);
-int moduleClientIsBlockedOnKeys(client *c);
-void moduleNotifyUserChanged(client *c);
-void moduleNotifyKeyUnlink(robj *key, robj *val, int dbid, int flags);
-size_t moduleGetFreeEffort(robj *key, robj *val, int dbid);
-size_t moduleGetMemUsage(robj *key, robj *val, size_t sample_size, int dbid);
-robj *moduleTypeDupOrReply(client *c, robj *fromkey, robj *tokey, int todb, robj *value);
-int moduleDefragValue(robj *key, robj *obj, int dbid);
-int moduleLateDefrag(robj *key, robj *value, unsigned long *cursor, monotime endtime, int dbid);
-void moduleDefragGlobals(void);
-void *moduleGetHandleByName(char *modulename);
-int moduleIsModuleCommand(void *module_handle, struct serverCommand *cmd);
 
 /* Utils */
 long long ustime(void);
@@ -2830,6 +2623,7 @@ void logInvalidUseAndFreeClientAsync(client *c, const char *fmt, ...);
 void beforeNextClient(client *c);
 void clearClientConnectionState(client *c);
 void resetClient(client *c);
+void resetClientIOState(client *c);
 void freeClientOriginalArgv(client *c);
 void freeClientArgv(client *c);
 void sendReplyToClient(connection *conn);
@@ -3138,6 +2932,8 @@ void abortFailover(const char *err);
 const char *getFailoverStateString(void);
 int sendCurrentOffsetToReplica(client *replica);
 void addRdbReplicaToPsyncWait(client *replica);
+void initClientReplicationData(client *c);
+void freeClientReplicationData(client *c);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char *filename, int rdbflags);
@@ -3288,8 +3084,6 @@ typedef struct {
 zskiplist *zslCreate(void);
 void zslFree(zskiplist *zsl);
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele);
-unsigned char *zzlInsert(unsigned char *zl, sds ele, double score);
-int zslDelete(zskiplist *zsl, double score, sds ele, zskiplistNode **node);
 zskiplistNode *zslNthInRange(zskiplist *zsl, zrangespec *range, long n);
 double zzlGetScore(unsigned char *sptr);
 void zzlNext(unsigned char *zl, unsigned char **eptr, unsigned char **sptr);
@@ -3300,9 +3094,7 @@ unsigned long zsetLength(const robj *zobj);
 void zsetConvert(robj *zobj, int encoding);
 void zsetConvertToListpackIfNeeded(robj *zobj, size_t maxelelen, size_t totelelen);
 int zsetScore(robj *zobj, sds member, double *score);
-unsigned long zslGetRank(zskiplist *zsl, double score, sds o);
 int zsetAdd(robj *zobj, double score, sds ele, int in_flags, int *out_flags, double *newscore);
-long zsetRank(robj *zobj, sds ele, int reverse, double *score);
 int zsetDel(robj *zobj, sds ele);
 robj *zsetDup(robj *o);
 void genericZpopCommand(client *c,
@@ -3476,6 +3268,8 @@ void unmarkClientAsPubSub(client *c);
 int pubsubTotalSubscriptions(void);
 dict *getClientPubSubChannels(client *c);
 dict *getClientPubSubShardChannels(client *c);
+void initClientPubSubData(client *c);
+void freeClientPubSubData(client *c);
 
 /* Keyspace events notification */
 void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid);
@@ -3718,6 +3512,7 @@ typedef struct luaScript {
 /* Blocked clients API */
 void processUnblockedClients(void);
 void initClientBlockingState(client *c);
+void freeClientBlockingState(client *c);
 void blockClient(client *c, int btype);
 void unblockClient(client *c, int queue_for_reprocessing);
 void unblockClientOnTimeout(client *c);
@@ -3734,7 +3529,7 @@ void blockPostponeClient(client *c);
 void blockClientForReplicaAck(client *c, mstime_t timeout, long long offset, long numreplicas, int numlocal);
 void replicationRequestAckFromReplicas(void);
 void signalDeletedKeyAsReady(serverDb *db, robj *key, int type);
-void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int had_errors);
+void updateStatsOnUnblock(client *c, long blocked_us, long reply_us, int failed_or_rejected);
 void scanDatabaseForDeletedKeys(serverDb *emptied, serverDb *replaced_with);
 void totalNumberOfStatefulKeys(unsigned long *blocking_keys,
                                unsigned long *blocking_keys_on_nokey,
@@ -3766,10 +3561,11 @@ unsigned long LFUDecrAndReturn(robj *o);
 int performEvictions(void);
 void startEvictionTimeProc(void);
 
-/* Keys hashing / comparison functions for dict.c hash tables. */
+/* Keys hashing/comparison functions for dict.c and hashtable.c hash tables. */
 uint64_t dictSdsHash(const void *key);
 uint64_t dictSdsCaseHash(const void *key);
 int dictSdsKeyCompare(const void *key1, const void *key2);
+int hashtableSdsKeyCompare(const void *key1, const void *key2);
 int dictSdsKeyCaseCompare(const void *key1, const void *key2);
 void dictSdsDestructor(void *val);
 void dictListDestructor(void *val);
