@@ -122,7 +122,7 @@ typedef struct ConnectionType {
     /* TLS specified methods */
     sds (*get_peer_cert)(struct connection *conn);
 
-    /* Miselenious */
+    /* Miscellaneous */
     int (*connIntegrityChecked)(void); // return 1 if connection type has built-in integrity checks
 } ConnectionType;
 

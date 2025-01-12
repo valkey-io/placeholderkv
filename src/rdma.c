@@ -1818,7 +1818,7 @@ static ConnectionType CT_RDMA = {
     .postpone_update_state = postPoneUpdateRdmaState,
     .update_state = updateRdmaState,
 
-    /* Miselenious */
+    /* Miscellaneous */
     .connIntegrityChecked = NULL,
 };
 

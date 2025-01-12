@@ -440,10 +440,10 @@ typedef enum {
 #define REPLICA_CAPA_EOF (1 << 0)          /* Can parse the RDB EOF streaming format. */
 #define REPLICA_CAPA_PSYNC2 (1 << 1)       /* Supports PSYNC2 protocol. */
 #define REPLICA_CAPA_DUAL_CHANNEL (1 << 2) /* Supports dual channel replication sync */
-#define REPLICA_CAPA_BYPASS_CRC (1 << 3)   /* Supports bypassing CRC checks for sync requests. */
+#define REPLICA_CAPA_SKIP_RDB_CHECKSUM (1 << 3) /* Supports skipping RDB checksum for sync requests. */
 
 /* Replica capability strings */
-#define REPLICA_CAPA_BYPASS_CRC_STR "bypass-crc" /* Supports bypassing CRC checks for sync requests. */
+#define REPLICA_CAPA_SKIP_RDB_CHECKSUM_STR "skip-rdb-checksum" /* Supports skipping RDB checksum for sync requests. */
 
 /* Replica requirements */
 #define REPLICA_REQ_NONE 0
@@ -1690,7 +1690,6 @@ struct valkeyServer {
     double stat_fork_rate;                         /* Fork rate in GB/sec. */
     long long stat_total_forks;                    /* Total count of fork. */
     long long stat_rejected_conn;                  /* Clients rejected because of maxclients */
-    size_t stat_total_sync_bypass_crc;             /* Total number of full syncs stated with CRC checksum bypassed */
     long long stat_sync_full;                      /* Number of full resyncs with replicas. */
     long long stat_sync_partial_ok;                /* Number of accepted PSYNC requests. */
     long long stat_sync_partial_err;               /* Number of unaccepted PSYNC requests. */

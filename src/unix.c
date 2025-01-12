@@ -208,7 +208,7 @@ static ConnectionType CT_Unix = {
     .postpone_update_state = NULL,
     .update_state = NULL,
 
-    /* Miselenious */
+    /* Miscellaneous */
     .connIntegrityChecked = NULL,
 };
 

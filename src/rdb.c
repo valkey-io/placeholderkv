@@ -3024,7 +3024,6 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
     int error;
     long long empty_keys_skipped = 0;
 
-    if (rdb->flags & RIO_FLAG_BYPASS_CRC) server.stat_total_sync_bypass_crc++;
     rdb->update_cksum = rdbLoadProgressCallback;
     rdb->max_processing_chunk = server.loading_process_events_interval_bytes;
     if (rioRead(rdb, buf, 9) == 0) goto eoferr;
@@ -3369,7 +3368,9 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
         if (rioRead(rdb, &cksum, 8) == 0) goto eoferr;
         if (server.rdb_checksum && !server.skip_checksum_validation) {
             memrev64ifbe(&cksum);
-            if (cksum == 0 || (rdb->flags & RIO_FLAG_BYPASS_CRC)) {
+            if (rdb->flags & RIO_FLAG_SKIP_RDB_CHECKSUM) {
+                serverLog(LL_NOTICE, "RDB file was saved with checksum disabled: skipped checksum for this transfer");
+            } else if (cksum == 0) {
                 serverLog(LL_NOTICE, "RDB file was saved with checksum disabled: no check performed.");
             } else if (cksum != expected) {
                 serverLog(LL_WARNING,
@@ -3562,9 +3563,10 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
     }
     /*
      * For replicas with repl_state == REPLICA_STATE_WAIT_BGSAVE_END and replica_req == req:
-     * Check replica capabilities, if every replica supports bypassing CRC, primary should also bypass CRC, otherwise, use CRC.
+     * Check replica capabilities, if every replica supports skiping RDB checksum, primary should also skip checksum.
+     * Otherwise, use checksum for this RDB transfer.
      */
-    int bypass_crc = 1;
+    int skip_rdb_checksum = 1;
     /* Collect the connections of the replicas we want to transfer
      * the RDB to, which are in WAIT_BGSAVE_START state. */
     int connsnum = 0;
@@ -3599,9 +3601,9 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             replicationSetupReplicaForFullResync(replica, getPsyncInitialOffset());
         }
 
-        // do not bypass CRC on the primary if connection doesn't have integrity check or if the replica doesn't support it
-        if (!connIsIntegrityChecked(replica->conn) || !(replica->replica_capa & REPLICA_CAPA_BYPASS_CRC))
-            bypass_crc = 0;
+        // do not skip RDB checksum on the primary if connection doesn't have integrity check or if the replica doesn't support it
+        if (!connIsIntegrityChecked(replica->conn) || !(replica->repl_data->replica_capa & REPLICA_CAPA_SKIP_RDB_CHECKSUM))
+            skip_rdb_checksum = 0;
     }
 
     /* Create the child process. */
@@ -3625,11 +3627,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
         }
         serverSetCpuAffinity(server.bgsave_cpulist);
 
-        if (bypass_crc) {
-            serverLog(LL_NOTICE, "CRC checksum is disabled for this RDB transfer");
-            // mark rdb object to skip CRC checksum calculations
-            rdb.flags |= RIO_FLAG_BYPASS_CRC;
-        }
+        if (skip_rdb_checksum) rdb.flags |= RIO_FLAG_SKIP_RDB_CHECKSUM;
 
         retval = rdbSaveRioWithEOFMark(req, &rdb, NULL, rsi);
         if (retval == C_OK && rioFlush(&rdb) == 0) retval = C_ERR;
@@ -3680,8 +3678,10 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
                 server.rdb_pipe_numconns_writing = 0;
             }
         } else {
-            serverLog(LL_NOTICE, "Background RDB transfer started by pid %ld to %s", (long)childpid,
-                      dual_channel ? "direct socket to replica" : "pipe through parent process");
+            serverLog(LL_NOTICE, "Background RDB transfer started by pid %ld to %s%s", (long)childpid,
+                      dual_channel ? "direct socket to replica" : "pipe through parent process", 
+                      skip_rdb_checksum ? " while skipping RDB checksum for this transfer" : "");
+
             server.rdb_save_time_start = time(NULL);
             server.rdb_child_type = RDB_CHILD_TYPE_SOCKET;
             if (dual_channel) {
@@ -3696,7 +3696,6 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             }
         }
         if (!dual_channel) close(safe_to_exit_pipe);
-        if (bypass_crc) server.stat_total_sync_bypass_crc++;
         return (childpid == -1) ? C_ERR : C_OK;
     }
     return C_OK; /* Unreached. */

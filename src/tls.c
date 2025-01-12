@@ -1191,7 +1191,7 @@ static ConnectionType CT_TLS = {
     /* TLS specified methods */
     .get_peer_cert = connTLSGetPeerCert,
 
-    /* Miselenious */
+    /* Miscellaneous */
     .connIntegrityChecked = connTLSIsIntegrityChecked,
 };
 
