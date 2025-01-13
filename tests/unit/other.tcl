@@ -30,6 +30,10 @@ start_server {tags {"other"}} {
         }
     }
 
+    test {Coverage: ECHO} {
+        assert_equal bang [r ECHO bang]
+    }
+
     test {SAVE - make sure there are all the types as values} {
         # Wait for a background saving in progress to terminate
         waitForBgsave r
