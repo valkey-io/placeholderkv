@@ -14,7 +14,7 @@ typedef struct scriptingEngineImpl {
 typedef struct scriptingEngine {
     sds name;                    /* Name of the engine */
     ValkeyModule *module;        /* the module that implements the scripting engine */
-    scriptingEngineImpl *impl;   /* engine callbacks that allows to interact with the engine */
+    scriptingEngineImpl impl;    /* engine context and callbacks to interact with the engine */
     client *c;                   /* Client that is used to run commands */
     ValkeyModuleCtx *module_ctx; /* Cache of the module context object */
 } scriptingEngine;
@@ -86,33 +86,30 @@ int scriptingEngineManagerRegister(const char *engine_name,
     sds engine_name_sds = sdsnew(engine_name);
 
     if (dictFetchValue(engineMgr.engines, engine_name_sds)) {
-        serverLog(LL_WARNING, "Same engine was registered twice");
+        serverLog(LL_WARNING, "Scripting engine '%s' is already registered in the server", engine_name_sds);
         sdsfree(engine_name_sds);
         return C_ERR;
     }
-
-    scriptingEngineImpl *ei = zmalloc(sizeof(scriptingEngineImpl));
-    *ei = (scriptingEngineImpl){
-        .ctx = engine_ctx,
-        .methods = {
-            .create_functions_library = engine_methods->create_functions_library,
-            .call_function = engine_methods->call_function,
-            .free_function = engine_methods->free_function,
-            .get_function_memory_overhead = engine_methods->get_function_memory_overhead,
-            .get_memory_info = engine_methods->get_memory_info,
-        },
-    };
 
     client *c = createClient(NULL);
     c->flag.deny_blocking = 1;
     c->flag.script = 1;
     c->flag.fake = 1;
 
-    scriptingEngine *e = zmalloc(sizeof(*ei));
+    scriptingEngine *e = zmalloc(sizeof(*e));
     *e = (scriptingEngine){
         .name = engine_name_sds,
         .module = engine_module,
-        .impl = ei,
+        .impl = {
+            .ctx = engine_ctx,
+            .methods = {
+                .create_functions_library = engine_methods->create_functions_library,
+                .call_function = engine_methods->call_function,
+                .free_function = engine_methods->free_function,
+                .get_function_memory_overhead = engine_methods->get_function_memory_overhead,
+                .get_memory_info = engine_methods->get_memory_info,
+            },
+        },
         .c = c,
         .module_ctx = engine_module ? moduleAllocateContext() : NULL,
     };
@@ -122,7 +119,6 @@ int scriptingEngineManagerRegister(const char *engine_name,
     engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e);
     engineMgr.engine_cache_memory += zmalloc_size(e) +
                                      sdsAllocSize(e->name) +
-                                     zmalloc_size(ei) +
                                      mem_info.engine_memory_overhead;
 
     return C_OK;
@@ -143,7 +139,6 @@ int scriptingEngineManagerUnregister(const char *engine_name) {
 
     functionsRemoveLibFromEngine(e);
 
-    zfree(e->impl);
     sdsfree(e->name);
     freeClient(e->c);
     if (e->module_ctx) {
@@ -219,9 +214,9 @@ compiledFunction **scriptingEngineCallCreateFunctionsLibrary(scriptingEngine *en
                                                              robj **err) {
     engineSetupModuleCtx(engine, NULL);
 
-    compiledFunction **functions = engine->impl->methods.create_functions_library(
+    compiledFunction **functions = engine->impl.methods.create_functions_library(
         engine->module_ctx,
-        engine->impl->ctx,
+        engine->impl.ctx,
         code,
         timeout,
         out_num_compiled_functions,
@@ -242,9 +237,9 @@ void scriptingEngineCallFunction(scriptingEngine *engine,
                                  size_t nargs) {
     engineSetupModuleCtx(engine, caller);
 
-    engine->impl->methods.call_function(
+    engine->impl.methods.call_function(
         engine->module_ctx,
-        engine->impl->ctx,
+        engine->impl.ctx,
         func_ctx,
         compiled_function,
         keys,
@@ -258,16 +253,16 @@ void scriptingEngineCallFunction(scriptingEngine *engine,
 void scriptingEngineCallFreeFunction(scriptingEngine *engine,
                                      void *compiled_func) {
     engineSetupModuleCtx(engine, NULL);
-    engine->impl->methods.free_function(engine->module_ctx,
-                                        engine->impl->ctx,
-                                        compiled_func);
+    engine->impl.methods.free_function(engine->module_ctx,
+                                       engine->impl.ctx,
+                                       compiled_func);
     engineTeardownModuleCtx(engine);
 }
 
 size_t scriptingEngineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
                                                     void *compiled_function) {
     engineSetupModuleCtx(engine, NULL);
-    size_t mem = engine->impl->methods.get_function_memory_overhead(
+    size_t mem = engine->impl.methods.get_function_memory_overhead(
         engine->module_ctx, compiled_function);
     engineTeardownModuleCtx(engine);
     return mem;
@@ -275,8 +270,8 @@ size_t scriptingEngineCallGetFunctionMemoryOverhead(scriptingEngine *engine,
 
 engineMemoryInfo scriptingEngineCallGetMemoryInfo(scriptingEngine *engine) {
     engineSetupModuleCtx(engine, NULL);
-    engineMemoryInfo mem_info = engine->impl->methods.get_memory_info(
-        engine->module_ctx, engine->impl->ctx);
+    engineMemoryInfo mem_info = engine->impl.methods.get_memory_info(
+        engine->module_ctx, engine->impl.ctx);
     engineTeardownModuleCtx(engine);
     return mem_info;
 }
