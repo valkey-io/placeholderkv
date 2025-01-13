@@ -11090,25 +11090,6 @@ typedef struct {
     ValkeyModuleScanKeyCB fn;
 } ScanKeyCBData;
 
-static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
-    ScanKeyCBData *data = privdata;
-    sds key = dictGetKey(de);
-    robj *o = data->key->value;
-    robj *field = createStringObject(key, sdslen(key));
-    robj *value = NULL;
-
-    if (o->type == OBJ_HASH) {
-        sds val = dictGetVal(de);
-        value = createStringObject(val, sdslen(val));
-    } else {
-        serverPanic("unexpected object type");
-    }
-
-    data->fn(data->key, field, value, data->user_data);
-    decrRefCount(field);
-    if (value) decrRefCount(value);
-}
-
 static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
     ScanKeyCBData *data = privdata;
     robj *o = data->key->value;
@@ -11122,6 +11103,10 @@ static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
         zskiplistNode *node = (zskiplistNode *)entry;
         key = node->ele;
         value = createStringObjectFromLongDouble(node->score, 0);
+    } else if (o->type == OBJ_HASH) {
+        key = hashTypeEntryGetField(entry);
+        sds val = hashTypeEntryGetValue(entry);
+        value = createStringObject(val, sdslen(val));
     } else {
         serverPanic("unexpected object type");
     }
@@ -11185,13 +11170,12 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         errno = EINVAL;
         return 0;
     }
-    dict *d = NULL;
     hashtable *ht = NULL;
     robj *o = key->value;
     if (o->type == OBJ_SET) {
         if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_ZSET) {
         if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->ht;
     } else {
@@ -11203,14 +11187,7 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         return 0;
     }
     int ret = 1;
-    if (d) {
-        ScanKeyCBData data = {key, privdata, fn};
-        cursor->cursor = dictScan(d, cursor->cursor, moduleScanKeyDictCallback, &data);
-        if (cursor->cursor == 0) {
-            cursor->done = 1;
-            ret = 0;
-        }
-    } else if (ht) {
+    if (ht) {
         ScanKeyCBData data = {key, privdata, fn};
         cursor->cursor = hashtableScan(ht, cursor->cursor, moduleScanKeyHashtableCallback, &data);
         if (cursor->cursor == 0) {

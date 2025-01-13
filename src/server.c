@@ -625,6 +625,24 @@ hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
                                    .instant_rehashing = 1};
 
 /* Hash type hash table (note that small hashes are represented with listpacks) */
+const void *hashHashtableTypeGetKey(const void *entry) {
+    const hashTypeEntry *hash_entry = entry;
+    return (const void *)hashTypeEntryGetField(hash_entry);
+}
+
+void hashHashtableTypeDestructor(void *entry) {
+    hashTypeEntry *hash_entry = entry;
+    freeHashTypeEntry(hash_entry);
+}
+
+hashtableType hashHashtableType = {
+    .hashFunction = dictSdsHash,
+    .entryGetKey = hashHashtableTypeGetKey,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = hashHashtableTypeDestructor,
+};
+
+/* Hash type hash table (note that small hashes are represented with listpacks) */
 dictType hashDictType = {
     dictSdsHash,       /* hash function */
     NULL,              /* key dup */
