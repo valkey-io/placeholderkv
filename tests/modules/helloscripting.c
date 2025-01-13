@@ -72,6 +72,7 @@ typedef struct HelloFunc {
     char *name;
     HelloInst instructions[256];
     uint32_t num_instructions;
+    uint32_t index;
 } HelloFunc;
 
 /*
@@ -172,6 +173,7 @@ static int helloLangParseCode(const char *code,
             ValkeyModule_Assert(currentFunc == NULL);
             currentFunc = ValkeyModule_Alloc(sizeof(HelloFunc));
             memset(currentFunc, 0, sizeof(HelloFunc));
+            currentFunc->index = program->num_functions;
             program->functions[program->num_functions++] = currentFunc;
             helloLangParseFunction(currentFunc);
             break;
@@ -252,8 +254,10 @@ static ValkeyModuleScriptingEngineMemoryInfo engineGetMemoryInfo(ValkeyModuleCtx
 
         for (uint32_t i = 0; i < ctx->program->num_functions; i++) {
             HelloFunc *func = ctx->program->functions[i];
-            mem_info.used_memory += ValkeyModule_MallocSize(func);
-            mem_info.used_memory += ValkeyModule_MallocSize(func->name);
+            if (func != NULL) {
+                mem_info.used_memory += ValkeyModule_MallocSize(func);
+                mem_info.used_memory += ValkeyModule_MallocSize(func->name);
+            }
         }
     }
 
@@ -277,7 +281,9 @@ static void engineFreeFunction(ValkeyModuleCtx *module_ctx,
                                void *compiled_function) {
     VALKEYMODULE_NOT_USED(module_ctx);
     VALKEYMODULE_NOT_USED(engine_ctx);
+    HelloLangCtx *ctx = (HelloLangCtx *)engine_ctx;
     HelloFunc *func = (HelloFunc *)compiled_function;
+    ctx->program->functions[func->index] = NULL;
     ValkeyModule_Free(func->name);
     func->name = NULL;
     ValkeyModule_Free(func);
