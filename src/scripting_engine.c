@@ -21,14 +21,14 @@ typedef struct scriptingEngine {
 
 
 typedef struct engineManger {
-    dict *engines; /* engines dictionary */
-    size_t engine_cache_memory;
+    dict *engines;                /* engines dictionary */
+    size_t total_memory_overhead; /* the sum of the memory overhead of all registered scripting engines */
 } engineManager;
 
 
 static engineManager engineMgr = {
     .engines = NULL,
-    .engine_cache_memory = 0,
+    .total_memory_overhead = 0,
 };
 
 static uint64_t dictStrCaseHash(const void *key) {
@@ -55,8 +55,10 @@ int scriptingEngineManagerInit(void) {
     return C_OK;
 }
 
-size_t scriptingEngineManagerGetCacheMemory(void) {
-    return engineMgr.engine_cache_memory;
+/* Returns the amount of memory overhead consumed by all registered scripting
+   engines. */
+size_t scriptingEngineManagerGetTotalMemoryOverhead(void) {
+    return engineMgr.total_memory_overhead;
 }
 
 size_t scriptingEngineManagerGetNumEngines(void) {
@@ -117,9 +119,9 @@ int scriptingEngineManagerRegister(const char *engine_name,
     dictAdd(engineMgr.engines, engine_name_sds, e);
 
     engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e);
-    engineMgr.engine_cache_memory += zmalloc_size(e) +
-                                     sdsAllocSize(e->name) +
-                                     mem_info.engine_memory_overhead;
+    engineMgr.total_memory_overhead += zmalloc_size(e) +
+                                       sdsAllocSize(e->name) +
+                                       mem_info.engine_memory_overhead;
 
     return C_OK;
 }
@@ -138,6 +140,11 @@ int scriptingEngineManagerUnregister(const char *engine_name) {
     scriptingEngine *e = dictGetVal(entry);
 
     functionsRemoveLibFromEngine(e);
+
+    engineMemoryInfo mem_info = scriptingEngineCallGetMemoryInfo(e);
+    engineMgr.total_memory_overhead -= zmalloc_size(e) +
+                                       sdsAllocSize(e->name) +
+                                       mem_info.engine_memory_overhead;
 
     sdsfree(e->name);
     freeClient(e->c);

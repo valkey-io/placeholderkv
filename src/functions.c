@@ -1144,7 +1144,7 @@ unsigned long functionsMemoryOverhead(void) {
     memory_overhead += dictMemUsage(curr_functions_lib_ctx->functions);
     memory_overhead += sizeof(functionsLibCtx);
     memory_overhead += curr_functions_lib_ctx->cache_memory;
-    memory_overhead += scriptingEngineManagerGetCacheMemory();
+    memory_overhead += scriptingEngineManagerGetTotalMemoryOverhead();
 
     return memory_overhead;
 }

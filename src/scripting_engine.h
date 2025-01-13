@@ -29,7 +29,7 @@ typedef void (*engineIterCallback)(scriptingEngine *engine, void *context);
  * Engine manager API functions.
  */
 int scriptingEngineManagerInit(void);
-size_t scriptingEngineManagerGetCacheMemory(void);
+size_t scriptingEngineManagerGetTotalMemoryOverhead(void);
 size_t scriptingEngineManagerGetNumEngines(void);
 size_t scriptingEngineManagerGetMemoryUsage(void);
 int scriptingEngineManagerRegister(const char *engine_name,
