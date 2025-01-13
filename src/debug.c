@@ -231,7 +231,7 @@ void xorObjectDigest(serverDb *db, robj *keyobj, unsigned char *digest, robj *o)
             sds sdsele;
 
             memset(eledigest, 0, 20);
-            sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_KEY);
+            sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_FIELD);
             mixDigest(eledigest, sdsele, sdslen(sdsele));
             sdsfree(sdsele);
             sdsele = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_VALUE);
@@ -923,23 +923,17 @@ void debugCommand(client *c) {
         robj *o = objectCommandLookupOrReply(c, c->argv[2], shared.nokeyerr);
         if (o == NULL) return;
 
-        /* Get the dict reference from the object, if possible. */
-        dict *d = NULL;
+        /* Get the hashtable reference from the object, if possible. */
         hashtable *ht = NULL;
         switch (o->encoding) {
         case OBJ_ENCODING_SKIPLIST: {
             zset *zs = o->ptr;
             ht = zs->ht;
         } break;
-        case OBJ_ENCODING_HT: d = o->ptr; break;
         case OBJ_ENCODING_HASHTABLE: ht = o->ptr; break;
         }
 
-        if (d != NULL) {
-            char buf[4096];
-            dictGetStats(buf, sizeof(buf), d, full);
-            addReplyVerbatim(c, buf, strlen(buf), "txt");
-        } else if (ht != NULL) {
+        if (ht != NULL) {
             char buf[4096];
             hashtableGetStats(buf, sizeof(buf), ht, full);
             addReplyVerbatim(c, buf, strlen(buf), "txt");

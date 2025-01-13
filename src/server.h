@@ -712,7 +712,7 @@ typedef struct ValkeyModuleType moduleType;
  * is set to one of this fields for this object. */
 #define OBJ_ENCODING_RAW 0        /* Raw representation */
 #define OBJ_ENCODING_INT 1        /* Encoded as integer */
-#define OBJ_ENCODING_HT 2         /* Encoded as hash table */
+#define OBJ_ENCODING_HASHTABLE 2  /* Encoded as a hashtable */
 #define OBJ_ENCODING_ZIPMAP 3     /* No longer used: old hash encoding. */
 #define OBJ_ENCODING_LINKEDLIST 4 /* No longer used: old list encoding. */
 #define OBJ_ENCODING_ZIPLIST 5    /* No longer used: old list/hash/zset encoding. */
@@ -722,7 +722,6 @@ typedef struct ValkeyModuleType moduleType;
 #define OBJ_ENCODING_QUICKLIST 9  /* Encoded as linked list of listpacks */
 #define OBJ_ENCODING_STREAM 10    /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11  /* Encoded as a listpack */
-#define OBJ_ENCODING_HASHTABLE 12 /* Encoded as a hashtable */
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1 << LRU_BITS) - 1) /* Max value of obj->lru */
@@ -2521,13 +2520,13 @@ typedef struct {
 
     unsigned char *fptr, *vptr;
 
-    dictIterator di;
-    dictEntry *de;
+    hashtableIterator iter;
+    void *next;
 } hashTypeIterator;
 
 #include "stream.h" /* Stream data type header file. */
 
-#define OBJ_HASH_KEY 1
+#define OBJ_HASH_FIELD 1
 #define OBJ_HASH_VALUE 2
 
 /*-----------------------------------------------------------------------------
@@ -2545,6 +2544,7 @@ extern hashtableType kvstoreKeysHashtableType;
 extern hashtableType kvstoreExpiresHashtableType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
+extern hashtableType hashHashtableType;
 extern dictType stringSetDictType;
 extern dictType externalStringType;
 extern dictType sdsHashDictType;
@@ -3234,6 +3234,15 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1 << 1)
 #define HASH_SET_COPY 0
 
+typedef struct hashTypeEntry hashTypeEntry;
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value);
+sds hashTypeEntryGetField(const hashTypeEntry *entry);
+sds hashTypeEntryGetValue(const hashTypeEntry *entry);
+size_t hashTypeEntryAllocSize(hashTypeEntry *entry);
+hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds));
+void dismissHashTypeEntry(hashTypeEntry *entry);
+void freeHashTypeEntry(hashTypeEntry *entry);
+
 void hashTypeConvert(robj *o, int enc);
 void hashTypeTryConversion(robj *subject, robj **argv, int start, int end);
 int hashTypeExists(robj *o, sds key);
@@ -3248,7 +3257,6 @@ void hashTypeCurrentFromListpack(hashTypeIterator *hi,
                                  unsigned int *vlen,
                                  long long *vll);
 sds hashTypeCurrentFromHashTable(hashTypeIterator *hi, int what);
-void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr, unsigned int *vlen, long long *vll);
 sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
 robj *hashTypeGetValueObject(robj *o, sds field);
