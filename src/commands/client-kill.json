@@ -6,7 +6,7 @@
         "since": "2.4.0",
         "arity": -3,
         "container": "CLIENT",
-        "function": "clientCommandKill",
+        "function": "clientKillCommand",
         "history": [
             [
                 "2.8.12",

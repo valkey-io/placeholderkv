@@ -3607,7 +3607,7 @@ static int clientMatchesFilter(client *client, clientFilter client_filter) {
     return 1;
 }
 
-void clientCommandHelp(client *c) {
+void clientHelpCommand(client *c) {
     const char *help[] = {
         "CACHING (YES|NO)",
         "    Enable/disable tracking of the keys for next command in OPTIN/OPTOUT modes.",
@@ -3688,18 +3688,18 @@ void clientCommandHelp(client *c) {
     addReplyHelp(c, help);
 }
 
-void clientCommandID(client *c) {
+void clientIDCommand(client *c) {
     addReplyLongLong(c, c->id);
 }
 
-void clientCommandInfo(client *c) {
+void clientInfoCommand(client *c) {
     sds info = catClientInfoString(sdsempty(), c, 0);
     info = sdscatlen(info, "\n", 1);
     addReplyVerbatim(c, info, sdslen(info), "txt");
     sdsfree(info);
 }
 
-void clientCommandList(client *c) {
+void clientListCommand(client *c) {
     int type = -1;
     sds response = NULL;
 
@@ -3723,7 +3723,7 @@ void clientCommandList(client *c) {
     sdsfree(response);
 }
 
-void clientCommandReply(client *c) {
+void clientReplyCommand(client *c) {
     /* CLIENT REPLY ON|OFF|SKIP */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.reply_skip = 0;
@@ -3739,7 +3739,7 @@ void clientCommandReply(client *c) {
     }
 }
 
-void clientCommandNoEvict(client *c) {
+void clientNoEvictCommand(client *c) {
     /* CLIENT NO-EVICT ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_evict = 1;
@@ -3755,7 +3755,7 @@ void clientCommandNoEvict(client *c) {
     }
 }
 
-void clientCommandKill(client *c) {
+void clientKillCommand(client *c) {
     /* CLIENT KILL <ip:port>
      * CLIENT KILL <option> [value] ... <option> [value] */
 
@@ -3823,7 +3823,7 @@ client_kill_done:
 }
 
 
-void clientCommandUnblock(client *c) {
+void clientUnblockCommand(client *c) {
     /* CLIENT UNBLOCK <id> [timeout|error] */
     long long id;
     int unblock_error = 0;
@@ -3856,13 +3856,13 @@ void clientCommandUnblock(client *c) {
     }
 }
 
-void clientCommandSetName(client *c) {
+void clientSetNameCommand(client *c) {
     /* CLIENT SETNAME */
     if (clientSetNameOrReply(c, c->argv[2]) == C_OK)
         addReply(c, shared.ok);
 }
 
-void clientCommandGetName(client *c) {
+void clientGetNameCommand(client *c) {
     /* CLIENT GETNAME */
     if (c->name)
         addReplyBulk(c, c->name);
@@ -3870,13 +3870,13 @@ void clientCommandGetName(client *c) {
         addReplyNull(c);
 }
 
-void clientCommandUnpause(client *c) {
+void clientUnpauseCommand(client *c) {
     /* CLIENT UNPAUSE */
     unpauseActions(PAUSE_BY_CLIENT_COMMAND);
     addReply(c, shared.ok);
 }
 
-void clientCommandPause(client *c) {
+void clientPauseCommand(client *c) {
     /* CLIENT PAUSE TIMEOUT [WRITE|ALL] */
     mstime_t end;
     int isPauseClientAll = 1;
@@ -3894,7 +3894,7 @@ void clientCommandPause(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandTracking(client *c) {
+void clientTrackingCommand(client *c) {
     /* CLIENT TRACKING (on|off) [REDIRECT <id>] [BCAST] [PREFIX first]
      *                          [PREFIX second] [OPTIN] [OPTOUT] [NOLOOP]... */
     long long redir = 0;
@@ -4010,7 +4010,7 @@ void clientCommandTracking(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandCaching(client *c) {
+void clientCachingCommand(client *c) {
     if (!c->flag.tracking) {
         addReplyError(c, "CLIENT CACHING can be called only when the "
                          "client is in tracking mode with OPTIN or "
@@ -4042,7 +4042,7 @@ void clientCommandCaching(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandGetredir(client *c) {
+void clientGetredirCommand(client *c) {
     /* CLIENT GETREDIR */
     if (c->flag.tracking) {
         addReplyLongLong(c, c->pubsub_data->client_tracking_redirection);
@@ -4051,7 +4051,7 @@ void clientCommandGetredir(client *c) {
     }
 }
 
-void clientCommandTrackingInfo(client *c) {
+void clientTrackingInfoCommand(client *c) {
     addReplyMapLen(c, 3);
 
     /* Flags */
@@ -4114,7 +4114,7 @@ void clientCommandTrackingInfo(client *c) {
     }
 }
 
-void clientCommandNoTouch(client *c) {
+void clientNoTouchCommand(client *c) {
     /* CLIENT NO-TOUCH ON|OFF */
     if (!strcasecmp(c->argv[2]->ptr, "on")) {
         c->flag.no_touch = 1;
@@ -4127,7 +4127,7 @@ void clientCommandNoTouch(client *c) {
     }
 }
 
-void clientCommandCapa(client *c) {
+void clientCapaCommand(client *c) {
     for (int i = 2; i < c->argc; i++) {
         if (!strcasecmp(c->argv[i]->ptr, "redirect")) {
             c->capa |= CLIENT_CAPA_REDIRECT;
@@ -4136,7 +4136,7 @@ void clientCommandCapa(client *c) {
     addReply(c, shared.ok);
 }
 
-void clientCommandImportSource(client *c) {
+void clientImportSourceCommand(client *c) {
     /* CLIENT IMPORT-SOURCE ON|OFF */
     if (!server.import_mode && strcasecmp(c->argv[2]->ptr, "off")) {
         addReplyError(c, "Server is not in import mode");
