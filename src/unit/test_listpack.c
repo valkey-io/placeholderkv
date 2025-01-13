@@ -1184,7 +1184,7 @@ int test_listpackStressWithRandom(int argc, char **argv, int flags) {
     for (i = 0; i < iteration; i++) {
         lp = lpNew(0);
         ref = listCreate();
-        listSetFreeMethod(ref, (void (*)(void *))sdsfree);
+        listSetFreeMethod(ref, sdsfreeVoid);
         len = rand() % 256;
 
         /* Create lists */

@@ -774,14 +774,13 @@ void georadiusGeneric(client *c, int srcKeyIndex, int flags) {
             if (maxelelen < elelen) maxelelen = elelen;
             totelelen += elelen;
             znode = zslInsert(zs->zsl, score, gp->member);
-            serverAssert(dictAdd(zs->dict, gp->member, &znode->score) == DICT_OK);
+            serverAssert(hashtableAdd(zs->ht, znode));
             gp->member = NULL;
         }
 
         if (returned_items) {
             zsetConvertToListpackIfNeeded(zobj, maxelelen, totelelen);
-            setKey(c, c->db, storekey, zobj, 0);
-            decrRefCount(zobj);
+            setKey(c, c->db, storekey, &zobj, 0);
             notifyKeyspaceEvent(NOTIFY_ZSET, flags & GEOSEARCH ? "geosearchstore" : "georadiusstore", storekey,
                                 c->db->id);
             server.dirty += returned_items;

@@ -67,15 +67,18 @@ static int checkStringLength(client *c, long long size, long long append) {
  * If abort_reply is NULL, "$-1" is used. */
 
 #define OBJ_NO_FLAGS 0
-#define OBJ_SET_NX (1 << 0)  /* Set if key not exists. */
-#define OBJ_SET_XX (1 << 1)  /* Set if key exists. */
-#define OBJ_EX (1 << 2)      /* Set if time in seconds is given */
-#define OBJ_PX (1 << 3)      /* Set if time in ms in given */
-#define OBJ_KEEPTTL (1 << 4) /* Set and keep the ttl */
-#define OBJ_SET_GET (1 << 5) /* Set if want to get key before set */
-#define OBJ_EXAT (1 << 6)    /* Set if timestamp in second is given */
-#define OBJ_PXAT (1 << 7)    /* Set if timestamp in ms is given */
-#define OBJ_PERSIST (1 << 8) /* Set if we need to remove the ttl */
+#define OBJ_SET_NX (1 << 0)   /* Set if key not exists. */
+#define OBJ_SET_XX (1 << 1)   /* Set if key exists. */
+#define OBJ_EX (1 << 2)       /* Set if time in seconds is given */
+#define OBJ_PX (1 << 3)       /* Set if time in ms in given */
+#define OBJ_KEEPTTL (1 << 4)  /* Set and keep the ttl */
+#define OBJ_SET_GET (1 << 5)  /* Set if want to get key before set */
+#define OBJ_EXAT (1 << 6)     /* Set if timestamp in second is given */
+#define OBJ_PXAT (1 << 7)     /* Set if timestamp in ms is given */
+#define OBJ_PERSIST (1 << 8)  /* Set if we need to remove the ttl */
+#define OBJ_SET_IFEQ (1 << 9) /* Set if we need compare and set */
+#define OBJ_ARGV3 (1 << 10)   /* Set if the value is at argv[3]; otherwise it's \
+                               * at argv[2]. */
 
 /* Forward declaration */
 static int getExpireMillisecondsOrReply(client *c, robj *expire, int flags, int unit, long long *milliseconds);
@@ -87,7 +90,8 @@ void setGenericCommand(client *c,
                        robj *expire,
                        int unit,
                        robj *ok_reply,
-                       robj *abort_reply) {
+                       robj *abort_reply,
+                       robj *comparison) {
     long long milliseconds = 0; /* initialized to avoid any harmness warning */
     int found = 0;
     int setkey_flags = 0;
@@ -100,7 +104,27 @@ void setGenericCommand(client *c,
         if (getGenericCommand(c) == C_ERR) return;
     }
 
-    found = (lookupKeyWrite(c->db, key) != NULL);
+    robj *existing_value = lookupKeyWrite(c->db, key);
+    found = existing_value != NULL;
+
+    /* Handle the IFEQ conditional check */
+    if (flags & OBJ_SET_IFEQ && found) {
+        if (!(flags & OBJ_SET_GET) && checkType(c, existing_value, OBJ_STRING)) {
+            return;
+        }
+
+        if (compareStringObjects(existing_value, comparison) != 0) {
+            if (!(flags & OBJ_SET_GET)) {
+                addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
+            }
+            return;
+        }
+    } else if (flags & OBJ_SET_IFEQ && !found) {
+        if (!(flags & OBJ_SET_GET)) {
+            addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
+        }
+        return;
+    }
 
     if ((flags & OBJ_SET_NX && found) || (flags & OBJ_SET_XX && !found)) {
         if (!(flags & OBJ_SET_GET)) {
@@ -123,12 +147,18 @@ void setGenericCommand(client *c,
     setkey_flags |= ((flags & OBJ_KEEPTTL) || expire) ? SETKEY_KEEPTTL : 0;
     setkey_flags |= found ? SETKEY_ALREADY_EXIST : SETKEY_DOESNT_EXIST;
 
-    setKey(c, c->db, key, val, setkey_flags);
+    setKey(c, c->db, key, &val, setkey_flags);
+    if (expire) val = setExpire(c, c->db, key, milliseconds);
+
+    /* By setting the reallocated value back into argv, we can avoid duplicating
+     * a large string value when adding it to the db. */
+    c->argv[(flags & OBJ_ARGV3) ? 3 : 2] = val;
+    incrRefCount(val);
+
     server.dirty++;
     notifyKeyspaceEvent(NOTIFY_STRING, "set", key, c->db->id);
 
     if (expire) {
-        setExpire(c, c->db, key, milliseconds);
         /* Propagate as SET Key Value PXAT millisecond-timestamp if there is
          * EX/PX/EXAT flag. */
         if (!(flags & OBJ_PXAT)) {
@@ -208,7 +238,7 @@ static int getExpireMillisecondsOrReply(client *c, robj *expire, int flags, int 
  * string arguments used in SET and GET command.
  *
  * Get specific commands - PERSIST/DEL
- * Set specific commands - XX/NX/GET
+ * Set specific commands - XX/NX/GET/IFEQ
  * Common commands - EX/EXAT/PX/PXAT/KEEPTTL
  *
  * Function takes pointers to client, flags, unit, pointer to pointer of expire obj if needed
@@ -219,7 +249,7 @@ static int getExpireMillisecondsOrReply(client *c, robj *expire, int flags, int 
  * Input flags are updated upon parsing the arguments. Unit and expire are updated if there are any
  * EX/EXAT/PX/PXAT arguments. Unit is updated to millisecond if PX/PXAT is set.
  */
-int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, int command_type) {
+int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj **expire, robj **compare_val, int command_type) {
     int j = command_type == COMMAND_GET ? 2 : 3;
     for (; j < c->argc; j++) {
         char *opt = c->argv[j]->ptr;
@@ -228,14 +258,23 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
         /* clang-format off */
         if ((opt[0] == 'n' || opt[0] == 'N') &&
             (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
-            !(*flags & OBJ_SET_XX) && (command_type == COMMAND_SET))
+            !(*flags & OBJ_SET_XX || *flags & OBJ_SET_IFEQ) && (command_type == COMMAND_SET))
         {
             *flags |= OBJ_SET_NX;
         } else if ((opt[0] == 'x' || opt[0] == 'X') &&
                    (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
-                   !(*flags & OBJ_SET_NX) && (command_type == COMMAND_SET))
+                   !(*flags & OBJ_SET_NX || *flags & OBJ_SET_IFEQ) && (command_type == COMMAND_SET))
         {
             *flags |= OBJ_SET_XX;
+        } else if ((opt[0] == 'i' || opt[0] == 'I') &&
+            (opt[1] == 'f' || opt[1] == 'F') &&
+            (opt[2] == 'e' || opt[2] == 'E') &&
+            (opt[3] == 'q' || opt[3] == 'Q') && opt[4] == '\0' &&
+            next && !(*flags & OBJ_SET_NX || *flags & OBJ_SET_XX || *flags & OBJ_SET_IFEQ) && (command_type == COMMAND_SET))
+        {
+            *flags |= OBJ_SET_IFEQ;
+            *compare_val = next;
+            j++;
         } else if ((opt[0] == 'g' || opt[0] == 'G') &&
                    (opt[1] == 'e' || opt[1] == 'E') &&
                    (opt[2] == 't' || opt[2] == 'T') && opt[3] == '\0' &&
@@ -304,34 +343,36 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
     return C_OK;
 }
 
-/* SET key value [NX] [XX] [KEEPTTL] [GET] [EX <seconds>] [PX <milliseconds>]
- *     [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] */
+/* SET key value [NX | XX | IFEQ comparison-value] [GET]
+ *     [EX seconds | PX milliseconds |
+ *      EXAT seconds-timestamp | PXAT milliseconds-timestamp | KEEPTTL] */
 void setCommand(client *c) {
     robj *expire = NULL;
+    robj *comparison = NULL;
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c, &flags, &unit, &expire, COMMAND_SET) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c, &flags, &unit, &expire, &comparison, COMMAND_SET) != C_OK) {
         return;
     }
 
     c->argv[2] = tryObjectEncoding(c->argv[2]);
-    setGenericCommand(c, flags, c->argv[1], c->argv[2], expire, unit, NULL, NULL);
+    setGenericCommand(c, flags, c->argv[1], c->argv[2], expire, unit, NULL, NULL, comparison);
 }
 
 void setnxCommand(client *c) {
     c->argv[2] = tryObjectEncoding(c->argv[2]);
-    setGenericCommand(c, OBJ_SET_NX, c->argv[1], c->argv[2], NULL, 0, shared.cone, shared.czero);
+    setGenericCommand(c, OBJ_SET_NX, c->argv[1], c->argv[2], NULL, 0, shared.cone, shared.czero, NULL);
 }
 
 void setexCommand(client *c) {
     c->argv[3] = tryObjectEncoding(c->argv[3]);
-    setGenericCommand(c, OBJ_EX, c->argv[1], c->argv[3], c->argv[2], UNIT_SECONDS, NULL, NULL);
+    setGenericCommand(c, OBJ_EX | OBJ_ARGV3, c->argv[1], c->argv[3], c->argv[2], UNIT_SECONDS, NULL, NULL, NULL);
 }
 
 void psetexCommand(client *c) {
     c->argv[3] = tryObjectEncoding(c->argv[3]);
-    setGenericCommand(c, OBJ_PX, c->argv[1], c->argv[3], c->argv[2], UNIT_MILLISECONDS, NULL, NULL);
+    setGenericCommand(c, OBJ_PX | OBJ_ARGV3, c->argv[1], c->argv[3], c->argv[2], UNIT_MILLISECONDS, NULL, NULL, NULL);
 }
 
 int getGenericCommand(client *c) {
@@ -377,7 +418,7 @@ void getexCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
-    if (parseExtendedStringArgumentsOrReply(c, &flags, &unit, &expire, COMMAND_GET) != C_OK) {
+    if (parseExtendedStringArgumentsOrReply(c, &flags, &unit, &expire, NULL, COMMAND_GET) != C_OK) {
         return;
     }
 
@@ -406,7 +447,7 @@ void getexCommand(client *c) {
          * has already elapsed so delete the key in that case. */
         deleteExpiredKeyFromOverwriteAndPropagate(c, c->argv[1]);
     } else if (expire) {
-        setExpire(c, c->db, c->argv[1], milliseconds);
+        o = setExpire(c, c->db, c->argv[1], milliseconds);
         /* Propagate as PXEXPIREAT millisecond-timestamp if there is
          * EX/PX/EXAT/PXAT flag and the key has not expired. */
         robj *milliseconds_obj = createStringObjectFromLongLong(milliseconds);
@@ -439,7 +480,8 @@ void getdelCommand(client *c) {
 void getsetCommand(client *c) {
     if (getGenericCommand(c) == C_ERR) return;
     c->argv[2] = tryObjectEncoding(c->argv[2]);
-    setKey(c, c->db, c->argv[1], c->argv[2], 0);
+    setKey(c, c->db, c->argv[1], &c->argv[2], 0);
+    incrRefCount(c->argv[2]);
     notifyKeyspaceEvent(NOTIFY_STRING, "set", c->argv[1], c->db->id);
     server.dirty++;
 
@@ -473,7 +515,7 @@ void setrangeCommand(client *c) {
             return;
 
         o = createObject(OBJ_STRING, sdsnewlen(NULL, offset + sdslen(value)));
-        dbAdd(c->db, c->argv[1], o);
+        dbAdd(c->db, c->argv[1], &o);
     } else {
         size_t olen;
 
@@ -587,8 +629,10 @@ void msetGenericCommand(client *c, int nx) {
 
     int setkey_flags = nx ? SETKEY_DOESNT_EXIST : 0;
     for (j = 1; j < c->argc; j += 2) {
-        c->argv[j + 1] = tryObjectEncoding(c->argv[j + 1]);
-        setKey(c, c->db, c->argv[j], c->argv[j + 1], setkey_flags);
+        robj *val = tryObjectEncoding(c->argv[j + 1]);
+        setKey(c, c->db, c->argv[j], &val, setkey_flags);
+        incrRefCount(val);
+        c->argv[j + 1] = val;
         notifyKeyspaceEvent(NOTIFY_STRING, "set", c->argv[j], c->db->id);
         /* In MSETNX, It could be that we're overriding the same key, we can't be sure it doesn't exist. */
         if (nx)
@@ -623,16 +667,15 @@ void incrDecrCommand(client *c, long long incr) {
     value += incr;
 
     if (o && o->refcount == 1 && o->encoding == OBJ_ENCODING_INT &&
-        (value < 0 || value >= OBJ_SHARED_INTEGERS) &&
         value >= LONG_MIN && value <= LONG_MAX) {
         new = o;
         o->ptr = (void *)((long)value);
     } else {
         new = createStringObjectFromLongLongForValue(value);
         if (o) {
-            dbReplaceValue(c->db, c->argv[1], new);
+            dbReplaceValue(c->db, c->argv[1], &new);
         } else {
-            dbAdd(c->db, c->argv[1], new);
+            dbAdd(c->db, c->argv[1], &new);
         }
     }
     signalModifiedKey(c, c->db, c->argv[1]);
@@ -685,9 +728,9 @@ void incrbyfloatCommand(client *c) {
     }
     new = createStringObjectFromLongDouble(value, 1);
     if (o)
-        dbReplaceValue(c->db, c->argv[1], new);
+        dbReplaceValue(c->db, c->argv[1], &new);
     else
-        dbAdd(c->db, c->argv[1], new);
+        dbAdd(c->db, c->argv[1], &new);
     signalModifiedKey(c, c->db, c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING, "incrbyfloat", c->argv[1], c->db->id);
     server.dirty++;
@@ -709,7 +752,7 @@ void appendCommand(client *c) {
     if (o == NULL) {
         /* Create the key */
         c->argv[2] = tryObjectEncoding(c->argv[2]);
-        dbAdd(c->db, c->argv[1], c->argv[2]);
+        dbAdd(c->db, c->argv[1], &c->argv[2]);
         incrRefCount(c->argv[2]);
         totlen = stringObjectLen(c->argv[2]);
     } else {

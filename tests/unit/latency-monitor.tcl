@@ -189,3 +189,15 @@ tags {"needs:debug"} {
         assert_match "*wrong number of arguments for 'latency|help' command" $e
     }
 }
+
+start_cluster 1 1 {tags {"latency-monitor cluster external:skip needs:latency"} overrides {latency-monitor-threshold 1}} {
+    test "Cluster config file latency" {
+        # This test just a sanity test so that we can make sure the code path is cover.
+        # We don't assert anything since we can't be sure whether it will be counted.
+        R 0 cluster saveconfig
+        R 1 cluster saveconfig
+        R 1 cluster failover force
+        R 0 latency latest
+        R 1 latency latest
+    }
+}
