@@ -3,7 +3,7 @@
  * too much network bandwidth and memory for input/output buffers.
  *
  * The execution time to reach to be logged in the slow log is set
- * using the 'slowlog-log-slower-than' config directive, that is also
+ * using the 'commandlog-execution-slower-than' config directive, that is also
  * readable and writable using the CONFIG SET/GET command.
  *
  * Other configurations such as `commandlog-request-larger-than` and
@@ -15,7 +15,6 @@
  *
  * ----------------------------------------------------------------------------
  *
-/*
  * Copyright Valkey Contributors.
  * All rights reserved.
  * SPDX-License-Identifier: BSD 3-Clause
