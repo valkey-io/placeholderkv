@@ -6,8 +6,8 @@
  * using the 'slowlog-log-slower-than' config directive, that is also
  * readable and writable using the CONFIG SET/GET command.
  *
- * Other configurations such as `large-request-larger-than` and
- * `large-reply-larger-than` can be found with more detailed
+ * Other configurations such as `commandlog-request-larger-than` and
+ * `commandlog-reply-larger-than` can be found with more detailed
  * explanations in the config file.
  *
  * The command log is actually not "logged" in the server log file

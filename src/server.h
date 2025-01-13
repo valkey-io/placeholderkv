@@ -2350,7 +2350,7 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  *
  * CMD_SKIP_MONITOR:  Do not automatically propagate the command on MONITOR.
  *
- * CMD_SKIP_SLOWLOG:  Do not automatically propagate the command to the slowlog.
+ * CMD_SKIP_COMMANDLOG:  Do not automatically propagate the command to the commandlog.
  *
  * CMD_ASKING:      Perform an implicit ASKING for this command, so the
  *                  command will be accepted in cluster mode if the slot is marked

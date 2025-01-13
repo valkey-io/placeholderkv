@@ -818,7 +818,7 @@ void configSetCommand(client *c) {
 
         /* Note: it's important we run over ALL passed configs and check if we need to call
          * `redactClientCommandArgument()`. This is in order to avoid anyone using this command for a
-         * log/slowlog/monitor/etc. displaying sensitive info. So even if we encounter an error we still continue
+         * log/commandlog/monitor/etc. displaying sensitive info. So even if we encounter an error we still continue
          * running over the remaining arguments. */
         if (config->flags & SENSITIVE_CONFIG) {
             redactClientCommandArgument(c, 2 + i * 2 + 1);
