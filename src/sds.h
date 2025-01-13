@@ -39,10 +39,13 @@ extern const char *SDS_NOINIT;
 #include <stdarg.h>
 #include <stdint.h>
 
-typedef char *sds;
+/* Constness:
+ *
+ * - 'const sds' means 'char * const'. It is a const-pointer to non-const content.
+ * - 'const_sds' means 'const char *'. It is a non-const pointer to const content.
+ * - 'const const_sds' means 'const char * const', const pointer and content. */
 
-/* Constness: 'const sds' means 'char * const'. To get 'const char *', use
- * 'const_sds'. To get both, you can use 'const const_sds' */
+typedef char *sds;
 typedef const char *const_sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
