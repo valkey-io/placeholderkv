@@ -2545,6 +2545,19 @@ static int updateExtendedRedisCompat(const char **err) {
     return 1;
 }
 
+static int applyTcpTxZerocopy(const char **err) {
+#ifndef HAVE_MSG_ZEROCOPY
+    if (server.tcp_tx_zerocopy) {
+        *err = "TCP zerocopy is not supported by this system";
+        return 0;
+    }
+    return 1;
+#else
+    UNUSED(err);
+    return 1;
+#endif
+}
+
 static int updateSighandlerEnabled(const char **err) {
     UNUSED(err);
     if (server.crashlog_enabled)
@@ -3188,6 +3201,7 @@ standardConfig static_configs[] = {
     createBoolConfig("cluster-slot-stats-enabled", NULL, MODIFIABLE_CONFIG, server.cluster_slot_stats_enabled, 0, NULL, NULL),
     createBoolConfig("hide-user-data-from-log", NULL, MODIFIABLE_CONFIG, server.hide_user_data_from_log, 1, NULL, NULL),
     createBoolConfig("import-mode", NULL, DEBUG_CONFIG | MODIFIABLE_CONFIG, server.import_mode, 0, NULL, NULL),
+    createBoolConfig("tcp-tx-zerocopy", NULL, MODIFIABLE_CONFIG, server.tcp_tx_zerocopy, CONFIG_DEFAULT_TCP_TX_ZEROCOPY, NULL, applyTcpTxZerocopy),
 
     /* String Configs */
     createStringConfig("aclfile", NULL, IMMUTABLE_CONFIG, ALLOW_EMPTY_STRING, server.acl_filename, "", NULL, NULL),
@@ -3289,6 +3303,7 @@ standardConfig static_configs[] = {
     createIntConfig("rdma-port", NULL, MODIFIABLE_CONFIG, 0, 65535, server.rdma_ctx_config.port, 0, INTEGER_CONFIG, NULL, updateRdmaPort),
     createIntConfig("rdma-rx-size", NULL, IMMUTABLE_CONFIG, 64 * 1024, 16 * 1024 * 1024, server.rdma_ctx_config.rx_size, 1024 * 1024, INTEGER_CONFIG, NULL, NULL),
     createIntConfig("rdma-completion-vector", NULL, IMMUTABLE_CONFIG, -1, 1024, server.rdma_ctx_config.completion_vector, -1, INTEGER_CONFIG, NULL, NULL),
+    createIntConfig("tcp-zerocopy-min-write-size", NULL, MODIFIABLE_CONFIG, 0, INT_MAX, server.tcp_zerocopy_min_write_size, CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE, INTEGER_CONFIG, NULL, NULL),
 
     /* Unsigned int configs */
     createUIntConfig("maxclients", NULL, MODIFIABLE_CONFIG, 1, UINT_MAX, server.maxclients, 10000, INTEGER_CONFIG, NULL, updateMaxclients),

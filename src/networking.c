@@ -36,6 +36,7 @@
 #include "fmtargs.h"
 #include "io_threads.h"
 #include "module.h"
+#include "zerocopy.h"
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -210,6 +211,7 @@ client *createClient(connection *conn) {
     c->commands_processed = 0;
     c->io_last_reply_block = NULL;
     c->io_last_bufpos = 0;
+    c->zero_copy_tracker = NULL;
     return c;
 }
 
@@ -296,6 +298,9 @@ int prepareClientToWrite(client *c) {
      * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
      * but has a connection to cache the response. */
     if (c->flag.fake && c->id != CLIENT_ID_CACHED_RESPONSE) return C_ERR;
+
+    /* Don't write to clients that are in shutdown state. */
+    if (c->conn->state == CONN_STATE_SHUTDOWN) return C_ERR;
     serverAssert(c->conn);
 
     /* Schedule the client to write the output buffers to the socket, unless
@@ -1645,7 +1650,7 @@ void freeClient(client *c) {
     waitForClientIO(c);
 
     /* For connected clients, call the disconnection event of modules hooks. */
-    if (c->conn) {
+    if (c->conn && c->conn->state != CONN_STATE_SHUTDOWN) {
         moduleFireServerEvent(VALKEYMODULE_EVENT_CLIENT_CHANGE, VALKEYMODULE_SUBEVENT_CLIENT_CHANGE_DISCONNECTED, c);
     }
 
@@ -1676,6 +1681,23 @@ void freeClient(client *c) {
             replicationCachePrimary(c);
             return;
         }
+    }
+
+    /* For zero copy connections with active writes, we cannot close() the
+     * connection until the kernel has explicitly told us it is done with
+     * all buffers. This can happen due to kernel queueing or due to
+     * retransmissions. See
+     * https://lore.kernel.org/netdev/20220601024744.626323-1-frederik.deweerdt@gmail.com
+     * for the most recent discussion on this topic.
+     *
+     * Clients that we want to free will instead enter a draining mode, where
+     * the connection is shutdown and we wait for the kernel to finish with any
+     * pending writes or to give up on retransmission. */
+    if (c->zero_copy_tracker && c->zero_copy_tracker->len > 0) {
+        if (!c->zero_copy_tracker->draining) {
+            zeroCopyStartDraining(c);
+        }
+        return;
     }
 
     /* Log link disconnection with replica */
@@ -1741,6 +1763,9 @@ void freeClient(client *c) {
     freeClientMultiState(c);
     sdsfree(c->peerid);
     sdsfree(c->sockname);
+    if (c->zero_copy_tracker) {
+        freeZeroCopyTracker(c->zero_copy_tracker);
+    }
     zfree(c);
 }
 
@@ -1911,7 +1936,8 @@ client *lookupClientByID(uint64_t id) {
 void writeToReplica(client *c) {
     /* Can be called from main-thread only as replica write offload is not supported yet */
     serverAssert(inMainThread());
-    int nwritten = 0;
+    ssize_t nwritten = 0;
+    zeroCopyRecord *ongoing_zero_copy_write = NULL;
     serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
     while (clientHasPendingReplies(c)) {
         replBufBlock *o = listNodeValue(c->repl_data->ref_repl_buf_node);
@@ -1919,23 +1945,66 @@ void writeToReplica(client *c) {
 
         /* Send current block if it is not fully sent. */
         if (o->used > c->repl_data->ref_block_pos) {
-            nwritten = connWrite(c->conn, o->buf + c->repl_data->ref_block_pos, o->used - c->repl_data->ref_block_pos);
+            size_t data_len = o->used - c->repl_data->ref_block_pos;
+            int use_zerocopy = shouldUseZeroCopy(c->conn, data_len);
+            if (use_zerocopy) {
+                /* Lazily enable zero copy at the socket level only on first use */
+                if (!c->zero_copy_tracker) {
+                    connSetZeroCopy(c->conn, 1);
+                    c->zero_copy_tracker = createZeroCopyTracker();
+                }
+                nwritten = zeroCopyWriteToConn(c->conn, o->buf + c->repl_data->ref_block_pos, data_len);
+            } else {
+                nwritten = connWrite(c->conn, o->buf + c->repl_data->ref_block_pos, data_len);
+            }
+
             if (nwritten <= 0) {
                 c->write_flags |= WRITE_FLAGS_WRITE_ERROR;
                 return;
             }
             c->nwritten += nwritten;
             c->repl_data->ref_block_pos += nwritten;
+
+            if (use_zerocopy) {
+                ongoing_zero_copy_write = zeroCopyTrackerExtend(c->zero_copy_tracker);
+                ongoing_zero_copy_write->block = o;
+                ongoing_zero_copy_write->active = 1;
+                ongoing_zero_copy_write->last_write_for_block = 0;
+                connSetErrorQueueHandler(c->conn, processZeroCopyMessages);
+            }
+        }
+
+        /* If the block is fully sent, we may still have active zero copy writes. Check the most
+         * recent zero copy write for our connection and see if it matches this block. */
+        if (!ongoing_zero_copy_write && c->zero_copy_tracker) {
+            ongoing_zero_copy_write = zeroCopyTrackerEnd(c->zero_copy_tracker);
+            if (ongoing_zero_copy_write && ongoing_zero_copy_write->block != o) {
+                /* This zero copy record was for a different block, therefore there are no pending
+                 * zero copy writes for this block.*/
+                ongoing_zero_copy_write = NULL;
+            }
         }
 
         /* If we fully sent the object on head, go to the next one. */
         listNode *next = listNextNode(c->repl_data->ref_repl_buf_node);
         if (next && c->repl_data->ref_block_pos == o->used) {
-            o->refcount--;
+            if (!ongoing_zero_copy_write) {
+                /* All writes are done, we can free this block inline. */
+                o->refcount--;
+            } else {
+                /* There is an ongoing write. The zero copy handler will be responsible for
+                 * decrementing the refcount and trimming the backlog once that completes. */
+                ongoing_zero_copy_write->last_write_for_block = 1;
+            }
+
             ((replBufBlock *)(listNodeValue(next)))->refcount++;
             c->repl_data->ref_repl_buf_node = next;
             c->repl_data->ref_block_pos = 0;
-            incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+
+            if (!ongoing_zero_copy_write) {
+                /* Also trim the backlog if decremented the refcount */
+                incrementalTrimReplicationBacklog(REPL_BACKLOG_TRIM_BLOCKS_PER_CALL);
+            }
         }
     }
 }

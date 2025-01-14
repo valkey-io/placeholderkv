@@ -132,13 +132,14 @@ static int connSocketConnect(connection *conn,
 static void connSocketShutdown(connection *conn) {
     if (conn->fd == -1) return;
 
+    conn->state = CONN_STATE_SHUTDOWN;
     shutdown(conn->fd, SHUT_RDWR);
 }
 
 /* Close the connection and free resources. */
 static void connSocketClose(connection *conn) {
     if (conn->fd != -1) {
-        aeDeleteFileEvent(server.el, conn->fd, AE_READABLE | AE_WRITABLE);
+        aeDeleteFileEvent(server.el, conn->fd, AE_READABLE | AE_WRITABLE | AE_ERROR_QUEUE);
         close(conn->fd);
         conn->fd = -1;
     }
@@ -255,6 +256,20 @@ static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc fun
     return C_OK;
 }
 
+/* Register an error queue handler, to be called when the connection has a
+ * new error message. If NULL, the existing handler is removed. */
+static int connSocketSetErrorQueueHandler(connection *conn, ConnectionCallbackFunc func) {
+    if (func == conn->error_queue_handler) return C_OK;
+
+    conn->error_queue_handler = func;
+    if (!conn->error_queue_handler) {
+        aeDeleteFileEvent(server.el, conn->fd, AE_ERROR_QUEUE);
+    } else if (aeCreateFileEvent(server.el, conn->fd, AE_ERROR_QUEUE, conn->type->ae_handler, conn) == AE_ERR) {
+        return C_ERR;
+    }
+    return C_OK;
+}
+
 static const char *connSocketGetLastError(connection *conn) {
     return strerror(conn->last_errno);
 }
@@ -294,6 +309,11 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
 
     int call_write = (mask & AE_WRITABLE) && conn->write_handler;
     int call_read = (mask & AE_READABLE) && conn->read_handler;
+    int call_error_queue = (mask & AE_ERROR_QUEUE) && conn->error_queue_handler && !server.debug_pause_errqueue_events;
+
+    if (call_error_queue) {
+        if (!callHandler(conn, conn->error_queue_handler)) return;
+    }
 
     /* Handle normal I/O flows */
     if (!invert && call_read) {
@@ -397,6 +417,14 @@ static ssize_t connSocketSyncReadLine(connection *conn, char *ptr, ssize_t size,
     return syncReadLine(conn->fd, ptr, size, timeout);
 }
 
+static ssize_t connSocketSend(connection *conn, const void *data, size_t data_len, int flags) {
+    return send(conn->fd, data, data_len, flags);
+}
+
+static ssize_t connSocketRecvMsg(connection *conn, struct msghdr *msg, int flags) {
+    return recvmsg(conn->fd, msg, flags);
+}
+
 static const char *connSocketGetType(connection *conn) {
     (void)conn;
 
@@ -437,10 +465,13 @@ static ConnectionType CT_Socket = {
     .read = connSocketRead,
     .set_write_handler = connSocketSetWriteHandler,
     .set_read_handler = connSocketSetReadHandler,
+    .set_error_queue_handler = connSocketSetErrorQueueHandler,
     .get_last_error = connSocketGetLastError,
     .sync_write = connSocketSyncWrite,
     .sync_read = connSocketSyncRead,
     .sync_readline = connSocketSyncReadLine,
+    .send = connSocketSend,
+    .recvmsg = connSocketRecvMsg,
 
     /* pending data */
     .has_pending_data = NULL,
@@ -480,6 +511,10 @@ int connSendTimeout(connection *conn, long long ms) {
 
 int connRecvTimeout(connection *conn, long long ms) {
     return anetRecvTimeout(NULL, conn->fd, ms);
+}
+
+int connSetZeroCopy(connection *conn, int setting) {
+    return anetSetZeroCopy(NULL, conn->fd, setting);
 }
 
 int RedisRegisterConnectionTypeSocket(void) {

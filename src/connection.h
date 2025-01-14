@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/uio.h>
+#include <sys/socket.h>
 
 #include "ae.h"
 
@@ -50,6 +51,7 @@ typedef enum {
     CONN_STATE_CONNECTING,
     CONN_STATE_ACCEPTING,
     CONN_STATE_CONNECTED,
+    CONN_STATE_SHUTDOWN,
     CONN_STATE_CLOSED,
     CONN_STATE_ERROR
 } ConnectionState;
@@ -104,10 +106,13 @@ typedef struct ConnectionType {
     int (*read)(struct connection *conn, void *buf, size_t buf_len);
     int (*set_write_handler)(struct connection *conn, ConnectionCallbackFunc handler, int barrier);
     int (*set_read_handler)(struct connection *conn, ConnectionCallbackFunc handler);
+    int (*set_error_queue_handler)(struct connection *conn, ConnectionCallbackFunc handler);
     const char *(*get_last_error)(struct connection *conn);
     ssize_t (*sync_write)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     ssize_t (*sync_read)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     ssize_t (*sync_readline)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
+    ssize_t (*send)(struct connection *conn, const void *data, size_t data_len, int flags);
+    ssize_t (*recvmsg)(struct connection *conn, struct msghdr *msg, int flags);
 
     /* pending data */
     int (*has_pending_data)(void);
@@ -135,6 +140,7 @@ struct connection {
     ConnectionCallbackFunc conn_handler;
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
+    ConnectionCallbackFunc error_queue_handler;
 };
 
 #define CONFIG_BINDADDR_MAX 16
@@ -258,6 +264,10 @@ static inline int connSetWriteHandlerWithBarrier(connection *conn, ConnectionCal
     return conn->type->set_write_handler(conn, func, barrier);
 }
 
+static inline int connSetErrorQueueHandler(connection *conn, ConnectionCallbackFunc func) {
+    return conn->type->set_error_queue_handler(conn, func);
+}
+
 static inline void connShutdown(connection *conn) {
     conn->type->shutdown(conn);
 }
@@ -283,6 +293,14 @@ static inline ssize_t connSyncRead(connection *conn, char *ptr, ssize_t size, lo
 
 static inline ssize_t connSyncReadLine(connection *conn, char *ptr, ssize_t size, long long timeout) {
     return conn->type->sync_readline(conn, ptr, size, timeout);
+}
+
+static inline ssize_t connSend(connection *conn, const void *data, size_t data_len, int flags) {
+    return conn->type->send(conn, data, data_len, flags);
+}
+
+static inline ssize_t connRecvMsg(connection *conn, struct msghdr *msg, int flags) {
+    return conn->type->recvmsg(conn, msg, flags);
 }
 
 /* Return CONN_TYPE_* for the specified connection */
@@ -382,6 +400,7 @@ int connDisableTcpNoDelay(connection *conn);
 int connKeepAlive(connection *conn, int interval);
 int connSendTimeout(connection *conn, long long ms);
 int connRecvTimeout(connection *conn, long long ms);
+int connSetZeroCopy(connection *conn, int setting);
 
 /* Get cert for the secure connection */
 static inline sds connGetPeerCert(connection *conn) {

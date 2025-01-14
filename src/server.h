@@ -153,6 +153,12 @@ struct hdr_histogram;
 #else
 #define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
 #endif
+#ifdef HAVE_MSG_ZEROCOPY
+#define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 1
+#else
+#define CONFIG_DEFAULT_TCP_TX_ZEROCOPY 0
+#endif
+#define CONFIG_DEFAULT_ZERO_COPY_MIN_WRITE_SIZE 10 * 1024 /* https://docs.kernel.org/networking/msg_zerocopy.html */
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -1090,6 +1096,22 @@ typedef struct ClientFlags {
     uint64_t reserved : 4;                 /* Reserved for future use */
 } ClientFlags;
 
+/* Tracking struct used to decrement reference count of repl backlog block
+ * once written to replica by the kernel. */
+typedef struct zeroCopyRecord {
+    replBufBlock *block;
+    int active;
+    int last_write_for_block;
+} zeroCopyRecord;
+
+typedef struct zeroCopyTracker {
+    zeroCopyRecord *records;
+    uint32_t start;
+    uint32_t len;
+    uint32_t capacity;
+    int draining;
+} zeroCopyTracker;
+
 typedef struct ClientPubSubData {
     dict *pubsub_channels;      /* channels a client is interested in (SUBSCRIBE) */
     dict *pubsub_patterns;      /* patterns a client is interested in (PSUBSCRIBE) */
@@ -1232,11 +1254,13 @@ typedef struct client {
      * before adding it the new value. */
     size_t last_memory_usage;
     /* Fields after this point are less frequently used */
-    listNode *client_list_node;        /* list node in client list */
-    mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
-    size_t querybuf_peak;              /* Recent (100ms or more) peak of querybuf size. */
-    dictEntry *cur_script;             /* Cached pointer to the dictEntry of the script being executed. */
-    user *user;                        /* User associated with this connection */
+    listNode *client_list_node;         /* list node in client list */
+    zeroCopyTracker *zero_copy_tracker; /* Circular buffer of active writes, indexed
+                                         * by sequence number. */
+    mstime_t buf_peak_last_reset_time;  /* keeps the last time the buffer peak value was reset */
+    size_t querybuf_peak;               /* Recent (100ms or more) peak of querybuf size. */
+    dictEntry *cur_script;              /* Cached pointer to the dictEntry of the script being executed. */
+    user *user;                         /* User associated with this connection */
     time_t obuf_soft_limit_reached_time;
     list *deferred_reply_errors; /* Used for module thread safe contexts. */
     robj *name;                  /* As set by CLIENT SETNAME. */
@@ -1393,6 +1417,7 @@ struct serverMemOverhead {
         size_t overhead_ht_main;
         size_t overhead_ht_expires;
     } *db;
+    size_t zero_copy_tracking;
 };
 
 /* Replication error behavior determines the replica behavior
@@ -1724,6 +1749,9 @@ struct valkeyServer {
     long long stat_client_outbuf_limit_disconnections; /* Total number of clients reached output buf length limit */
     long long stat_total_prefetch_entries;             /* Total number of prefetched dict entries */
     long long stat_total_prefetch_batches;             /* Total number of prefetched batches */
+    long long stat_zero_copy_writes_processed;         /* Total number of writes using zero copy */
+    long long stat_zero_copy_writes_in_flight;         /* Total number of writes using zero copy that are not yet finished by the kernel */
+    size_t stat_zero_copy_tracking_memory;             /* Memory usage for zero copy related tracking */
     /* The following two are used to track instantaneous metrics, like
      * number of operations per second, network traffic. */
     struct {
@@ -1968,6 +1996,12 @@ struct valkeyServer {
     int repl_replica_lazy_flush;                 /* Lazy FLUSHALL before loading DB? */
     /* Import Mode */
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
+    /* TCP Zero Copy */
+    int tcp_tx_zerocopy;                      /* If true, use zero copy for writes when possible. */
+    int tcp_zerocopy_min_write_size;          /* Minimum size for a write before we go through zerocopy. */
+    int debug_zerocopy_bypass_loopback_check; /* Used to test zerocopy on loopback connections */
+    int debug_pause_errqueue_events;          /* Used to pause zerocopy notifications */
+    unsigned int draining_clients;
     /* Synchronous replication. */
     list *clients_waiting_acks; /* Clients waiting in WAIT or WAITAOF. */
     int get_ack_from_replicas;  /* If true we send REPLCONF GETACK. */
