@@ -2183,7 +2183,7 @@ int hashtableLongestBucketChain(hashtable *ht) {
             int chainlen = 0;
             bucket *b = &ht->tables[table][i];
             while (b->chained) {
-                ++chainlen
+                ++chainlen;
                 b = getChildBucket(b);
             }
             if (chainlen > maxlen) {
