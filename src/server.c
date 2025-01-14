@@ -6703,7 +6703,7 @@ void serverOutOfMemoryHandler(size_t allocation_size) {
 /* Callback for sdstemplate on proc-title-template. See valkey.conf for
  * supported variables.
  */
-static sds serverProcTitleGetVariable(const sds varname, void *arg) {
+static sds serverProcTitleGetVariable(const_sds varname, void *arg) {
     if (!strcmp(varname, "title")) {
         return sdsnew(arg);
     } else if (!strcmp(varname, "listen-addr")) {
