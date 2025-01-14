@@ -2715,6 +2715,7 @@ void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions);
 void unpauseActions(pause_purpose purpose);
 uint32_t isPausedActions(uint32_t action_bitmask);
 uint32_t isPausedActionsWithUpdate(uint32_t action_bitmask);
+mstime_t getPausedActionTimeout(uint32_t action);
 void updatePausedActions(void);
 void unblockPostponedClients(void);
 void processEventsWhileBlocked(void);

@@ -4520,6 +4520,16 @@ void flushReplicasOutputBuffers(void) {
     }
 }
 
+mstime_t getPausedActionTimeout(uint32_t action) {
+    mstime_t timeout = 0;
+    for (int i = 0; i < NUM_PAUSE_PURPOSES; i++) {
+        pause_event *p = &(server.client_pause_per_purpose[i]);
+        if (p->paused_actions & action && (p->end - server.mstime) > timeout)
+            timeout = p->end - server.mstime;
+    }
+    return timeout;
+}
+
 /* Compute current paused actions and its end time, aggregated for
  * all pause purposes. */
 void updatePausedActions(void) {
