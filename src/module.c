@@ -510,7 +510,6 @@ static void zsetKeyReset(ValkeyModuleKey *key);
 static void moduleInitKeyTypeSpecific(ValkeyModuleKey *key);
 void VM_FreeDict(ValkeyModuleCtx *ctx, ValkeyModuleDict *d);
 void VM_FreeServerInfo(ValkeyModuleCtx *ctx, ValkeyModuleServerInfoData *data);
-int moduleReplicate(ValkeyModuleCtx *ctx, ValkeyModuleFlag flag, const char *cmdname, const char *fmt, va_list ap);
 
 /* Helpers for VM_SetCommandInfo. */
 static int moduleValidateCommandInfo(const ValkeyModuleCommandInfo *info);
@@ -3581,6 +3580,34 @@ int VM_ReplyWithLongDouble(ValkeyModuleCtx *ctx, long double ld) {
     return VALKEYMODULE_OK;
 }
 
+/* Helper function for VM_Replicate and VM_ReplicateWithoutValidation to replicate the specified command
+ * and arguments to replicas and AOF, as effect of execution of the calling command implementation.
+ * Skip command validation if skip is set to true(non-zero). */
+int moduleReplicate(ValkeyModuleCtx *ctx, int skip, const char *cmdname, const char *fmt, va_list ap) {
+    struct serverCommand *cmd;
+    robj **argv = NULL;
+    int argc = 0, flags = 0, j;
+    if (!skip) {
+        cmd = lookupCommandByCString((char *)cmdname);
+        if (!cmd) return VALKEYMODULE_ERR;
+    }
+    /* Create the client and dispatch the command. */
+    argv = moduleCreateArgvFromUserFormat(cmdname, fmt, &argc, &flags, ap);
+    if (argv == NULL) return VALKEYMODULE_ERR;
+    /* Select the propagation target. Usually is AOF + replicas, however
+     * the caller can exclude one or the other using the "A" or "R"
+     * modifiers. */
+    int target = 0;
+    if (!(flags & VALKEYMODULE_ARGV_NO_AOF)) target |= PROPAGATE_AOF;
+    if (!(flags & VALKEYMODULE_ARGV_NO_REPLICAS)) target |= PROPAGATE_REPL;
+    alsoPropagate(ctx->client->db->id, argv, argc, target);
+    /* Release the argv. */
+    for (j = 0; j < argc; j++) decrRefCount(argv[j]);
+    zfree(argv);
+    server.dirty++;
+    return VALKEYMODULE_OK;
+}
+
 /* --------------------------------------------------------------------------
  * ## Commands replication API
  * -------------------------------------------------------------------------- */
@@ -3625,18 +3652,19 @@ int VM_ReplyWithLongDouble(ValkeyModuleCtx *ctx, long double ld) {
 int VM_Replicate(ValkeyModuleCtx *ctx, const char *cmdname, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    int result = moduleReplicate(ctx, VALKEYMODULE_FLAG_DEFAULT, cmdname, fmt, ap);
+    int result = moduleReplicate(ctx, 0, cmdname, fmt, ap);
     va_end(ap);
     return result;
 }
 
-/* Same as ValkeyModule_Replicate, but can take ValkeyModuleFlag
- * Can be either VALKEYMODULE_FLAG_DEFAULT, which means default behavior
- * (same as calling ValkeyModule_Replicate) */
-int VM_ReplicateWithFlag(ValkeyModuleCtx *ctx, ValkeyModuleFlag flag, const char *cmdname, const char *fmt, ...) {
+/* Same as ValkeyModule_Replicate, but performing without command validation.
+ * Skipping validation can improve performance by reducing the overhead associated
+ * with command checking, especially in high-throughput scenarios where commands
+ * are already pre-validated or trusted. */
+int VM_ReplicateWithoutValidation(ValkeyModuleCtx *ctx, const char *cmdname, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    int result = moduleReplicate(ctx, flag, cmdname, fmt, ap);
+    int result = moduleReplicate(ctx, 1, cmdname, fmt, ap);
     va_end(ap);
     return result;
 }
@@ -13669,34 +13697,6 @@ void moduleDefragGlobals(void) {
     dictReleaseIterator(di);
 }
 
-/* Helper function for VM_Replicate and VM_ReplicateWithFlag to replicate the specified command
- * and arguments to replicas and AOF, as effect of execution of the calling command implementation.
- * Skip command validation if the ValkeyModuleFlag is set to VALKEYMODULE_FLAG_SKIP_VALIDATION. */
-int moduleReplicate(ValkeyModuleCtx *ctx, ValkeyModuleFlag flag, const char *cmdname, const char *fmt, va_list ap) {
-    struct serverCommand *cmd;
-    robj **argv = NULL;
-    int argc = 0, flags = 0, j;
-    if (flag != VALKEYMODULE_FLAG_SKIP_VALIDATION) {
-        cmd = lookupCommandByCString((char *)cmdname);
-        if (!cmd) return VALKEYMODULE_ERR;
-    }
-    /* Create the client and dispatch the command. */
-    argv = moduleCreateArgvFromUserFormat(cmdname, fmt, &argc, &flags, ap);
-    if (argv == NULL) return VALKEYMODULE_ERR;
-    /* Select the propagation target. Usually is AOF + replicas, however
-     * the caller can exclude one or the other using the "A" or "R"
-     * modifiers. */
-    int target = 0;
-    if (!(flags & VALKEYMODULE_ARGV_NO_AOF)) target |= PROPAGATE_AOF;
-    if (!(flags & VALKEYMODULE_ARGV_NO_REPLICAS)) target |= PROPAGATE_REPL;
-    alsoPropagate(ctx->client->db->id, argv, argc, target);
-    /* Release the argv. */
-    for (j = 0; j < argc; j++) decrRefCount(argv[j]);
-    zfree(argv);
-    server.dirty++;
-    return VALKEYMODULE_OK;
-}
-
 /* Returns the name of the key currently being processed.
  * There is no guarantee that the key name is always available, so this may return NULL.
  */
@@ -13810,7 +13810,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(StringPtrLen);
     REGISTER_API(AutoMemory);
     REGISTER_API(Replicate);
-    REGISTER_API(ReplicateWithFlag);
+    REGISTER_API(ReplicateWithoutValidation);
     REGISTER_API(ReplicateVerbatim);
     REGISTER_API(DeleteKey);
     REGISTER_API(UnlinkKey);
