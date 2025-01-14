@@ -5649,6 +5649,17 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         unsigned long blocking_keys, blocking_keys_on_nokey, watched_keys;
         getExpansiveClientsInfo(&maxin, &maxout);
         totalNumberOfStatefulKeys(&blocking_keys, &blocking_keys_on_nokey, &watched_keys);
+
+        char *paused_actions = "none";
+        long long paused_timeout = 0;
+        if (server.paused_actions & PAUSE_ACTION_CLIENT_ALL) {
+            paused_actions = "all";
+            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_ALL);
+        } else if (server.paused_actions & PAUSE_ACTION_CLIENT_WRITE) {
+            paused_actions = "write";
+            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_WRITE);
+        }
+
         if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(
             info,
@@ -5665,7 +5676,9 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "clients_in_timeout_table:%llu\r\n", (unsigned long long)raxSize(server.clients_timeout_table),
                 "total_watched_keys:%lu\r\n", watched_keys,
                 "total_blocking_keys:%lu\r\n", blocking_keys,
-                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
+                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey,
+                "paused_actions:%s\r\n", paused_actions,
+                "paused_timeout_milliseconds:%lld\r\n", paused_timeout));
     }
 
     /* Memory */
@@ -5863,15 +5876,6 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             server.stat_last_eviction_exceeded_time ? (long long)elapsedUs(server.stat_last_eviction_exceeded_time) : 0;
         long long current_active_defrag_time =
             server.stat_last_active_defrag_time ? (long long)elapsedUs(server.stat_last_active_defrag_time) : 0;
-        char *paused_actions = "none";
-        long long paused_timeout = 0;
-        if (server.paused_actions & PAUSE_ACTION_CLIENT_ALL) {
-            paused_actions = "all";
-            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_ALL);
-        } else if (server.paused_actions & PAUSE_ACTION_CLIENT_WRITE) {
-            paused_actions = "write";
-            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_WRITE);
-        }
 
         if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(
@@ -5939,9 +5943,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
                 "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
-                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
-                "paused_actions:%s\r\n", paused_actions,
-                "paused_timeout_milliseconds:%lld\r\n", paused_timeout));
+                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
         info = genValkeyInfoStringACLStats(info);
     }
 

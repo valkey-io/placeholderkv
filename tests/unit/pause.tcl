@@ -12,7 +12,7 @@ start_server {tags {"pause network"}} {
 
         r multi
         r client PAUSE 1000 ALL
-        r info stats
+        r info clients
         assert_match "*paused_actions:all*" [r exec]
 
         r client unpause
