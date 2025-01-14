@@ -511,8 +511,10 @@ start_server {tags {"dual-channel-replication external:skip"}} {
         $primary config set repl-diskless-sync-delay 0
         if {$::valgrind} {
             $primary config set repl-timeout 100
+            $replica config set repl-timeout 100
         } else {
-            $primary config set repl-timeout 10
+            $primary config set repl-timeout 10            
+            $replica config set repl-timeout 10
         }
         $primary config set rdb-key-save-delay 200
         populate 10000 primary 10000
@@ -523,11 +525,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
 
         $replica config set dual-channel-replication-enabled yes
         $replica config set loglevel debug
-        if {$::valgrind} {
-            $primary config set repl-timeout 100
-        } else {
-            $primary config set repl-timeout 10
-        }
+        
         # Pause replica after primary fork
         $replica debug pause-after-fork 1
 
