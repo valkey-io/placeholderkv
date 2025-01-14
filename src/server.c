@@ -5941,7 +5941,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
                 "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
                 "paused_actions:%s\r\n", paused_actions,
-                "paused_timeout:%lld\r\n", paused_timeout));
+                "paused_timeout_milliseconds:%lld\r\n", paused_timeout));
         info = genValkeyInfoStringACLStats(info);
     }
 

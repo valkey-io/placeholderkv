@@ -1,12 +1,12 @@
 start_server {tags {"pause network"}} {
     test "Test check paused_actions in info stats" {
         assert_equal [s paused_actions] "none"
-        assert_equal [s paused_timeout] 0
+        assert_equal [s paused_timeout_milliseconds] 0
 
         r client PAUSE 10000 WRITE
         assert_equal [s paused_actions] "write"
         after 1000
-        set timeout [s paused_timeout]
+        set timeout [s paused_timeout_milliseconds]
         assert {$timeout > 0 && $timeout < 9000}
         r client unpause
 
