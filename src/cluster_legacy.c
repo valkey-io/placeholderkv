@@ -84,7 +84,7 @@ void clusterFreeNodesSlotsInfo(clusterNode *n);
 uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
 slotMigration *clusterGetCurrentSlotMigration(void);
-void clusterSendMigrateSlotStart(clusterNode *node, list *slot_ranges);
+void clusterSendMigrateSlotStart(clusterNode *node, unsigned char *slot_bitmap);
 void moduleCallClusterReceivers(const char *sender_id,
                                 uint64_t module_id,
                                 uint8_t type,
@@ -4445,13 +4445,13 @@ slotMigration *clusterGetCurrentSlotMigration(void) {
     return (slotMigration *) listFirst(server.cluster->slot_migrations)->value;
 }
 
-void clusterSendMigrateSlotStart(clusterNode *node, list *slot_ranges) {
+void clusterSendMigrateSlotStart(clusterNode *node, unsigned char *slot_bitmap) {
     if (!node->link) return;
 
     uint32_t msglen = sizeof(clusterMsg) - sizeof(union clusterMsgData) + sizeof(clusterMsgSlotMigration);
     clusterMsgSendBlock *msgblock = createClusterMsgSendBlock(CLUSTERMSG_TYPE_MIGRATE_SLOT_START, msglen);
     clusterMsg *hdr = getMessageFromSendBlock(msgblock);
-    slotRangesToBitmap(slot_ranges, hdr->data.slot_migration.msg.slot_bitmap);
+    memcpy(hdr->data.slot_migration.msg.slot_bitmap, slot_bitmap, sizeof(hdr->data.slot_migration.msg.slot_bitmap));
     clusterSendMessage(node->link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
@@ -4482,7 +4482,7 @@ void clusterProceedWithSlotMigration(void) {
                 /* Start the migration */
                 serverLog(LL_NOTICE, "Starting sync from migration source node %.40s", curr_migration->source_node->name);
                 curr_migration->end_time = mstime() + CLUSTER_SLOT_MIGRATION_TIMEOUT;
-                curr_migration->link = createReplicationLink(curr_migration->source_node->ip, getNodeDefaultReplicationPort(curr_migration->source_node), curr_migration->slot_ranges);
+                curr_migration->link = createReplicationLink(curr_migration->source_node->ip, getNodeDefaultReplicationPort(curr_migration->source_node), curr_migration->slot_bitmap);
                 if (connectReplicationLink(curr_migration->link) == C_ERR) {
                     serverLog(LL_WARNING,
                             "Failed to begin sync from migration source node %.40s", curr_migration->source_node->name);
@@ -4506,7 +4506,7 @@ void clusterProceedWithSlotMigration(void) {
                 return;
             case SLOT_MIGRATION_PAUSE_OWNER:
                 serverLog(LL_NOTICE, "Replication link to slot owner %.40s has been established. Pausing source node and waiting to continue", curr_migration->source_node->name);
-                clusterSendMigrateSlotStart(curr_migration->source_node, curr_migration->slot_ranges);
+                clusterSendMigrateSlotStart(curr_migration->source_node, curr_migration->slot_bitmap);
                 curr_migration->pause_primary_offset = -1;
                 curr_migration->pause_end = mstime() + CLUSTER_MF_TIMEOUT;
                 curr_migration->state = SLOT_MIGRATION_WAITING_FOR_OFFSET;
@@ -4524,12 +4524,8 @@ void clusterProceedWithSlotMigration(void) {
                 return;
             case SLOT_MIGRATION_FINISH:
                 serverLog(LL_NOTICE, "Setting myself to owner of migrating slots and broadcasting");
-                listIter li;
-                listNode *ln;
-                listRewind(curr_migration->slot_ranges, &li);
-                while ((ln = listNext(&li))) {
-                    slotRange *range = (slotRange *) ln->value;
-                    for (int i = range->start; i <= range->end; i++) {
+                for (int i = 0; i < CLUSTER_SLOTS; i++) {
+                    if (bitmapTestBit(curr_migration->slot_bitmap, i)) {
                         clusterDelSlot(i);
                         clusterAddSlot(myself, i);
                     }
@@ -4548,8 +4544,7 @@ void clusterProceedWithSlotMigration(void) {
                 /* Delete the migration from the queue and proceed to the next migration */
                 listDelNode(server.cluster->slot_migrations, curr_node);
                 freeReplicationLink(curr_migration->link);
-                dropKeysInSlotRanges(curr_migration->slot_ranges, server.repl_replica_lazy_flush);
-                freeSlotRanges(curr_migration->slot_ranges);
+                dropKeysInSlotBitmap(curr_migration->slot_bitmap, server.repl_replica_lazy_flush);
                 zfree(curr_migration);
                 continue;
         }
@@ -5595,6 +5590,17 @@ void bitmapClearBit(unsigned char *bitmap, int pos) {
     off_t byte = pos / 8;
     int bit = pos & 7;
     bitmap[byte] &= ~(1 << bit);
+}
+
+void bitmapSetAllBits(unsigned char *bitmap, int len) {
+    memset(bitmap, 0xff, len);
+}
+
+/* Return if the slot bitmap contains all slots */
+int isSlotBitmapAllSlots(unsigned char *bitmap) {
+    unsigned char all_slot_bitmap[CLUSTER_SLOTS / 8];
+    bitmapSetAllBits(all_slot_bitmap, sizeof(all_slot_bitmap));
+    return memcmp(bitmap, all_slot_bitmap, sizeof(all_slot_bitmap)) == 0;
 }
 
 /* Return non-zero if there is at least one primary with replicas in the cluster.
@@ -7333,7 +7339,7 @@ int clusterCommandSpecial(client *c) {
         }
 
         slotMigration *to_enqueue = (slotMigration *) zmalloc(sizeof(slotMigration));
-        bitmapToSlotRanges(requested_slots, &to_enqueue->slot_ranges);
+        memcpy(to_enqueue->slot_bitmap, requested_slots, sizeof(requested_slots));
         to_enqueue->source_node = curr_owner;
         to_enqueue->state = SLOT_MIGRATION_QUEUED;
         to_enqueue->end_time = 0; /* Will be set once started. */

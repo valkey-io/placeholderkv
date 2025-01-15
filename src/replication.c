@@ -953,7 +953,7 @@ need_full_resync:
  *    started.
  *
  * Returns C_OK on success or C_ERR otherwise. */
-int startBgsaveForReplication(int mincapa, int req, list *slot_ranges) {
+int startBgsaveForReplication(int mincapa, int req, unsigned char *slot_bitmap) {
     int retval;
     int socket_target = 0;
     listIter li;
@@ -977,7 +977,7 @@ int startBgsaveForReplication(int mincapa, int req, list *slot_ranges) {
      * otherwise replica will miss repl-stream-db. */
     if (rsiptr) {
         if (socket_target)
-            retval = rdbSaveToReplicasSockets(req, rsiptr, slot_ranges);
+            retval = rdbSaveToReplicasSockets(req, rsiptr, slot_bitmap);
         else {
             /* Keep the page cache since it'll get used soon */
             retval = rdbSaveBackground(req, server.rdb_filename, rsiptr, RDBFLAGS_REPLICATION | RDBFLAGS_KEEP_CACHE);
@@ -1099,7 +1099,7 @@ void syncCommand(client *c) {
     }
 
     /* Fail sync if it is asking for AOF format and a slot is not set via REPLCONF already. */
-    if (c->repl_data->replica_req & REPLICA_REQ_AOF_FORMAT && c->repl_data->slot_ranges == NULL) {
+    if (c->repl_data->replica_req & REPLICA_REQ_AOF_FORMAT && isSlotBitmapAllSlots(c->repl_data->slot_bitmap)) {
         addReplyError(c, "AOF format is only supported for single slot SYNC");
         return;
     }
@@ -1180,7 +1180,7 @@ void syncCommand(client *c) {
     }
 
     /* For slot level replication, we make no attempt to coallesce BGSAVEs */
-    int require_dedicated = c->repl_data->slot_ranges != NULL;
+    int require_dedicated = !isSlotBitmapAllSlots(c->repl_data->slot_bitmap);
 
     /* CASE 1: BGSAVE is in progress, with disk target. */
     if (!require_dedicated && server.child_type == CHILD_TYPE_RDB && server.rdb_child_type == RDB_CHILD_TYPE_DISK) {
@@ -1244,7 +1244,7 @@ void syncCommand(client *c) {
     }
 
     /* CASE 5: We are good to start a BGSAVE. Diskless or disk-based mode is determined by replica's capacity. */
-    startBgsaveForReplication(c->repl_data->replica_capa, c->repl_data->replica_req, c->repl_data->slot_ranges);
+    startBgsaveForReplication(c->repl_data->replica_capa, c->repl_data->replica_req, c->repl_data->slot_bitmap);
     return;
 }
 
@@ -1268,6 +1268,7 @@ int anyOtherReplicaWaitRdb(client *except_me) {
 void initClientReplicationData(client *c) {
     if (c->repl_data) return;
     c->repl_data = (ClientReplicationData *)zcalloc(sizeof(ClientReplicationData));
+    bitmapSetAllBits(c->repl_data->slot_bitmap, sizeof(c->repl_data->slot_bitmap));
 }
 
 void freeClientReplicationData(client *c) {
@@ -1312,9 +1313,6 @@ void freeClientReplicationData(client *c) {
         replicationHandleSourceDisconnection(c->repl_data->link);
     }
     sdsfree(c->repl_data->replica_addr);
-    if (c->repl_data->slot_ranges) {
-        freeSlotRanges(c->repl_data->slot_ranges);
-    }
     zfree(c->repl_data);
     c->repl_data = NULL;
 }
@@ -1515,23 +1513,20 @@ void replconfCommand(client *c) {
             if (!server.cluster_enabled) {
                 addReplyError(c, "Cannot replicate a slot when cluster mode is disabled");
             }
-            if (c->repl_data->slot_ranges != NULL) {
+            if (!isSlotBitmapAllSlots(c->repl_data->slot_bitmap)) {
                 addReplyError(c, "Slot bitmap already set");
             }
             if (stringObjectLen(c->argv[j + 1]) != CLUSTER_SLOTS / 8) {
                 addReplyError(c, "Invalid slot bitmap length");
                 return;
             }
-            list *slot_ranges;
-            bitmapToSlotRanges(c->argv[j + 1]->ptr, &slot_ranges);
             for (int slot = 0; slot <= CLUSTER_SLOTS; slot++) {
                 if (bitmapTestBit(c->argv[j + 1]->ptr, slot) && server.cluster->slots[slot] != server.cluster->myself) {
                     addReplyErrorFormat(c, "I cannot replicate slot %d since I do not own it", slot);
-                    freeSlotRanges(slot_ranges);
                     return;
                 }
             }
-            c->repl_data->slot_ranges = slot_ranges;
+            memcpy(c->repl_data->slot_bitmap, c->argv[j + 1]->ptr, CLUSTER_SLOTS / 8);
 
             /* For now, we only support AOF for slot transfer. */
             c->repl_data->replica_req |= REPLICA_REQ_AOF_FORMAT;
@@ -1993,7 +1988,7 @@ void shiftReplicationId(void) {
 char *replicationGetNameForLogs(replicationLink *link) {
     if (link == server.primary)
         return "PRIMARY";
-    if (link->slot_ranges != NULL)
+    if (!isSlotBitmapAllSlots(link->slot_bitmap))
         return "SLOT OWNER";
     return "OTHER REPLICATION SOURCE";
 }
@@ -2079,7 +2074,7 @@ client *createReplicationLinkClientWithHandler(replicationLink *link, connection
      * PSYNC capable, so we flag it accordingly. */
     if (c->repl_data->reploff == -1) c->flag.pre_psync = 1;
     if (dbid != -1) selectDb(c, dbid);
-    c->repl_data->slot_ranges = link->slot_ranges;
+    memcpy(c->repl_data->slot_bitmap, link->slot_bitmap, sizeof(c->repl_data->slot_bitmap));
 
     return c;
 }
@@ -2247,7 +2242,7 @@ void readSyncBulkPayload(connection *conn) {
     replicationLink *link = (replicationLink *)connGetPrivateData(conn);
 
     /* RDB bulk load will only be used if we are sending all slots. */
-    serverAssert(link->slot_ranges == NULL);
+    serverAssert(isSlotBitmapAllSlots(link->slot_bitmap));
 
     /* Static vars used to hold the EOF mark, and the last bytes received
      * from the server: when they match, we reached the end of the transfer. */
@@ -2879,7 +2874,7 @@ static int dualChannelReplHandleReplconfReply(replicationLink *link, sds *err) {
 }
 
 int replicationUseAOFFormatSnapshot(replicationLink *link) {
-    return link->slot_ranges != NULL;
+    return !isSlotBitmapAllSlots(link->slot_bitmap);
 }
 
 static int dualChannelReplHandleEndOffsetResponse(replicationLink *link, sds *err) {
@@ -3731,13 +3726,10 @@ void syncWithSource(connection *conn) {
         }
 
         /* Set the slot number, so that the primary only provides us with the appropriate slot dictionary. */
-        if (link->slot_ranges != NULL) {
+        if (!isSlotBitmapAllSlots(link->slot_bitmap)) {
             char *argv[3] = {"REPLCONF", "slot-bitmap", NULL};
             size_t lens[3] = {8, 11, 0};
-            unsigned char slot_bitmap[CLUSTER_SLOTS/8 + 1] = {0};
-            slotRangesToBitmap(link->slot_ranges, slot_bitmap);
-            slot_bitmap[CLUSTER_SLOTS/8] = '\0';
-            argv[2] = (char *)slot_bitmap;
+            argv[2] = (char *)link->slot_bitmap;
             lens[2] = CLUSTER_SLOTS/8;
             err = sendCommandArgv(conn, 3, argv, lens);
             if (err) goto write_error;
@@ -3817,7 +3809,7 @@ void syncWithSource(connection *conn) {
         return;
     }
 
-    if (link->state == REPL_STATE_RECEIVE_SLOT_REPLY && link->slot_ranges == NULL)
+    if (link->state == REPL_STATE_RECEIVE_SLOT_REPLY && isSlotBitmapAllSlots(link->slot_bitmap))
         link->state = REPL_STATE_RECEIVE_CAPA_REPLY;
 
     if (link->state == REPL_STATE_RECEIVE_SLOT_REPLY) {
@@ -3937,7 +3929,7 @@ void syncWithSource(connection *conn) {
     }
 
     /* Prepare a suitable temp file for bulk transfer */
-    if (!useDisklessLoad() && link->slot_ranges == NULL) {
+    if (!useDisklessLoad() && isSlotBitmapAllSlots(link->slot_bitmap)) {
         int dfd = -1, maxtries = 5;
         while (maxtries--) {
             snprintf(tmpfile, 256, "temp-%d.%ld.rdb", (int)server.unixtime, (long int)getpid());
@@ -3960,8 +3952,8 @@ void syncWithSource(connection *conn) {
 
     /* We are going to need to do a full resync. If we are accepting a single
      * slot - make sure we have a clean slate to load it into.*/
-    if (link->slot_ranges != NULL) {
-        dropKeysInSlotRanges(link->slot_ranges, 1);
+    if (!isSlotBitmapAllSlots(link->slot_bitmap)) {
+        dropKeysInSlotBitmap(link->slot_bitmap, 1);
     }
 
     /* Using dual-channel-replication, the primary responded +DUALCHANNELSYNC. We need to
@@ -4029,12 +4021,12 @@ write_error: /* Handle sendCommand() errors. */
     goto error;
 }
 
-replicationLink *createReplicationLink(char *host, int port, list *slot_ranges) {
+replicationLink *createReplicationLink(char *host, int port, unsigned char *slot_bitmap) {
     replicationLink *result = (replicationLink *)zmalloc(sizeof(replicationLink));
     result->protected = 0;
     result->state = REPL_STATE_NONE;
     result->rdb_channel_state = REPL_DUAL_CHANNEL_STATE_NONE;
-    result->slot_ranges = slot_ranges;
+    memcpy(result->slot_bitmap, slot_bitmap, sizeof(result->slot_bitmap));
     result->client = NULL;
     result->host = sdsnew(host);
     result->port = port;
@@ -5133,7 +5125,7 @@ void replicationCron(void) {
     replication_cron_loops++; /* Incremented with frequency 1 HZ. */
 }
 
-int shouldStartChildReplication(int *mincapa_out, int *req_out, list **slot_ranges_out) {
+int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *slot_bitmap_out) {
     /* We should start a BGSAVE good for replication if we have replicas in
      * WAIT_BGSAVE_START state.
      *
@@ -5145,7 +5137,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, list **slot_rang
         int replicas_waiting = 0;
         int mincapa;
         int req;
-        list *slot_ranges;
+        unsigned char slot_bitmap[CLUSTER_SLOTS/8];
         int first = 1;
         listNode *ln;
         listIter li;
@@ -5157,7 +5149,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, list **slot_rang
                 if (first) {
                     /* Get first replica's requirements */
                     req = replica->repl_data->replica_req;
-                    slot_ranges = replica->repl_data->slot_ranges;
+                    memcpy(slot_bitmap, replica->repl_data->slot_bitmap, sizeof(slot_bitmap));
                 } else if (req != replica->repl_data->replica_req) {
                     /* Skip replicas that don't match */
                     continue;
@@ -5176,7 +5168,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, list **slot_rang
                                  max_idle >= server.repl_diskless_sync_delay)) {
             if (mincapa_out) *mincapa_out = mincapa;
             if (req_out) *req_out = req;
-            if (slot_ranges_out) *slot_ranges_out = slot_ranges;
+            if (slot_bitmap_out) memcpy(slot_bitmap_out, slot_bitmap, sizeof(slot_bitmap));
             return 1;
         }
     }
@@ -5187,13 +5179,14 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, list **slot_rang
 void replicationStartPendingFork(void) {
     int mincapa = -1;
     int req = -1;
-    list *slot_ranges = NULL;
+    unsigned char slot_bitmap[CLUSTER_SLOTS/8];
+    bitmapSetAllBits(slot_bitmap, sizeof(slot_bitmap));
 
-    if (shouldStartChildReplication(&mincapa, &req, &slot_ranges)) {
+    if (shouldStartChildReplication(&mincapa, &req, slot_bitmap)) {
         /* Start the BGSAVE. The called function may start a
          * BGSAVE with socket target or disk target depending on the
          * configuration and replicas capabilities and requirements. */
-        startBgsaveForReplication(mincapa, req, slot_ranges);
+        startBgsaveForReplication(mincapa, req, slot_bitmap);
     }
 }
 

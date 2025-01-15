@@ -153,6 +153,8 @@ struct hdr_histogram;
 #else
 #define CONFIG_ACTIVE_DEFRAG_DEFAULT 1
 #endif
+#define CLUSTER_SLOT_MASK_BITS 14                                   /* Number of bits used for slot id. */
+#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS)                 /* Total number of slots in cluster mode, which is 16384. */
 
 /* Bucket sizes for client eviction pools. Each bucket stores clients with
  * memory usage of up to twice the size of the bucket below it. */
@@ -1133,12 +1135,12 @@ typedef struct ClientReplicationData {
     short replica_req;                   /* Replica requirements: REPLICA_REQ_* */
     uint64_t associated_rdb_client_id;   /* The client id of this replica's rdb connection */
     time_t rdb_client_disconnect_time;   /* Time of the first freeClient call on this client. Used for delaying free. */
-    listNode *ref_repl_buf_node;         /* Referenced node of replication buffer blocks,
-                                           see the definition of replBufBlock. */
-    size_t ref_block_pos;                /* Access position of referenced buffer block,
-                                           i.e. the next offset to send. */
-    list *slot_ranges;               /* The slot range this replica is replicating for. */
-    replicationLink *link;               /* The replication link owning this. */
+    listNode *ref_repl_buf_node;                /* Referenced node of replication buffer blocks,
+                                                  see the definition of replBufBlock. */
+    size_t ref_block_pos;                       /* Access position of referenced buffer block,
+                                                   i.e. the next offset to send. */
+    unsigned char slot_bitmap[CLUSTER_SLOTS/8]; /* The slot range this replica is replicating for. */
+    replicationLink *link;                      /* The replication link owning this. */
 } ClientReplicationData;
 
 typedef struct ClientModuleData {
@@ -1576,7 +1578,7 @@ typedef struct replicationLink {
         int dbid;
     } provisional_source_state; /* Information about the provisional state (after RDB) for the source node, stored during dual channel sync. */
     replDataBuf pending_repl_data;             /* Replication data buffer for dual-channel-replication */
-    list *slot_ranges; /* Slot range used for slot import. */
+    unsigned char slot_bitmap[CLUSTER_SLOTS/8]; /* Slot range used for slot import. */
 } replicationLink;
 
 struct valkeyServer {
@@ -2763,7 +2765,7 @@ void ioThreadWriteToClient(void *data);
 int canParseCommand(client *c);
 int processIOThreadsReadDone(void);
 int processIOThreadsWriteDone(void);
-replicationLink *createReplicationLink(char *host, int port, list *slot_ranges);
+replicationLink *createReplicationLink(char *host, int port, unsigned char *slot_bitmap);
 int connectReplicationLink(replicationLink *link);
 int freeReplicationLink(replicationLink *link);
 
@@ -2995,7 +2997,7 @@ void aofOpenIfNeededOnServerStart(void);
 void aofManifestFree(aofManifest *am);
 int aofDelHistoryFiles(void);
 int aofRewriteLimited(void);
-int rewriteAppendOnlyFileRio(rio *aof, list *slot_ranges);
+int rewriteAppendOnlyFileRio(rio *aof, unsigned char *slot_bitmap);
 
 /* Child info */
 void openChildInfoPipe(void);

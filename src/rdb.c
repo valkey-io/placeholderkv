@@ -38,6 +38,7 @@
 #include "bio.h"
 #include "zmalloc.h"
 #include "module.h"
+#include "cluster.h"
 
 #include <math.h>
 #include <fcntl.h>
@@ -3526,7 +3527,7 @@ void killRDBChild(void) {
 
 /* Spawn an RDB child that writes the RDB to the sockets of the replicas
  * that are currently in REPLICA_STATE_WAIT_BGSAVE_START state. */
-int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, list *slot_ranges) {
+int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, unsigned char *slot_bitmap) {
     listNode *ln;
     listIter li;
     pid_t childpid;
@@ -3577,8 +3578,8 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, list *slot_ranges) {
         if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_START) {
             /* Check replica has the exact requirements */
             if (replica->repl_data->replica_req != req) continue;
-            /* No attempt to coallesce slot ranges, just use equality */
-            if (replica->repl_data->slot_ranges != slot_ranges) continue;
+            /* Check matching slot bitmaps. */
+            if (memcmp(replica->repl_data->slot_bitmap, slot_bitmap, CLUSTER_SLOTS/8) != 0) continue;
 
             conns[connsnum++] = replica->conn;
             if (dual_channel) {
@@ -3620,7 +3621,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, list *slot_ranges) {
 
         if (aof) {
             serverLog(LL_NOTICE, "Background AOF transfer started by pid %ld", (long)getpid());
-            retval = rewriteAppendOnlyFileRio(&rdb, slot_ranges);
+            retval = rewriteAppendOnlyFileRio(&rdb, slot_bitmap);
             rioWrite(&rdb, "*3\r\n", 4);
             rioWriteBulkString(&rdb, "REPLCONF", 8);
             rioWriteBulkString(&rdb, "SYNC-PAYLOAD-END", 17);

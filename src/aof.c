@@ -32,6 +32,7 @@
 #include "rio.h"
 #include "functions.h"
 #include "module.h"
+#include "cluster.h"
 
 #include <signal.h>
 #include <fcntl.h>
@@ -2190,27 +2191,20 @@ werr:
     return 0;
 }
 
-int shouldFilterSlot(int slot, void * slot_ranges) {
-    if (slot_ranges == NULL) return 0;
-    list *ranges = (list *)slot_ranges;
-    listIter li;
-    listNode *ln;
-    listRewind(ranges, &li);
-    while ((ln = listNext(&li))) {
-        slotRange *range = (slotRange *) ln->value;
-        if (slot >= range->start && slot <= range->end) return 0;
-    }
-    return 1;
+int shouldFilterSlot(int slot, void * privdata) {
+    if (privdata == NULL) return 0;
+    unsigned char *slot_bitmap = (unsigned char *)privdata;
+    return !bitmapTestBit(slot_bitmap, slot);
 }
 
-int rewriteAppendOnlyFileRio(rio *aof, list *slot_ranges) {
+int rewriteAppendOnlyFileRio(rio *aof, unsigned char *slot_bitmap) {
     int j;
     long key_count = 0;
     long long updated_time = 0;
     kvstoreIterator *kvs_it = NULL;
 
     /* Record timestamp at the beginning of rewriting AOF. */
-    if (server.aof_timestamp_enabled && slot_ranges == NULL) {
+    if (server.aof_timestamp_enabled && isSlotBitmapAllSlots(slot_bitmap)) {
         sds ts = genAofTimestampAnnotationIfNeeded(1);
         if (rioWrite(aof, ts, sdslen(ts)) == 0) {
             sdsfree(ts);
@@ -2230,10 +2224,10 @@ int rewriteAppendOnlyFileRio(rio *aof, list *slot_ranges) {
         if (rioWrite(aof, selectcmd, sizeof(selectcmd) - 1) == 0) goto werr;
         if (rioWriteBulkLongLong(aof, j) == 0) goto werr;
 
-        if (slot_ranges == NULL) {
+        if (isSlotBitmapAllSlots(slot_bitmap)) {
             kvs_it = kvstoreIteratorInit(db->keys);
         } else {
-            kvs_it = kvstoreFilteredIteratorInit(db->keys, &shouldFilterSlot, slot_ranges);
+            kvs_it = kvstoreFilteredIteratorInit(db->keys, &shouldFilterSlot, slot_bitmap);
         }
         /* Iterate this DB writing every entry */
         void *next;

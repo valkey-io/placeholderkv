@@ -387,7 +387,7 @@ typedef enum slotMigrationState {
 } slotMigrationState;
 
 typedef struct slotMigration {
-    list *slot_ranges;
+    unsigned char slot_bitmap[CLUSTER_SLOTS/8];
     slotMigrationState state;
     clusterNode *source_node;
     mstime_t end_time; /* Slot migration time limit (ms unixtime).

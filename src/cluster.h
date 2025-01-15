@@ -5,8 +5,6 @@
  * Cluster exported API.
  *----------------------------------------------------------------------------*/
 
-#define CLUSTER_SLOT_MASK_BITS 14                                   /* Number of bits used for slot id. */
-#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS)                 /* Total number of slots in cluster mode, which is 16384. */
 #define CLUSTER_SLOT_MASK ((unsigned long long)(CLUSTER_SLOTS - 1)) /* Bit mask for slot id stored in LSB. */
 #define CLUSTER_OK 0                                                /* Everything looks ok */
 #define CLUSTER_FAIL 1                                              /* The cluster can't work */
@@ -116,14 +114,14 @@ client *createCachedResponseClient(int resp);
 void deleteCachedResponseClient(client *recording_client);
 void clearCachedClusterSlotsResponse(void);
 unsigned int countKeysInSlot(unsigned int hashslot);
-unsigned int dropKeysInSlotRanges(list *slot_ranges, int async);
+unsigned int dropKeysInSlotBitmap(unsigned char *slot_bitmap, int async);
 unsigned int dropKeysInSlot(unsigned int hashslot, int async);
-void slotRangesToBitmap(list *slot_ranges, unsigned char *bitmap_out);
-void bitmapToSlotRanges(unsigned char *bitmap, list **slot_ranges_out);
-void freeSlotRanges(list *slot_ranges);
+void bitmapToSlotRanges(unsigned char *bitmap, char **slot_bitmap_out);
 int bitmapTestBit(unsigned char *bitmap, int pos);
 void bitmapSetBit(unsigned char *bitmap, int pos);
 void bitmapClearBit(unsigned char *bitmap, int pos);
+void bitmapSetAllBits(unsigned char *bitmap, int len);
+int isSlotBitmapAllSlots(unsigned char *bitmap);
 int getSlotOrReply(client *c, robj *o);
 
 /* functions with shared implementations */

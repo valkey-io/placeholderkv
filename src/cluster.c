@@ -815,14 +815,10 @@ unsigned int countKeysInSlot(unsigned int slot) {
     return kvstoreHashtableSize(server.db->keys, slot);
 }
 
-unsigned int dropKeysInSlotRanges(list *slot_ranges, int async) {
+unsigned int dropKeysInSlotBitmap(unsigned char *slot_bitmap, int async) {
     unsigned int result = 0;
-    listIter li;
-    listNode *ln;
-    listRewind(slot_ranges, &li);
-    while ((ln = listNext(&li))) {
-        slotRange *slot_range = (slotRange *) listNodeValue(ln);
-        for (int i = slot_range->start; i <= slot_range->end; i++) {
+    for (int i = 0; i < CLUSTER_SLOTS; i++) {
+        if (bitmapTestBit(slot_bitmap, i)) {
             result += dropKeysInSlot(i, async);
         }
     }
@@ -838,51 +834,6 @@ unsigned int dropKeysInSlot(unsigned int hashslot, int async) {
         kvstoreEmptyHashtable(server.db->expires, hashslot, NULL);
     }
     return result;
-}
-
-
-
-void slotRangesToBitmap(list *slot_ranges, unsigned char *bitmap_out) {
-    listIter li;
-    listNode *ln;
-    listRewind(slot_ranges, &li);
-    while ((ln = listNext(&li))) {
-        slotRange *range = (slotRange *) listNodeValue(ln);
-        for (int i = range->start; i <= range->end; i++) {
-            bitmapSetBit(bitmap_out, i);
-        }
-    }
-}
-
-void bitmapToSlotRanges(unsigned char *bitmap, list **slot_ranges_out) {
-    *slot_ranges_out = listCreate();
-    int range_start = -1;
-    for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-        if (i != CLUSTER_SLOTS && bitmapTestBit(bitmap, i)) {
-            if (range_start == -1) {
-                range_start = i;
-            }
-        } else if (range_start != -1) {
-            slotRange *range = zmalloc(sizeof(slotRange));
-            range->start = range_start;
-            range->end = i - 1;
-            range_start = -1;
-            serverLog(LL_NOTICE, "Got another range: %d-%d", range->start, range->end);
-            listAddNodeTail(*slot_ranges_out, range);
-        }
-    }
-}
-
-void freeSlotRanges(list *slot_ranges) {
-    listIter li;
-    listNode *ln;
-    listRewind(slot_ranges, &li);
-    while ((ln = listNext(&li))) {
-        slotRange *range = (slotRange *)ln->value;
-        zfree(range);
-        listDelNode(slot_ranges, ln);
-    }
-    listRelease(slot_ranges);
 }
 
 void clusterCommandHelp(client *c) {
