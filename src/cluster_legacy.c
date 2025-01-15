@@ -3859,7 +3859,7 @@ void clusterReadHandler(connection *conn) {
  * It is guaranteed that this function will never have as a side effect
  * the link to be invalidated, so it is safe to call this function
  * from event handlers that will do stuff with the same link later. */
-void clusterSendMessage(clusterLink *link, clusterMsgSendBlock *msgblock, int is_light_hdr) {
+void clusterSendMessage(clusterLink *link, clusterMsgSendBlock *msgblock) {
     if (!link) {
         return;
     }
@@ -3874,12 +3874,7 @@ void clusterSendMessage(clusterLink *link, clusterMsgSendBlock *msgblock, int is
     server.stat_cluster_links_memory += sizeof(listNode);
 
     /* Populate sent messages stats. */
-    uint16_t type;
-    if (is_light_hdr) {
-        type = ntohs(getLightMessageFromSendBlock(msgblock)->type) & ~CLUSTERMSG_MODIFIER_MASK;
-    } else {
-        type = ntohs(getMessageFromSendBlock(msgblock)->type);
-    }
+    uint16_t type = ntohs(getMessageFromSendBlock(msgblock)->type) & ~CLUSTERMSG_MODIFIER_MASK;
     if (type < CLUSTERMSG_TYPE_COUNT) server.cluster->stats_bus_messages_sent[type]++;
 }
 
@@ -3898,7 +3893,7 @@ void clusterBroadcastMessage(clusterMsgSendBlock *msgblock) {
         clusterNode *node = dictGetVal(de);
 
         if (node->flags & (CLUSTER_NODE_MYSELF | CLUSTER_NODE_HANDSHAKE)) continue;
-        clusterSendMessage(node->link, msgblock, 0);
+        clusterSendMessage(node->link, msgblock);
     }
     dictReleaseIterator(di);
 }
@@ -4146,7 +4141,7 @@ void clusterSendPing(clusterLink *link, int type) {
     hdr->count = htons(gossipcount);
     hdr->totlen = htonl(totlen);
 
-    clusterSendMessage(link, msgblock, 0);
+    clusterSendMessage(link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
 
@@ -4267,7 +4262,7 @@ void clusterSendUpdate(clusterLink *link, clusterNode *node) {
             hdr->data.update.nodecfg.slots[i] & (~server.cluster->owner_not_claiming_slot[i]);
     }
 
-    clusterSendMessage(link, msgblock, 0);
+    clusterSendMessage(link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
 
@@ -4286,7 +4281,7 @@ void clusterSendModule(clusterLink *link, uint64_t module_id, uint8_t type, cons
     memcpy(hdr->data.module.msg.bulk_data, payload, len);
 
     if (link)
-        clusterSendMessage(link, msgblock, 0);
+        clusterSendMessage(link, msgblock);
     else
         clusterBroadcastMessage(msgblock);
 
@@ -4341,12 +4336,12 @@ void clusterPropagatePublish(robj *channel, robj *message, int sharded) {
     while ((node = clusterNodeIterNext(&iter)) != NULL) {
         if (node->flags & (CLUSTER_NODE_MYSELF | CLUSTER_NODE_HANDSHAKE)) continue;
         if (nodeSupportsLightMsgHdr(node)) {
-            clusterSendMessage(node->link, msgblock_light, 1);
+            clusterSendMessage(node->link, msgblock_light);
         } else {
             if (msgblock == NULL) {
                 msgblock = clusterCreatePublishMsgBlock(channel, message, 0, sharded);
             }
-            clusterSendMessage(node->link, msgblock, 0);
+            clusterSendMessage(node->link, msgblock);
         }
     }
     clusterNodeIterReset(&iter);
@@ -4383,7 +4378,7 @@ void clusterSendFailoverAuth(clusterNode *node) {
     uint32_t msglen = sizeof(clusterMsg) - sizeof(union clusterMsgData);
     clusterMsgSendBlock *msgblock = createClusterMsgSendBlock(CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK, msglen);
 
-    clusterSendMessage(node->link, msgblock, 0);
+    clusterSendMessage(node->link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
 
@@ -4394,7 +4389,7 @@ void clusterSendMFStart(clusterNode *node) {
     uint32_t msglen = sizeof(clusterMsg) - sizeof(union clusterMsgData);
     clusterMsgSendBlock *msgblock = createClusterMsgSendBlock(CLUSTERMSG_TYPE_MFSTART, msglen);
 
-    clusterSendMessage(node->link, msgblock, 0);
+    clusterSendMessage(node->link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
 
