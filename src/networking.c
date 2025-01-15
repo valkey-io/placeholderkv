@@ -4522,16 +4522,16 @@ void flushReplicasOutputBuffers(void) {
 
 char *getPausedPurposeString(pause_purpose purpose) {
     switch (purpose) {
-        case PAUSE_BY_CLIENT_COMMAND:
-            return "client_command";
-        case PAUSE_DURING_SHUTDOWN:
-            return "during_shutdown";
-        case PAUSE_DURING_FAILOVER:
-            return "during_failover";
-        case NUM_PAUSE_PURPOSES:
-            return "none";
-        default:
-            return "Unknown pause purpose";
+    case PAUSE_BY_CLIENT_COMMAND:
+        return "client_command";
+    case PAUSE_DURING_SHUTDOWN:
+        return "during_shutdown";
+    case PAUSE_DURING_FAILOVER:
+        return "during_failover";
+    case NUM_PAUSE_PURPOSES:
+        return "none";
+    default:
+        return "Unknown pause purpose";
     }
 }
 
