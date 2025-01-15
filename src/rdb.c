@@ -3527,7 +3527,7 @@ void killRDBChild(void) {
 
 /* Spawn an RDB child that writes the RDB to the sockets of the replicas
  * that are currently in REPLICA_STATE_WAIT_BGSAVE_START state. */
-int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, unsigned char *slot_bitmap) {
+int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) {
     listNode *ln;
     listIter li;
     pid_t childpid;
@@ -3579,7 +3579,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, unsigned char *slot_bitm
             /* Check replica has the exact requirements */
             if (replica->repl_data->replica_req != req) continue;
             /* Check matching slot bitmaps. */
-            if (memcmp(replica->repl_data->slot_bitmap, slot_bitmap, CLUSTER_SLOTS/8) != 0) continue;
+            if (memcmp(replica->repl_data->slot_bitmap, slot_bitmap, sizeof(slotBitmap)) != 0) continue;
 
             conns[connsnum++] = replica->conn;
             if (dual_channel) {

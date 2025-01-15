@@ -147,7 +147,7 @@ typedef struct {
 } clusterMsgModule;
 
 typedef struct {
-    unsigned char slot_bitmap[CLUSTER_SLOTS / 8]; /* Slots bitmap. */
+    slotBitmap slot_bitmap;
 } clusterMsgSlotMigration;
 
 /* The cluster supports optional extension messages that can be sent
@@ -387,7 +387,7 @@ typedef enum slotMigrationState {
 } slotMigrationState;
 
 typedef struct slotMigration {
-    unsigned char slot_bitmap[CLUSTER_SLOTS/8];
+    slotBitmap slot_bitmap;
     slotMigrationState state;
     clusterNode *source_node;
     mstime_t end_time; /* Slot migration time limit (ms unixtime).

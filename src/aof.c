@@ -2197,7 +2197,7 @@ int shouldFilterSlot(int slot, void * privdata) {
     return !bitmapTestBit(slot_bitmap, slot);
 }
 
-int rewriteAppendOnlyFileRio(rio *aof, unsigned char *slot_bitmap) {
+int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
     int j;
     long key_count = 0;
     long long updated_time = 0;

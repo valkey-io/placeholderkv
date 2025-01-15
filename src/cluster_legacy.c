@@ -84,7 +84,7 @@ void clusterFreeNodesSlotsInfo(clusterNode *n);
 uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
 slotMigration *clusterGetCurrentSlotMigration(void);
-void clusterSendMigrateSlotStart(clusterNode *node, unsigned char *slot_bitmap);
+void clusterSendMigrateSlotStart(clusterNode *node, slotBitmap slot_bitmap);
 void moduleCallClusterReceivers(const char *sender_id,
                                 uint64_t module_id,
                                 uint8_t type,
@@ -4445,13 +4445,13 @@ slotMigration *clusterGetCurrentSlotMigration(void) {
     return (slotMigration *) listFirst(server.cluster->slot_migrations)->value;
 }
 
-void clusterSendMigrateSlotStart(clusterNode *node, unsigned char *slot_bitmap) {
+void clusterSendMigrateSlotStart(clusterNode *node, slotBitmap slot_bitmap) {
     if (!node->link) return;
 
     uint32_t msglen = sizeof(clusterMsg) - sizeof(union clusterMsgData) + sizeof(clusterMsgSlotMigration);
     clusterMsgSendBlock *msgblock = createClusterMsgSendBlock(CLUSTERMSG_TYPE_MIGRATE_SLOT_START, msglen);
     clusterMsg *hdr = getMessageFromSendBlock(msgblock);
-    memcpy(hdr->data.slot_migration.msg.slot_bitmap, slot_bitmap, sizeof(hdr->data.slot_migration.msg.slot_bitmap));
+    memcpy(hdr->data.slot_migration.msg.slot_bitmap, slot_bitmap, sizeof(slotBitmap));
     clusterSendMessage(node->link, msgblock);
     clusterMsgSendBlockDecrRefCount(msgblock);
 }
@@ -5592,15 +5592,20 @@ void bitmapClearBit(unsigned char *bitmap, int pos) {
     bitmap[byte] &= ~(1 << bit);
 }
 
-void bitmapSetAllBits(unsigned char *bitmap, int len) {
-    memset(bitmap, 0xff, len);
+void slotBitmapSetAll(slotBitmap bitmap) {
+    memset(bitmap, 0xff, sizeof(slotBitmap));
+}
+
+int slotBitmapCompare(slotBitmap bitmap, slotBitmap otherbitmap) {
+    return memcmp(bitmap, otherbitmap, sizeof(slotBitmap));
 }
 
 /* Return if the slot bitmap contains all slots */
-int isSlotBitmapAllSlots(unsigned char *bitmap) {
-    unsigned char all_slot_bitmap[CLUSTER_SLOTS / 8];
-    bitmapSetAllBits(all_slot_bitmap, sizeof(all_slot_bitmap));
-    return memcmp(bitmap, all_slot_bitmap, sizeof(all_slot_bitmap)) == 0;
+int isSlotBitmapAllSlots(slotBitmap bitmap) {
+    if (!bitmap) return 1;
+    slotBitmap all_slot_bitmap;
+    slotBitmapSetAll(all_slot_bitmap);
+    return slotBitmapCompare(bitmap, all_slot_bitmap) == 0;
 }
 
 /* Return non-zero if there is at least one primary with replicas in the cluster.
@@ -7339,7 +7344,7 @@ int clusterCommandSpecial(client *c) {
         }
 
         slotMigration *to_enqueue = (slotMigration *) zmalloc(sizeof(slotMigration));
-        memcpy(to_enqueue->slot_bitmap, requested_slots, sizeof(requested_slots));
+        memcpy(to_enqueue->slot_bitmap, requested_slots, sizeof(slotBitmap));
         to_enqueue->source_node = curr_owner;
         to_enqueue->state = SLOT_MIGRATION_QUEUED;
         to_enqueue->end_time = 0; /* Will be set once started. */

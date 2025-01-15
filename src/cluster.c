@@ -815,7 +815,7 @@ unsigned int countKeysInSlot(unsigned int slot) {
     return kvstoreHashtableSize(server.db->keys, slot);
 }
 
-unsigned int dropKeysInSlotBitmap(unsigned char *slot_bitmap, int async) {
+unsigned int dropKeysInSlotBitmap(slotBitmap slot_bitmap, int async) {
     unsigned int result = 0;
     for (int i = 0; i < CLUSTER_SLOTS; i++) {
         if (bitmapTestBit(slot_bitmap, i)) {

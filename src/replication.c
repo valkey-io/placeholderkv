@@ -953,7 +953,7 @@ need_full_resync:
  *    started.
  *
  * Returns C_OK on success or C_ERR otherwise. */
-int startBgsaveForReplication(int mincapa, int req, unsigned char *slot_bitmap) {
+int startBgsaveForReplication(int mincapa, int req, slotBitmap slot_bitmap) {
     int retval;
     int socket_target = 0;
     listIter li;
@@ -1268,7 +1268,7 @@ int anyOtherReplicaWaitRdb(client *except_me) {
 void initClientReplicationData(client *c) {
     if (c->repl_data) return;
     c->repl_data = (ClientReplicationData *)zcalloc(sizeof(ClientReplicationData));
-    bitmapSetAllBits(c->repl_data->slot_bitmap, sizeof(c->repl_data->slot_bitmap));
+    slotBitmapSetAll(c->repl_data->slot_bitmap);
 }
 
 void freeClientReplicationData(client *c) {
@@ -2074,7 +2074,7 @@ client *createReplicationLinkClientWithHandler(replicationLink *link, connection
      * PSYNC capable, so we flag it accordingly. */
     if (c->repl_data->reploff == -1) c->flag.pre_psync = 1;
     if (dbid != -1) selectDb(c, dbid);
-    memcpy(c->repl_data->slot_bitmap, link->slot_bitmap, sizeof(c->repl_data->slot_bitmap));
+    memcpy(c->repl_data->slot_bitmap, link->slot_bitmap, sizeof(slotBitmap));
 
     return c;
 }
@@ -2816,7 +2816,7 @@ static int dualChannelReplHandleHandshake(replicationLink *link, sds *err) {
         args[argc] = server.primary_auth;
         lens[argc] = sdslen(server.primary_auth);
         argc++;
-        *err = sendCommandArgv(link->transfer_s, argc, args, lens);
+        *err = sendCommandArgv(link->rdb_transfer_s, argc, args, lens);
         if (*err) {
             dualChannelServerLog(LL_WARNING, "Sending command to primary in dual channel replication handshake: %s", *err);
             return C_ERR;
@@ -2824,7 +2824,7 @@ static int dualChannelReplHandleHandshake(replicationLink *link, sds *err) {
     }
     /* Send replica listening port to primary for clarification */
     sds portstr = getReplicaPortString();
-    *err = sendCommand(link->transfer_s, "REPLCONF", "capa", "eof", "rdb-only", "1", "rdb-channel", "1", "listening-port", portstr,
+    *err = sendCommand(link->rdb_transfer_s, "REPLCONF", "capa", "eof", "rdb-only", "1", "rdb-channel", "1", "listening-port", portstr,
                        NULL);
     sdsfree(portstr);
     if (*err) {
@@ -2832,7 +2832,20 @@ static int dualChannelReplHandleHandshake(replicationLink *link, sds *err) {
         return C_ERR;
     }
 
-    if (connSetReadHandler(link->transfer_s, dualChannelFullSyncWithReplicationSource) == C_ERR) {
+    /* Send slot bitmap, if it is needed */
+    if (!isSlotBitmapAllSlots(link->slot_bitmap)) {
+        char *args[] = {"REPLCONF", "slot-bitmap", NULL};
+        size_t lens[] = {8, 11, 0};
+        args[2] = (char *) link->slot_bitmap;
+        lens[2] = sizeof(slotBitmap);
+        *err = sendCommandArgv(link->rdb_transfer_s, 3, args, lens);
+        if (*err) {
+            dualChannelServerLog(LL_WARNING, "Sending REPLCONF slot-bitmap command to primary in dual channel replication handshake: %s", *err);
+            return C_ERR;
+        }
+    }
+
+    if (connSetReadHandler(link->rdb_transfer_s, dualChannelFullSyncWithReplicationSource) == C_ERR) {
         char conninfo[CONN_INFO_LEN];
         dualChannelServerLog(LL_WARNING, "Can't create readable event for SYNC: %s (%s)", strerror(errno),
                              connGetInfo(link->transfer_s, conninfo, sizeof(conninfo)));
@@ -2842,7 +2855,7 @@ static int dualChannelReplHandleHandshake(replicationLink *link, sds *err) {
 }
 
 static int dualChannelReplHandleAuthReply(replicationLink *link, sds *err) {
-    *err = receiveSynchronousResponse(link->transfer_s);
+    *err = receiveSynchronousResponse(link->rdb_transfer_s);
     if (*err == NULL) {
         dualChannelServerLog(LL_WARNING, "Primary did not respond to auth command during SYNC handshake");
         return C_ERR;
@@ -2855,7 +2868,7 @@ static int dualChannelReplHandleAuthReply(replicationLink *link, sds *err) {
 }
 
 static int dualChannelReplHandleReplconfReply(replicationLink *link, sds *err) {
-    *err = receiveSynchronousResponse(link->transfer_s);
+    *err = receiveSynchronousResponse(link->rdb_transfer_s);
     if (*err == NULL) {
         dualChannelServerLog(LL_WARNING, "Primary did not respond to replconf command during SYNC handshake");
         return C_ERR;
@@ -2866,8 +2879,24 @@ static int dualChannelReplHandleReplconfReply(replicationLink *link, sds *err) {
                              *err);
         return C_ERR;
     }
-    if (connSyncWrite(link->transfer_s, "SYNC\r\n", 6, server.repl_syncio_timeout * 1000) == -1) {
-        dualChannelServerLog(LL_WARNING, "I/O error writing to Primary: %s", connGetLastError(link->transfer_s));
+
+    /* Recieve slot bitmap response as well. */
+    if (!isSlotBitmapAllSlots(link->slot_bitmap)) {
+        *err = receiveSynchronousResponse(link->rdb_transfer_s);
+        if (*err == NULL) {
+            dualChannelServerLog(LL_WARNING, "Primary did not respond to replconf slot-bitmap command during SYNC handshake");
+            return C_ERR;
+        }
+
+        if (*err[0] == '-') {
+            dualChannelServerLog(LL_NOTICE, "Server does not support sync with slot-bitmap, dual channel sync approach cannot be used: %s",
+                                *err);
+            return C_ERR;
+        }
+    }
+
+    if (connSyncWrite(link->rdb_transfer_s, "SYNC\r\n", 6, server.repl_syncio_timeout * 1000) == -1) {
+        dualChannelServerLog(LL_WARNING, "I/O error writing to Primary: %s", connGetLastError(link->rdb_transfer_s));
         return C_ERR;
     }
     return C_OK;
@@ -2879,7 +2908,7 @@ int replicationUseAOFFormatSnapshot(replicationLink *link) {
 
 static int dualChannelReplHandleEndOffsetResponse(replicationLink *link, sds *err) {
     uint64_t rdb_client_id;
-    *err = receiveSynchronousResponse(link->transfer_s);
+    *err = receiveSynchronousResponse(link->rdb_transfer_s);
     if (*err == NULL) {
         return C_ERR;
     }
@@ -2996,6 +3025,10 @@ error:
     link->transfer_fd = -1;
     link->state = REPL_STATE_CONNECT;
     replicationAbortDualChannelSyncTransfer(link);
+    if (link->client) {
+        freeClient(link->client);
+        link->client = NULL;
+    }
 }
 
 /* Replication: Replica side.
@@ -3730,7 +3763,7 @@ void syncWithSource(connection *conn) {
             char *argv[3] = {"REPLCONF", "slot-bitmap", NULL};
             size_t lens[3] = {8, 11, 0};
             argv[2] = (char *)link->slot_bitmap;
-            lens[2] = CLUSTER_SLOTS/8;
+            lens[2] = sizeof(slotBitmap);
             err = sendCommandArgv(conn, 3, argv, lens);
             if (err) goto write_error;
         }
@@ -3950,8 +3983,10 @@ void syncWithSource(connection *conn) {
         link->transfer_fd = dfd;
     }
 
-    /* We are going to need to do a full resync. If we are accepting a single
-     * slot - make sure we have a clean slate to load it into.*/
+    /* We are going to need to do a full resync. If we are accepting a
+     * slot subset - make sure we have a clean state to load it into. This may
+     * happen in cases where a previous replication attempt failed and is being
+     * retried. */
     if (!isSlotBitmapAllSlots(link->slot_bitmap)) {
         dropKeysInSlotBitmap(link->slot_bitmap, 1);
     }
@@ -3961,6 +3996,7 @@ void syncWithSource(connection *conn) {
     if (psync_result == PSYNC_FULLRESYNC_DUAL_CHANNEL) {
         /* Create RDB connection */
         link->rdb_transfer_s = connCreate(connTypeOfReplication());
+        connSetPrivateData(link->rdb_transfer_s, link);
         if (connConnect(link->rdb_transfer_s, link->host, link->port, server.bind_source_addr,
                         dualChannelFullSyncWithReplicationSource) == C_ERR) {
             serverLog(LL_WARNING, "Unable to connect to source: %s", connGetLastError(link->transfer_s));
@@ -4013,6 +4049,10 @@ error:
     link->transfer_tmpfile = NULL;
     link->transfer_fd = -1;
     link->state = REPL_STATE_CONNECT;
+    if (link->client) {
+        freeClient(link->client);
+        link->client = NULL;
+    }
     return;
 
 write_error: /* Handle sendCommand() errors. */
@@ -4021,12 +4061,12 @@ write_error: /* Handle sendCommand() errors. */
     goto error;
 }
 
-replicationLink *createReplicationLink(char *host, int port, unsigned char *slot_bitmap) {
+replicationLink *createReplicationLink(char *host, int port, slotBitmap slot_bitmap) {
     replicationLink *result = (replicationLink *)zmalloc(sizeof(replicationLink));
     result->protected = 0;
     result->state = REPL_STATE_NONE;
     result->rdb_channel_state = REPL_DUAL_CHANNEL_STATE_NONE;
-    memcpy(result->slot_bitmap, slot_bitmap, sizeof(result->slot_bitmap));
+    memcpy(result->slot_bitmap, slot_bitmap, sizeof(slotBitmap));
     result->client = NULL;
     result->host = sdsnew(host);
     result->port = port;
@@ -4305,6 +4345,17 @@ void replicationHandleSourceDisconnection(replicationLink *link) {
 
     link->client = NULL;
     link->state = REPL_STATE_CONNECT;
+
+    if (link->rdb_channel_state != REPL_DUAL_CHANNEL_STATE_NONE) {
+        /* Our client was closed in the middle of dual channel (e.g, we were
+         * loading AOF as a client). Ensure that the other dual channel
+         * connections are cleaned up. */
+        if (link->transfer_s) {
+            connClose(link->transfer_s);
+            link->transfer_s = NULL;
+        }
+        replicationAbortDualChannelSyncTransfer(link);
+    }
 
     /* Try to re-connect immediately rather than wait for replicationCron
      * waiting 1 second may risk backlog being recycled. */
@@ -5125,7 +5176,7 @@ void replicationCron(void) {
     replication_cron_loops++; /* Incremented with frequency 1 HZ. */
 }
 
-int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *slot_bitmap_out) {
+int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_bitmap_out) {
     /* We should start a BGSAVE good for replication if we have replicas in
      * WAIT_BGSAVE_START state.
      *
@@ -5137,7 +5188,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *s
         int replicas_waiting = 0;
         int mincapa;
         int req;
-        unsigned char slot_bitmap[CLUSTER_SLOTS/8];
+        slotBitmap slot_bitmap;
         int first = 1;
         listNode *ln;
         listIter li;
@@ -5149,7 +5200,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *s
                 if (first) {
                     /* Get first replica's requirements */
                     req = replica->repl_data->replica_req;
-                    memcpy(slot_bitmap, replica->repl_data->slot_bitmap, sizeof(slot_bitmap));
+                    memcpy(slot_bitmap, replica->repl_data->slot_bitmap, sizeof(slotBitmap));
                 } else if (req != replica->repl_data->replica_req) {
                     /* Skip replicas that don't match */
                     continue;
@@ -5168,7 +5219,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *s
                                  max_idle >= server.repl_diskless_sync_delay)) {
             if (mincapa_out) *mincapa_out = mincapa;
             if (req_out) *req_out = req;
-            if (slot_bitmap_out) memcpy(slot_bitmap_out, slot_bitmap, sizeof(slot_bitmap));
+            if (slot_bitmap_out) memcpy(slot_bitmap_out, slot_bitmap, sizeof(slotBitmap));
             return 1;
         }
     }
@@ -5179,8 +5230,8 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, unsigned char *s
 void replicationStartPendingFork(void) {
     int mincapa = -1;
     int req = -1;
-    unsigned char slot_bitmap[CLUSTER_SLOTS/8];
-    bitmapSetAllBits(slot_bitmap, sizeof(slot_bitmap));
+    slotBitmap slot_bitmap;
+    slotBitmapSetAll(slot_bitmap);
 
     if (shouldStartChildReplication(&mincapa, &req, slot_bitmap)) {
         /* Start the BGSAVE. The called function may start a

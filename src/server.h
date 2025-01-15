@@ -1108,6 +1108,8 @@ typedef struct ClientPubSubData {
                                       context of client side caching. */
 } ClientPubSubData;
 
+typedef unsigned char slotBitmap[CLUSTER_SLOTS / 8];
+
 typedef struct replicationLink replicationLink;
 typedef struct ClientReplicationData {
     int repl_state;                      /* Replication state if this is a replica. */
@@ -1135,12 +1137,12 @@ typedef struct ClientReplicationData {
     short replica_req;                   /* Replica requirements: REPLICA_REQ_* */
     uint64_t associated_rdb_client_id;   /* The client id of this replica's rdb connection */
     time_t rdb_client_disconnect_time;   /* Time of the first freeClient call on this client. Used for delaying free. */
-    listNode *ref_repl_buf_node;                /* Referenced node of replication buffer blocks,
-                                                  see the definition of replBufBlock. */
-    size_t ref_block_pos;                       /* Access position of referenced buffer block,
-                                                   i.e. the next offset to send. */
-    unsigned char slot_bitmap[CLUSTER_SLOTS/8]; /* The slot range this replica is replicating for. */
-    replicationLink *link;                      /* The replication link owning this. */
+    listNode *ref_repl_buf_node;         /* Referenced node of replication buffer blocks,
+                                            see the definition of replBufBlock. */
+    size_t ref_block_pos;                /* Access position of referenced buffer block,
+                                            i.e. the next offset to send. */
+    slotBitmap slot_bitmap;              /* The slot range this replica is replicating for. */
+    replicationLink *link;               /* The replication link owning this. */
 } ClientReplicationData;
 
 typedef struct ClientModuleData {
@@ -2765,7 +2767,7 @@ void ioThreadWriteToClient(void *data);
 int canParseCommand(client *c);
 int processIOThreadsReadDone(void);
 int processIOThreadsWriteDone(void);
-replicationLink *createReplicationLink(char *host, int port, unsigned char *slot_bitmap);
+replicationLink *createReplicationLink(char *host, int port, slotBitmap slot_bitmap);
 int connectReplicationLink(replicationLink *link);
 int freeReplicationLink(replicationLink *link);
 
@@ -2997,7 +2999,7 @@ void aofOpenIfNeededOnServerStart(void);
 void aofManifestFree(aofManifest *am);
 int aofDelHistoryFiles(void);
 int aofRewriteLimited(void);
-int rewriteAppendOnlyFileRio(rio *aof, unsigned char *slot_bitmap);
+int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap);
 
 /* Child info */
 void openChildInfoPipe(void);
