@@ -4520,12 +4520,30 @@ void flushReplicasOutputBuffers(void) {
     }
 }
 
-mstime_t getPausedActionTimeout(uint32_t action) {
+char *getPausedPurposeString(pause_purpose purpose) {
+    switch (purpose) {
+        case PAUSE_BY_CLIENT_COMMAND:
+            return "client_command";
+        case PAUSE_DURING_SHUTDOWN:
+            return "during_shutdown";
+        case PAUSE_DURING_FAILOVER:
+            return "during_failover";
+        case NUM_PAUSE_PURPOSES:
+            return "none";
+        default:
+            return "Unknown pause purpose";
+    }
+}
+
+mstime_t getPausedActionTimeout(uint32_t action, pause_purpose *purpose) {
     mstime_t timeout = 0;
+    *purpose = NUM_PAUSE_PURPOSES;
     for (int i = 0; i < NUM_PAUSE_PURPOSES; i++) {
         pause_event *p = &(server.client_pause_per_purpose[i]);
-        if (p->paused_actions & action && (p->end - server.mstime) > timeout)
+        if (p->paused_actions & action && (p->end - server.mstime) > timeout) {
             timeout = p->end - server.mstime;
+            *purpose = i;
+        }
     }
     return timeout;
 }
