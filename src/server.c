@@ -41,6 +41,7 @@
 #include "threads_mngr.h"
 #include "fmtargs.h"
 #include "io_threads.h"
+#include "io_uring.h"
 #include "sds.h"
 #include "module.h"
 
@@ -3002,6 +3003,12 @@ void initListeners(void) {
 void InitServerLast(void) {
     bioInit();
     initIOThreads();
+    if (server.io_uring_enabled) {
+        if (initIOUring() == IO_URING_ERR) {
+            serverLog(LL_WARNING, "Failed to initialize io_uring.");
+            exit(1);
+        }
+    }
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
     server.initial_memory_usage = zmalloc_used_memory();
 }
@@ -7160,6 +7167,7 @@ __attribute__((weak)) int main(int argc, char **argv) {
 
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
+    if (server.io_uring_enabled) freeIOUring();
     return 0;
 }
 /* The End */
