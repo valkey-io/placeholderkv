@@ -382,10 +382,13 @@ typedef enum blocking_type {
                                     buffer configuration. Just the first  \
                                     three: normal, replica, pubsub. */
 
-#define COMMANDLOG_TYPE_SLOW 0
-#define COMMANDLOG_TYPE_LARGE_REQUEST 1
-#define COMMANDLOG_TYPE_LARGE_REPLY 2
-#define COMMANDLOG_TYPE_MAX 3
+/* Type of commandlog */
+typedef enum {
+    COMMANDLOG_TYPE_SLOW = 0,
+    COMMANDLOG_TYPE_LARGE_REQUEST,
+    COMMANDLOG_TYPE_LARGE_REPLY,
+    COMMANDLOG_TYPE_NUM
+} commandlog_type;
 
 /* Configuration and entry list of different types of command logs */
 typedef struct commandlog {
@@ -1702,7 +1705,7 @@ struct valkeyServer {
     long long stat_sync_full;                      /* Number of full resyncs with replicas. */
     long long stat_sync_partial_ok;                /* Number of accepted PSYNC requests. */
     long long stat_sync_partial_err;               /* Number of unaccepted PSYNC requests. */
-    commandlog commandlog[COMMANDLOG_TYPE_MAX];    /* Logs of commands. */
+    commandlog commandlog[COMMANDLOG_TYPE_NUM];    /* Logs of commands. */
     struct malloc_stats cron_malloc_stats;         /* sampled in serverCron(). */
     long long stat_net_input_bytes;                /* Bytes read from network. */
     long long stat_net_output_bytes;               /* Bytes written to network. */

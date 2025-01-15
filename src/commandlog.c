@@ -87,7 +87,7 @@ void commandlogFreeEntry(void *ceptr) {
 /* Initialize the command log. This function should be called a single time
  * at server startup. */
 void commandlogInit(void) {
-    for (int i = 0; i < COMMANDLOG_TYPE_MAX; i++) {
+    for (int i = 0; i < COMMANDLOG_TYPE_NUM; i++) {
         server.commandlog[i].entries = listCreate();
         server.commandlog[i].entry_id = 0;
         listSetFreeMethod(server.commandlog[i].entries, commandlogFreeEntry);
