@@ -1963,19 +1963,39 @@ void afterSleep(struct aeEventLoop *eventLoop, int numevents) {
  * called when the config changes. When the config is phased out, these
  * initializations can be moved back inside createSharedObjects() below. */
 void createSharedObjectsWithCompat(void) {
-    const char *name = server.extended_redis_compat ? "Redis" : SERVER_TITLE;
+    const char *name = SERVER_TITLE;
+    const char *name_compat = "Redis";
+
     shared.loadingerr = makeObjectShared(createObject(
         OBJ_STRING, sdscatfmt(sdsempty(), "-LOADING %s is loading the dataset in memory\r\n", name)));
+    shared.loadingerr_compat = makeObjectShared(createObject(
+        OBJ_STRING, sdscatfmt(sdsempty(), "-LOADING %s is loading the dataset in memory\r\n", name_compat)));
+
     shared.slowevalerr = makeObjectShared(createObject(
         OBJ_STRING,
         sdscatfmt(sdsempty(),
                   "-BUSY %s is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.\r\n", name)));
+    shared.slowevalerr_compat = makeObjectShared(createObject(
+        OBJ_STRING,
+        sdscatfmt(sdsempty(),
+                  "-BUSY %s is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.\r\n",
+                  name_compat)));
+
     shared.slowscripterr = makeObjectShared(createObject(
         OBJ_STRING,
         sdscatfmt(sdsempty(),
                   "-BUSY %s is busy running a script. You can only call FUNCTION KILL or SHUTDOWN NOSAVE.\r\n", name)));
+    shared.slowscripterr_compat = makeObjectShared(createObject(
+        OBJ_STRING,
+        sdscatfmt(sdsempty(),
+                  "-BUSY %s is busy running a script. You can only call FUNCTION KILL or SHUTDOWN NOSAVE.\r\n",
+                  name_compat)));
+
     shared.slowmoduleerr = makeObjectShared(
         createObject(OBJ_STRING, sdscatfmt(sdsempty(), "-BUSY %s is busy running a module command.\r\n", name)));
+    shared.slowmoduleerr_compat = makeObjectShared(
+        createObject(OBJ_STRING, sdscatfmt(sdsempty(), "-BUSY %s is busy running a module command.\r\n", name_compat)));
+
     shared.bgsaveerr = makeObjectShared(
         createObject(OBJ_STRING, sdscatfmt(sdsempty(),
                                            "-MISCONF %s is configured to save RDB snapshots, but it's currently"
@@ -1984,6 +2004,14 @@ void createSharedObjectsWithCompat(void) {
                                            " writes if RDB snapshotting fails (stop-writes-on-bgsave-error option)."
                                            " Please check the %s logs for details about the RDB error.\r\n",
                                            name, name)));
+    shared.bgsaveerr_compat = makeObjectShared(
+        createObject(OBJ_STRING, sdscatfmt(sdsempty(),
+                                           "-MISCONF %s is configured to save RDB snapshots, but it's currently"
+                                           " unable to persist to disk. Commands that may modify the data set are"
+                                           " disabled, because this instance is configured to report errors during"
+                                           " writes if RDB snapshotting fails (stop-writes-on-bgsave-error option)."
+                                           " Please check the %s logs for details about the RDB error.\r\n",
+                                           name, name_compat)));
 }
 
 void createSharedObjects(void) {
@@ -4257,13 +4285,13 @@ int processCommand(client *c) {
     /* Loading DB? Return an error if the command has not the
      * CMD_LOADING flag. */
     if (server.loading && !server.async_loading && is_denyloading_command) {
-        rejectCommand(c, shared.loadingerr);
+        rejectCommand(c, server.extended_redis_compat ? shared.loadingerr_compat : shared.loadingerr);
         return C_OK;
     }
 
     /* During async-loading, block certain commands. */
     if (server.async_loading && is_deny_async_loading_command) {
-        rejectCommand(c, shared.loadingerr);
+        rejectCommand(c, server.extended_redis_compat ? shared.loadingerr_compat : shared.loadingerr);
         return C_OK;
     }
 
@@ -4278,11 +4306,11 @@ int processCommand(client *c) {
         if (server.busy_module_yield_flags && server.busy_module_yield_reply) {
             rejectCommandFormat(c, "-BUSY %s", server.busy_module_yield_reply);
         } else if (server.busy_module_yield_flags) {
-            rejectCommand(c, shared.slowmoduleerr);
+            rejectCommand(c, server.extended_redis_compat ? shared.slowmoduleerr_compat : shared.slowmoduleerr);
         } else if (scriptIsEval()) {
-            rejectCommand(c, shared.slowevalerr);
+            rejectCommand(c, server.extended_redis_compat ? shared.slowevalerr_compat : shared.slowevalerr);
         } else {
-            rejectCommand(c, shared.slowscripterr);
+            rejectCommand(c, server.extended_redis_compat ? shared.slowscripterr_compat : shared.slowscripterr);
         }
         return C_OK;
     }
@@ -4634,7 +4662,7 @@ int writeCommandsDeniedByDiskError(void) {
 sds writeCommandsGetDiskErrorMessage(int error_code) {
     sds ret = NULL;
     if (error_code == DISK_ERROR_TYPE_RDB) {
-        ret = sdsdup(shared.bgsaveerr->ptr);
+        ret = sdsdup(server.extended_redis_compat ? shared.bgsaveerr_compat->ptr : shared.bgsaveerr->ptr);
     } else {
         ret = sdscatfmt(sdsempty(), "-MISCONF Errors writing to the AOF file: %s\r\n",
                         strerror(server.aof_last_write_errno));

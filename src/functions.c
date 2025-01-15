@@ -554,7 +554,7 @@ int functionsUnregisterEngine(const char *engine_name) {
  */
 void functionStatsCommand(client *c) {
     if (scriptIsRunning() && scriptIsEval()) {
-        addReplyErrorObject(c, shared.slowevalerr);
+        addReplyErrorObject(c, server.extended_redis_compat ? shared.slowevalerr_compat : shared.slowevalerr);
         return;
     }
 
