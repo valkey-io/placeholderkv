@@ -91,15 +91,12 @@ void defragEntryStartCbForKeys(void *ctx, void *oldptr) {
 /* This method updates the key of expiry db dict entry. The key might be no longer valid
  * as it could have been cleaned up during the defrag-realloc of the main dictionary. */
 void defragEntryFinishCbForKeys(void *ctx, void *newptr) {
+    /* No reallocation happened. */
+    if (!newptr) return;
     defragCtx *defragctx = (defragCtx *)ctx;
     dictEntry *expire_de = (dictEntry *)defragctx->aux;
     /* Item doesn't have TTL associated to it. */
     if (!expire_de) return;
-    /* No reallocation happened. */
-    if (!newptr) {
-        expire_de = NULL;
-        return;
-    }
     serverDb *db = defragctx->privdata;
     sds newsds = (sds)dictGetKey((dictEntry *)newptr);
     int slot = defragctx->slot;
