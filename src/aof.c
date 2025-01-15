@@ -2190,14 +2190,27 @@ werr:
     return 0;
 }
 
-int rewriteAppendOnlyFileRio(rio *aof) {
+int shouldFilterSlot(int slot, void * slot_ranges) {
+    if (slot_ranges == NULL) return 0;
+    list *ranges = (list *)slot_ranges;
+    listIter li;
+    listNode *ln;
+    listRewind(ranges, &li);
+    while ((ln = listNext(&li))) {
+        slotRange *range = (slotRange *) ln->value;
+        if (slot >= range->start && slot <= range->end) return 0;
+    }
+    return 1;
+}
+
+int rewriteAppendOnlyFileRio(rio *aof, list *slot_ranges) {
     int j;
     long key_count = 0;
     long long updated_time = 0;
     kvstoreIterator *kvs_it = NULL;
 
     /* Record timestamp at the beginning of rewriting AOF. */
-    if (server.aof_timestamp_enabled) {
+    if (server.aof_timestamp_enabled && slot_ranges == NULL) {
         sds ts = genAofTimestampAnnotationIfNeeded(1);
         if (rioWrite(aof, ts, sdslen(ts)) == 0) {
             sdsfree(ts);
@@ -2217,7 +2230,11 @@ int rewriteAppendOnlyFileRio(rio *aof) {
         if (rioWrite(aof, selectcmd, sizeof(selectcmd) - 1) == 0) goto werr;
         if (rioWriteBulkLongLong(aof, j) == 0) goto werr;
 
-        kvs_it = kvstoreIteratorInit(db->keys);
+        if (slot_ranges == NULL) {
+            kvs_it = kvstoreIteratorInit(db->keys);
+        } else {
+            kvs_it = kvstoreFilteredIteratorInit(db->keys, &shouldFilterSlot, slot_ranges);
+        }
         /* Iterate this DB writing every entry */
         void *next;
         while (kvstoreIteratorNext(kvs_it, &next)) {
@@ -2280,6 +2297,7 @@ int rewriteAppendOnlyFileRio(rio *aof) {
                     updated_time = now;
                 }
             }
+            serverLog(LL_NOTICE, "AOF rewrite: %s, key_count: %ld", keystr, key_count);
 
             /* Delay before next key if required (for testing) */
             if (server.rdb_key_save_delay) debugDelay(server.rdb_key_save_delay);
@@ -2330,7 +2348,7 @@ int rewriteAppendOnlyFile(char *filename) {
             goto werr;
         }
     } else {
-        if (rewriteAppendOnlyFileRio(&aof) == C_ERR) goto werr;
+        if (rewriteAppendOnlyFileRio(&aof, NULL) == C_ERR) goto werr;
     }
 
     /* Make sure data will not remain on the OS's output buffers */

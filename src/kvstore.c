@@ -74,6 +74,8 @@ struct _kvstoreIterator {
     kvstore *kvs;
     long long didx;
     long long next_didx;
+    kvstoreIteratorFilter *filter;
+    void *filter_privdata;
     hashtableIterator di;
 };
 
@@ -300,12 +302,7 @@ kvstore *kvstoreCreate(hashtableType *type, int num_hashtables_bits, int flags) 
 
 void kvstoreEmpty(kvstore *kvs, void(callback)(hashtable *)) {
     for (int didx = 0; didx < kvs->num_hashtables; didx++) {
-        hashtable *ht = kvstoreGetHashtable(kvs, didx);
-        if (!ht) continue;
-        kvstoreHashtableMetadata *metadata = (kvstoreHashtableMetadata *)hashtableMetadata(ht);
-        if (metadata->rehashing_node) metadata->rehashing_node = NULL;
-        hashtableEmpty(ht, callback);
-        freeHashtableIfNeeded(kvs, didx);
+        kvstoreEmptyHashtable(kvs, didx, callback);
     }
 
     listEmpty(kvs->rehashing);
@@ -316,6 +313,28 @@ void kvstoreEmpty(kvstore *kvs, void(callback)(hashtable *)) {
     kvs->bucket_count = 0;
     if (kvs->hashtable_size_index) memset(kvs->hashtable_size_index, 0, sizeof(unsigned long long) * (kvs->num_hashtables + 1));
     kvs->overhead_hashtable_rehashing = 0;
+}
+
+void kvstoreEmptyHashtable(kvstore *kvs, int didx, void(callback)(hashtable *)) {
+    hashtable *ht = kvstoreGetHashtable(kvs, didx);
+    if (!ht) return;
+    kvstoreHashtableMetadata *metadata = (kvstoreHashtableMetadata *)hashtableMetadata(ht);
+    if (metadata->rehashing_node) metadata->rehashing_node = NULL;
+    hashtableEmpty(ht, callback);
+    freeHashtableIfNeeded(kvs, didx);
+}
+
+hashtable *kvstoreUnlinkHashtable(kvstore *kvs, int didx) {
+    hashtable *oldht = kvstoreGetHashtable(kvs, didx);
+    if (!oldht) return NULL;
+
+    /* Pause rehashing on the to be unlinked node. */
+    kvstoreHashtableMetadata *oldmetadata = (kvstoreHashtableMetadata *)hashtableMetadata(oldht);
+    if (oldmetadata->rehashing_node) oldmetadata->rehashing_node = NULL;
+
+    kvs->hashtables[didx] = NULL;
+    kvs->allocated_hashtables--;
+    return oldht;
 }
 
 void kvstoreRelease(kvstore *kvs) {
@@ -581,6 +600,20 @@ kvstoreIterator *kvstoreIteratorInit(kvstore *kvs) {
     kvs_it->kvs = kvs;
     kvs_it->didx = -1;
     kvs_it->next_didx = kvstoreGetFirstNonEmptyHashtableIndex(kvs_it->kvs); /* Finds first non-empty hashtable index. */
+    kvs_it->filter = NULL;
+    kvs_it->filter_privdata = NULL;
+    hashtableInitSafeIterator(&kvs_it->di, NULL);
+    return kvs_it;
+}
+
+/* Returns kvstore iterator that filters out hash tables based on the predicate.*/
+kvstoreIterator *kvstoreFilteredIteratorInit(kvstore *kvs, kvstoreIteratorFilter *filter, void *privdata) {
+    kvstoreIterator *kvs_it = zmalloc(sizeof(*kvs_it));
+    kvs_it->kvs = kvs;
+    kvs_it->didx = -1;
+    kvs_it->next_didx = kvstoreGetFirstNonEmptyHashtableIndex(kvs_it->kvs);
+    kvs_it->filter = filter;
+    kvs_it->filter_privdata = privdata;
     hashtableInitSafeIterator(&kvs_it->di, NULL);
     return kvs_it;
 }
@@ -607,8 +640,11 @@ static hashtable *kvstoreIteratorNextHashtable(kvstoreIterator *kvs_it) {
         freeHashtableIfNeeded(kvs_it->kvs, kvs_it->didx);
     }
 
-    kvs_it->didx = kvs_it->next_didx;
-    kvs_it->next_didx = kvstoreGetNextNonEmptyHashtableIndex(kvs_it->kvs, kvs_it->didx);
+    do {
+        kvs_it->didx = kvs_it->next_didx;
+        if (kvs_it->didx == -1) return NULL;
+        kvs_it->next_didx = kvstoreGetNextNonEmptyHashtableIndex(kvs_it->kvs, kvs_it->didx);
+    } while (kvs_it->filter && kvs_it->filter(kvs_it->didx, kvs_it->filter_privdata));
     return kvs_it->kvs->hashtables[kvs_it->didx];
 }
 

@@ -72,9 +72,6 @@ int clusterNodeSetSlotBit(clusterNode *n, int slot);
 static void clusterSetPrimary(clusterNode *n, int closeSlots, int full_sync_required);
 void clusterHandleReplicaFailover(void);
 void clusterHandleReplicaMigration(int max_replicas);
-int bitmapTestBit(unsigned char *bitmap, int pos);
-void bitmapSetBit(unsigned char *bitmap, int pos);
-void bitmapClearBit(unsigned char *bitmap, int pos);
 void clusterDoBeforeSleep(int flags);
 void clusterSendUpdate(clusterLink *link, clusterNode *node);
 void resetManualFailover(void);
@@ -86,6 +83,8 @@ sds representSlotInfo(sds ci, uint16_t *slot_info_pairs, int slot_info_pairs_cou
 void clusterFreeNodesSlotsInfo(clusterNode *n);
 uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
+slotMigration *clusterGetCurrentSlotMigration(void);
+void clusterSendMigrateSlotStart(clusterNode *node, list *slot_ranges);
 void moduleCallClusterReceivers(const char *sender_id,
                                 uint64_t module_id,
                                 uint8_t type,
@@ -1134,6 +1133,7 @@ void clusterInit(void) {
     server.cluster->failover_auth_epoch = 0;
     server.cluster->cant_failover_reason = CLUSTER_CANT_FAILOVER_NONE;
     server.cluster->lastVoteEpoch = 0;
+    server.cluster->slot_migrations = listCreate();
 
     /* Initialize stats */
     for (int i = 0; i < CLUSTERMSG_TYPE_COUNT; i++) {
@@ -1456,7 +1456,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     /* If the server is starting up, don't accept cluster connections:
      * UPDATE messages may interact with the database content. */
-    if (server.primary_host == NULL && server.loading) return;
+    if (server.primary == NULL && server.loading) return;
 
     while (max--) {
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
@@ -2570,6 +2570,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
                     migrated_our_slots++;
                 }
 
+                /* Was this slot mine and it was in a paused state for slot
+                 * migration? If so, clear the manual failover state. */
+                if (server.cluster->slots[j] == myself && server.cluster->mf_end && server.cluster->mf_replica == sender) {
+                    resetManualFailover();
+                }
+
                 /* If the sender who claims this slot is not in the same shard,
                  * it must be a result of deliberate operator actions. Therefore,
                  * we should honor it and clear the outstanding migrating_slots_to
@@ -3245,6 +3251,20 @@ int clusterProcessPacket(clusterLink *link) {
                       "primary manual failover: %lld",
                       server.cluster->mf_primary_offset);
         }
+        /* If we are a importing a slot and the slot owner sent its offset
+         * while already paused, populate the migration state. */
+        slotMigration * curr_migration = clusterGetCurrentSlotMigration();
+        if (hdr->mflags[0] & CLUSTERMSG_FLAG0_PAUSED && curr_migration != NULL &&
+            curr_migration->state == SLOT_MIGRATION_WAITING_FOR_OFFSET &&
+            curr_migration->source_node == sender) {
+            curr_migration->pause_primary_offset = sender->repl_offset;
+            curr_migration->state = SLOT_MIGRATION_SYNCING_TO_OFFSET;
+            clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_SLOTMIGRATION);
+            serverLog(LL_NOTICE,
+                    "Received replication offset from paused owner for "
+                    "slot import: %lld",
+                    curr_migration->pause_primary_offset);
+        }
     }
 
     /* Initial processing of PING and MEET requests replying with a PONG. */
@@ -3699,6 +3719,26 @@ int clusterProcessPacket(clusterLink *link) {
         uint8_t type = hdr->data.module.msg.type;
         unsigned char *payload = hdr->data.module.msg.bulk_data;
         moduleCallClusterReceivers(sender->name, module_id, type, payload, len);
+    } else if (type == CLUSTERMSG_TYPE_MIGRATE_SLOT_START) {
+        /* This message is acceptable only if I'm a primary and I own the slot */
+        if (!sender) return 1;
+        for (int i = 0; i <= CLUSTER_SLOTS; i++) {
+            if (bitmapTestBit(hdr->data.slot_migration.msg.slot_bitmap, i) && server.cluster->slots[i] != myself) return 1;
+        }
+        /* Initialize the slot migration state accordingly */
+        resetManualFailover();
+        server.cluster->mf_end = now + CLUSTER_MF_TIMEOUT;
+        server.cluster->mf_replica = sender;
+        /* TODO(murphyjacob4) pause subset of slots */
+        pauseActions(PAUSE_DURING_FAILOVER, now + (CLUSTER_MF_TIMEOUT * CLUSTER_MF_PAUSE_MULT),
+                     PAUSE_ACTIONS_CLIENT_WRITE_SET);
+        serverLog(LL_NOTICE, "Slot migration requested by node %.40s (%s).", sender->name, sender->human_nodename);
+        /* We need to send a ping message to the replica, as it would carry
+         * `server.cluster->mf_primary_offset`, which means the primary paused clients
+         * at offset `server.cluster->mf_primary_offset`, so that the replica would
+         * know that it is safe to set its `server.cluster->mf_can_start` to 1 so as
+         * to complete failover as quickly as possible. */
+        clusterSendPing(link, CLUSTERMSG_TYPE_PING);
     } else {
         serverLog(LL_WARNING, "Received unknown packet type: %d", type);
     }
@@ -4396,6 +4436,128 @@ void clusterPropagatePublish(robj *channel, robj *message, int sharded) {
 }
 
 /* -----------------------------------------------------------------------------
+ * Slot Migration functions
+ * -------------------------------------------------------------------------- */
+
+/* Gets the current slot migration from the head of the queue. */
+slotMigration *clusterGetCurrentSlotMigration(void) {
+    if (listLength(server.cluster->slot_migrations) == 0) return NULL;
+    return (slotMigration *) listFirst(server.cluster->slot_migrations)->value;
+}
+
+void clusterSendMigrateSlotStart(clusterNode *node, list *slot_ranges) {
+    if (!node->link) return;
+
+    uint32_t msglen = sizeof(clusterMsg) - sizeof(union clusterMsgData) + sizeof(clusterMsgSlotMigration);
+    clusterMsgSendBlock *msgblock = createClusterMsgSendBlock(CLUSTERMSG_TYPE_MIGRATE_SLOT_START, msglen);
+    clusterMsg *hdr = getMessageFromSendBlock(msgblock);
+    slotRangesToBitmap(slot_ranges, hdr->data.slot_migration.msg.slot_bitmap);
+    clusterSendMessage(node->link, msgblock);
+    clusterMsgSendBlockDecrRefCount(msgblock);
+}
+
+/* This is the main state machine for the slot migration workflow. Slot
+ * migration is driven by the new owner of the slot. This function will do as
+ * much work as possible synchronously, processing the enqueued slot migrations
+ * and only returning once we are waiting on some IO. */
+void clusterProceedWithSlotMigration(void) {
+    server.cluster->todo_before_sleep &= ~CLUSTER_TODO_HANDLE_SLOTMIGRATION;
+
+    while (clusterGetCurrentSlotMigration() != NULL) {
+        listNode *curr_node = listFirst(server.cluster->slot_migrations);
+        slotMigration *curr_migration = (slotMigration *) curr_node->value;
+        if (curr_migration->state != SLOT_MIGRATION_QUEUED && curr_migration->end_time < mstime()) {
+            serverLog(LL_WARNING,
+                "Timed out for slot migration from source node %.40s", curr_migration->source_node->name);
+            curr_migration->state = SLOT_MIGRATION_FAILED;
+        }
+        if (curr_migration->state > SLOT_MIGRATION_PAUSE_OWNER && curr_migration->state < SLOT_MIGRATION_FAILED && curr_migration->pause_end < mstime() && curr_migration->vote_retry_time < mstime()) {
+            /* If the owner ever unpauses, we have to move back in the state machine and retry. */
+            serverLog(LL_WARNING, "Reinitiating pause on the node owning the slot range...");
+            curr_migration->state = SLOT_MIGRATION_PAUSE_OWNER;
+            curr_migration->pause_end = mstime() + CLUSTER_MF_TIMEOUT;
+        }
+        switch(curr_migration->state) {
+            case SLOT_MIGRATION_QUEUED:
+                /* Start the migration */
+                serverLog(LL_NOTICE, "Starting sync from migration source node %.40s", curr_migration->source_node->name);
+                curr_migration->end_time = mstime() + CLUSTER_SLOT_MIGRATION_TIMEOUT;
+                curr_migration->link = createReplicationLink(curr_migration->source_node->ip, getNodeDefaultReplicationPort(curr_migration->source_node), curr_migration->slot_ranges);
+                if (connectReplicationLink(curr_migration->link) == C_ERR) {
+                    serverLog(LL_WARNING,
+                            "Failed to begin sync from migration source node %.40s", curr_migration->source_node->name);
+                    curr_migration->state = SLOT_MIGRATION_FAILED;
+                    continue;
+                }
+                curr_migration->state = SLOT_MIGRATION_SYNCING;
+                continue;
+            case SLOT_MIGRATION_SYNCING:
+                /* replicationCron should manage retrying connection, but there could be scenarios where we hit an irrecoverable error. */
+                if (curr_migration->link->state == REPL_STATE_NONE || curr_migration->link->state == REPL_STATE_CANCELLED) {
+                    serverLog(LL_WARNING, "Sync failed from migration node %.40s", curr_migration->source_node->name);
+                    curr_migration->state = SLOT_MIGRATION_FAILED;
+                    continue;
+                }
+                if (curr_migration->link->state == REPL_STATE_CONNECTED) {
+                    curr_migration->state = SLOT_MIGRATION_PAUSE_OWNER;
+                    continue;
+                }
+                /* If we are in another state, nothing to do right now. */
+                return;
+            case SLOT_MIGRATION_PAUSE_OWNER:
+                serverLog(LL_NOTICE, "Replication link to slot owner %.40s has been established. Pausing source node and waiting to continue", curr_migration->source_node->name);
+                clusterSendMigrateSlotStart(curr_migration->source_node, curr_migration->slot_ranges);
+                curr_migration->pause_primary_offset = -1;
+                curr_migration->pause_end = mstime() + CLUSTER_MF_TIMEOUT;
+                curr_migration->state = SLOT_MIGRATION_WAITING_FOR_OFFSET;
+                continue;
+            case SLOT_MIGRATION_WAITING_FOR_OFFSET:
+                /* Nothing to do, need to wait for cluster message to come in. */
+                return;
+            case SLOT_MIGRATION_SYNCING_TO_OFFSET:
+                if (curr_migration->link->client->repl_data->reploff >= curr_migration->pause_primary_offset) {
+                    serverLog(LL_NOTICE, "Replication of slot range has caught up to paused slot owner, slot migration can start.");
+                    curr_migration->state = SLOT_MIGRATION_FINISH;
+                    continue;
+                }
+                /* Need to wait for the sync to progress further */
+                return;
+            case SLOT_MIGRATION_FINISH:
+                serverLog(LL_NOTICE, "Setting myself to owner of migrating slots and broadcasting");
+                listIter li;
+                listNode *ln;
+                listRewind(curr_migration->slot_ranges, &li);
+                while ((ln = listNext(&li))) {
+                    slotRange *range = (slotRange *) ln->value;
+                    for (int i = range->start; i <= range->end; i++) {
+                        clusterDelSlot(i);
+                        clusterAddSlot(myself, i);
+                    }
+                }
+                clusterUpdateState();
+                clusterSaveConfigOrDie(1);
+                if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+                    serverLog(LL_NOTICE, "ConfigEpoch updated after importing slots");
+                }
+                clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+                listDelNode(server.cluster->slot_migrations, curr_node);
+                freeReplicationLink(curr_migration->link);
+                zfree(curr_migration);
+                continue;
+            case SLOT_MIGRATION_FAILED:
+                /* Delete the migration from the queue and proceed to the next migration */
+                listDelNode(server.cluster->slot_migrations, curr_node);
+                freeReplicationLink(curr_migration->link);
+                dropKeysInSlotRanges(curr_migration->slot_ranges, server.repl_replica_lazy_flush);
+                freeSlotRanges(curr_migration->slot_ranges);
+                zfree(curr_migration);
+                continue;
+        }
+    }
+}
+
+
+/* -----------------------------------------------------------------------------
  * REPLICA node specific functions
  * -------------------------------------------------------------------------- */
 
@@ -4739,8 +4901,8 @@ void clusterHandleReplicaFailover(void) {
 
     /* Set data_age to the number of milliseconds we are disconnected from
      * the primary. */
-    if (server.repl_state == REPL_STATE_CONNECTED) {
-        data_age = (mstime_t)(server.unixtime - server.primary->last_interaction) * 1000;
+    if (server.primary && server.primary->state == REPL_STATE_CONNECTED) {
+        data_age = (mstime_t)(server.unixtime - server.primary->client->last_interaction) * 1000;
     } else {
         data_age = (mstime_t)(server.unixtime - server.repl_down_since) * 1000;
     }
@@ -5332,7 +5494,7 @@ void clusterCron(void) {
     /* If we are a replica node but the replication is still turned off,
      * enable it if we know the address of our primary and it appears to
      * be up. */
-    if (nodeIsReplica(myself) && server.primary_host == NULL && myself->replicaof && nodeHasAddr(myself->replicaof)) {
+    if (nodeIsReplica(myself) && server.primary == NULL && myself->replicaof && nodeHasAddr(myself->replicaof)) {
         replicationSetPrimary(myself->replicaof->ip, getNodeDefaultReplicationPort(myself->replicaof), 0);
     }
 
@@ -5353,6 +5515,8 @@ void clusterCron(void) {
     }
 
     if (update_state || server.cluster->state == CLUSTER_FAIL) clusterUpdateState();
+
+    clusterProceedWithSlotMigration();
 }
 
 /* This function is called before the event handler returns to sleep for
@@ -5378,6 +5542,9 @@ void clusterBeforeSleep(void) {
         /* Handle failover, this is needed when it is likely that there is already
          * the quorum from primaries in order to react fast. */
         clusterHandleReplicaFailover();
+    } else if (flags & CLUSTER_TODO_HANDLE_SLOTMIGRATION) {
+        /* Continue with slot migration (e.g. if import offset is updated) */
+        clusterProceedWithSlotMigration();
     }
 
     /* Update the cluster state. */
@@ -6528,13 +6695,13 @@ int clusterParseSetSlotCommand(client *c, int *slot_out, clusterNode **node_out,
     int optarg_pos = 0;
 
     /* Allow primaries to replicate "CLUSTER SETSLOT" */
-    if (!c->flag.primary && nodeIsReplica(myself)) {
+    if (!c->flag.replication_source && nodeIsReplica(myself)) {
         addReplyError(c, "Please use SETSLOT only with masters.");
         return 0;
     }
 
     /* If 'myself' is a replica, 'c' must be the primary client. */
-    serverAssert(!nodeIsReplica(myself) || c == server.primary);
+    serverAssert(!nodeIsReplica(myself) || (server.primary && c == server.primary->client));
 
     if ((slot = getSlotOrReply(c, c->argv[2])) == -1) return 0;
 
@@ -7108,6 +7275,78 @@ int clusterCommandSpecial(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "links") && c->argc == 2) {
         /* CLUSTER LINKS */
         addReplyClusterLinksDescription(c);
+    } else if (!strcasecmp(c->argv[1]->ptr, "migrate")) {
+        /* CLUSTER MIGRATE SLOTSRANGE <start> <end> [<start> <end>] */
+        if (nodeIsReplica(myself)) {
+            addReplyError(c, "Only primaries can migrate slots");
+            return 1;
+        }
+        if (c->argc < 5 || strcasecmp(c->argv[2]->ptr, "slotsrange")) {
+            addReplyError(c, "Migrate command requires at least one ");
+            return 1;
+        }
+        unsigned char requested_slots[CLUSTER_SLOTS/8];
+        memset(requested_slots, 0, sizeof(requested_slots));
+        int i;
+        clusterNode * curr_owner = NULL;
+        for (i = 3; i + 1 < c->argc; i+=2) {
+            if (i > 3 && getLongLongFromObject(c->argv[i], NULL) != C_OK) {
+                /* If we find a non-integer in the args and we have already
+                 * parsed >=1 slot range, we assume it is the next token. */
+                break;
+            }
+            int start = getSlotOrReply(c, c->argv[i]);
+            if (start < 0) {
+                return 1;
+            }
+            int end = getSlotOrReply(c, c->argv[i + 1]);
+            if (end < 0) {
+                return 1;
+            }
+            if (end < start) {
+                addReplyErrorFormat(c, "Invalid SLOTSRANGE, start slot %d is greater than end slot %d", start, end);
+                return 1;
+            }
+            for (int j = start; j <= end; j++) {
+                if (bitmapTestBit(requested_slots, j)) {
+                    addReplyError(c, "Invalid SLOTSRANGE, slot ranges overlap");
+                    return 1;
+                }
+                if (curr_owner == NULL) {
+                    curr_owner = server.cluster->slots[j];
+                } else {
+                    if (curr_owner != server.cluster->slots[j]) {
+                        addReplyError(c, "Invalid SLOTSRANGE, slot ranges are not all owned by the same shard");
+                        return 1;
+                    }
+                }
+                if (curr_owner == myself) {
+                    addReplyErrorFormat(c, "I'm already the owner of hash slot %u", j);
+                    return 1;
+                }
+                if (nodeFailed(curr_owner)) {
+                    addReplyErrorFormat(c, "Primary is currently failing for slot %u. Please try again once there is a healthy primary", j);
+                    return 1;
+                }
+                bitmapSetBit(requested_slots, j);
+            }
+        }
+
+        slotMigration *to_enqueue = (slotMigration *) zmalloc(sizeof(slotMigration));
+        bitmapToSlotRanges(requested_slots, &to_enqueue->slot_ranges);
+        to_enqueue->source_node = curr_owner;
+        to_enqueue->state = SLOT_MIGRATION_QUEUED;
+        to_enqueue->end_time = 0; /* Will be set once started. */
+        to_enqueue->link = NULL;
+        to_enqueue->pause_end = 0;
+        to_enqueue->pause_primary_offset = -1;
+        to_enqueue->vote_end_time = 0;
+        to_enqueue->vote_retry_time = 0;
+        to_enqueue->vote_epoch = 0;
+        to_enqueue->auth_count = 0;
+        listAddNodeTail(server.cluster->slot_migrations, to_enqueue);
+        clusterProceedWithSlotMigration();
+        addReply(c, shared.ok);
     } else {
         return 0;
     }
@@ -7150,6 +7389,8 @@ const char **clusterCommandExtendedHelp(void) {
         "LINKS",
         "    Return information about all network links between this node and its peers.",
         "    Output format is an array where each array element is a map containing attributes of a link",
+        "MIGRATE SLOTSRANGE <start slot> <end slot> [<start slot> <end slot> ...] SHARD <shard-id>",
+        "    Initiate server driven slot migration of all slot ranges to the designated shard.",
         NULL};
 
     return help;

@@ -1,0 +1,18 @@
+{
+    "MIGRATE": {
+        "summary": "Initiates server driven hash slot migration, importing the given slot to this shard.",
+        "complexity": "O(N) where N is the total number of hash slot arguments",
+        "group": "cluster",
+        "since": "8.1.0",
+        "arity": -2,
+        "container": "CLUSTER",
+        "function": "clusterCommand",
+        "command_flags": [
+            "ADMIN",
+            "STALE"
+        ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT"
+        ]
+    }
+}

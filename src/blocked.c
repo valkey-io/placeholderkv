@@ -101,7 +101,7 @@ void freeClientBlockingState(client *c) {
  * and will be processed when the client is unblocked. */
 void blockClient(client *c, int btype) {
     /* Primary client should never be blocked unless pause or module */
-    serverAssert(!(c->flag.primary && btype != BLOCKED_MODULE && btype != BLOCKED_POSTPONE));
+    serverAssert(!(c->flag.replication_source && btype != BLOCKED_MODULE && btype != BLOCKED_POSTPONE));
 
     initClientBlockingState(c);
 

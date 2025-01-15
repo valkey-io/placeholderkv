@@ -116,6 +116,14 @@ client *createCachedResponseClient(int resp);
 void deleteCachedResponseClient(client *recording_client);
 void clearCachedClusterSlotsResponse(void);
 unsigned int countKeysInSlot(unsigned int hashslot);
+unsigned int dropKeysInSlotRanges(list *slot_ranges, int async);
+unsigned int dropKeysInSlot(unsigned int hashslot, int async);
+void slotRangesToBitmap(list *slot_ranges, unsigned char *bitmap_out);
+void bitmapToSlotRanges(unsigned char *bitmap, list **slot_ranges_out);
+void freeSlotRanges(list *slot_ranges);
+int bitmapTestBit(unsigned char *bitmap, int pos);
+void bitmapSetBit(unsigned char *bitmap, int pos);
+void bitmapClearBit(unsigned char *bitmap, int pos);
 int getSlotOrReply(client *c, robj *o);
 
 /* functions with shared implementations */

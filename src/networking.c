@@ -290,7 +290,7 @@ int prepareClientToWrite(client *c) {
 
     /* Primaries don't receive replies, unless CLIENT_PRIMARY_FORCE_REPLY flag
      * is set. */
-    if (c->flag.primary && !c->flag.primary_force_reply) return C_ERR;
+    if (c->flag.replication_source && !c->flag.primary_force_reply) return C_ERR;
 
     /* Skip the fake client, such as the fake client for AOF loading.
      * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
@@ -1599,7 +1599,7 @@ void clearClientConnectionState(client *c) {
         c->flag.replica = 0;
     }
 
-    serverAssert(!(c->flag.replica || c->flag.primary));
+    serverAssert(!(c->flag.replica || c->flag.replication_source));
 
     if (c->flag.tracking) disableTracking(c);
     selectDb(c, 0);
@@ -1668,7 +1668,7 @@ void freeClient(client *c) {
      *
      * Note that before doing this we make sure that the client is not in
      * some unexpected state, by checking its flags. */
-    if (server.primary && c->flag.primary) {
+    if (server.primary && server.primary->client == c) {
         serverLog(LL_NOTICE, "Connection with primary lost.");
         if (!c->flag.dont_cache_primary && !(c->flag.protocol_error || c->flag.blocked)) {
             c->flag.close_asap = 0;
@@ -1818,7 +1818,7 @@ void beforeNextClient(client *c) {
      * blocked client as well */
 
     /* Trim the query buffer to the current position. */
-    if (c->flag.primary) {
+    if (c->flag.replication_source) {
         /* If the client is a primary, trim the querybuf to repl_applied,
          * since primary client is very special, its querybuf not only
          * used to parse command, but also proxy to sub-replicas.
@@ -2148,7 +2148,7 @@ int postWriteToClient(client *c) {
          * as an interaction, since we always send REPLCONF ACK commands
          * that take some time to just fill the socket output buffer.
          * We just rely on data / pings received for timeout detection. */
-        if (!c->flag.primary) c->last_interaction = server.unixtime;
+        if (!c->flag.replication_source) c->last_interaction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;
@@ -2236,7 +2236,7 @@ int handleReadResult(client *c) {
 
     c->last_interaction = server.unixtime;
     c->net_input_bytes += c->nread;
-    if (c->flag.primary) {
+    if (c->flag.replication_source) {
         c->repl_data->read_reploff += c->nread;
         server.stat_net_repl_input_bytes += c->nread;
     } else {
@@ -2642,7 +2642,7 @@ void processInlineBuffer(client *c) {
  * CLIENT_PROTOCOL_ERROR. */
 #define PROTO_DUMP_LEN 128
 static void setProtocolError(const char *errstr, client *c) {
-    if (server.verbosity <= LL_VERBOSE || c->flag.primary) {
+    if (server.verbosity <= LL_VERBOSE || c->flag.replication_source) {
         sds client = catClientInfoString(sdsempty(), c, server.hide_user_data_from_log);
 
         /* Sample some protocol to given an idea about what was inside. */
@@ -2664,7 +2664,7 @@ static void setProtocolError(const char *errstr, client *c) {
         }
 
         /* Log all the client and protocol info. */
-        int loglevel = (c->flag.primary) ? LL_WARNING : LL_VERBOSE;
+        int loglevel = (c->flag.replication_source) ? LL_WARNING : LL_VERBOSE;
         serverLog(loglevel, "Protocol error (%s) from client: %s. %s", errstr, client, buf);
         sdsfree(client);
     }
@@ -2895,7 +2895,7 @@ void commandProcessed(client *c) {
     if (!c->repl_data) return;
 
     long long prev_offset = c->repl_data->reploff;
-    if (c->flag.primary && !c->flag.multi) {
+    if (c->flag.replication_source && !c->flag.multi) {
         /* Update the applied replication offset of our primary. */
         c->repl_data->reploff = c->repl_data->read_reploff - sdslen(c->querybuf) + c->qb_pos;
     }
@@ -2906,7 +2906,7 @@ void commandProcessed(client *c) {
      * applied to the primary state: this quantity, and its corresponding
      * part of the replication stream, will be propagated to the
      * sub-replicas and to the replication backlog. */
-    if (c->flag.primary) {
+    if (c->flag.replication_source) {
         long long applied = c->repl_data->reploff - prev_offset;
         if (applied) {
             replicationFeedStreamFromPrimaryStream(c->querybuf + c->repl_data->repl_applied, applied);
@@ -3014,7 +3014,7 @@ int canParseCommand(client *c) {
      * condition on the replica. We want just to accumulate the replication
      * stream (instead of replying -BUSY like we do with other clients) and
      * later resume the processing. */
-    if (isInsideYieldingLongCommand() && c->flag.primary) return 0;
+    if (isInsideYieldingLongCommand() && c->flag.replication_source) return 0;
 
     /* CLIENT_CLOSE_AFTER_REPLY closes the connection once the reply is
      * written to the client. Make sure to not let the reply grow after
@@ -3033,7 +3033,7 @@ int processInputBuffer(client *c) {
             break;
         }
 
-        c->read_flags = c->flag.primary ? READ_FLAGS_PRIMARY : 0;
+        c->read_flags = c->flag.replication_source ? READ_FLAGS_PRIMARY : 0;
         c->read_flags |= authRequired(c) ? READ_FLAGS_AUTH_REQUIRED : 0;
 
         parseCommand(c);
@@ -3097,7 +3097,7 @@ void readToQueryBuf(client *c) {
 
         /* Primary client needs expand the readlen when meet BIG_ARG(see #9100),
          * but doesn't need align to the next arg, we can read more data. */
-        if (c->flag.primary && readlen < PROTO_IOBUF_LEN) readlen = PROTO_IOBUF_LEN;
+        if (c->flag.replication_source && readlen < PROTO_IOBUF_LEN) readlen = PROTO_IOBUF_LEN;
     }
 
     if (c->querybuf == NULL) {
@@ -3240,7 +3240,7 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
             *p++ = 'S';
     }
 
-    if (client->flag.primary) *p++ = 'M';
+    if (client->flag.replication_source) *p++ = 'M';
     if (client->flag.pubsub) *p++ = 'P';
     if (client->flag.multi) *p++ = 'x';
     if (client->flag.blocked) *p++ = 'b';
@@ -3458,7 +3458,7 @@ void resetCommand(client *c) {
         flags.replica = 0;
     }
 
-    if (flags.replica || flags.primary || flags.module) {
+    if (flags.replica || flags.replication_source || flags.module) {
         addReplyError(c, "can only reset normal client connections");
         return;
     }
@@ -4132,7 +4132,7 @@ void helloCommand(client *c) {
 
     if (!server.sentinel_mode) {
         addReplyBulkCString(c, "role");
-        addReplyBulkCString(c, server.primary_host ? "replica" : "master");
+        addReplyBulkCString(c, server.primary ? "replica" : "master");
     }
 
     addReplyBulkCString(c, "modules");
@@ -4363,7 +4363,7 @@ size_t getClientMemoryUsage(client *c, size_t *output_buffer_mem_usage) {
  * CLIENT_TYPE_PRIMARY -> The client representing our replication primary.
  */
 int getClientType(client *c) {
-    if (c->flag.primary) return CLIENT_TYPE_PRIMARY;
+    if (c->flag.replication_source) return CLIENT_TYPE_PRIMARY;
     /* Even though MONITOR clients are marked as replicas, we
      * want the expose them as normal clients. */
     if (c->flag.replica && !c->flag.monitor) return CLIENT_TYPE_REPLICA;

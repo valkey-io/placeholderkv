@@ -596,7 +596,7 @@ void loadServerConfigFromString(char *config) {
     }
 
     /* Sanity checks. */
-    if (server.cluster_enabled && server.primary_host) {
+    if (server.cluster_enabled && server.primary) {
         err = "replicaof directive not allowed in cluster mode";
         goto loaderr;
     }
@@ -1451,11 +1451,11 @@ void rewriteConfigReplicaOfOption(standardConfig *config, const char *name, stru
     /* If this is a primary, we want all the replicaof config options
      * in the file to be removed. Note that if this is a cluster instance
      * we don't want a replicaof directive inside valkey.conf. */
-    if (server.cluster_enabled || server.primary_host == NULL) {
+    if (server.cluster_enabled || server.primary == NULL) {
         rewriteConfigMarkAsProcessed(state, name);
         return;
     }
-    line = sdscatprintf(sdsempty(), "%s %s %d", name, server.primary_host, server.primary_port);
+    line = sdscatprintf(sdsempty(), "%s %s %d", name, server.primary->host, server.primary->port);
     rewriteConfigRewriteLine(state, name, line, 1);
 }
 
@@ -3000,19 +3000,20 @@ static int setConfigReplicaOfOption(standardConfig *config, sds *argv, int argc,
         return 0;
     }
 
-    sdsfree(server.primary_host);
-    server.primary_host = NULL;
+    freeReplicationLink(server.primary);
+    server.primary = NULL;
+
     if (!strcasecmp(argv[0], "no") && !strcasecmp(argv[1], "one")) {
         return 1;
     }
     char *ptr;
-    server.primary_port = strtol(argv[1], &ptr, 10);
-    if (server.primary_port < 0 || server.primary_port > 65535 || *ptr != '\0') {
+    int port = strtol(argv[1], &ptr, 10);
+    if (port < 0 || port > 65535 || *ptr != '\0') {
         *err = "Invalid primary port";
         return 0;
     }
-    server.primary_host = sdsnew(argv[0]);
-    server.repl_state = REPL_STATE_CONNECT;
+    server.primary = createReplicationLink(argv[0], port, NULL);
+    server.primary->state = REPL_STATE_CONNECT;
     return 1;
 }
 
@@ -3024,8 +3025,8 @@ static sds getConfigBindOption(standardConfig *config) {
 static sds getConfigReplicaOfOption(standardConfig *config) {
     UNUSED(config);
     char buf[256];
-    if (server.primary_host)
-        snprintf(buf, sizeof(buf), "%s %d", server.primary_host, server.primary_port);
+    if (server.primary)
+        snprintf(buf, sizeof(buf), "%s %d", server.primary->host, server.primary->port);
     else
         buf[0] = '\0';
     return sdsnew(buf);

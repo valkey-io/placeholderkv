@@ -10,6 +10,7 @@
 #define CLUSTER_MF_TIMEOUT 5000              /* Milliseconds to do a manual failover. */
 #define CLUSTER_MF_PAUSE_MULT 2              /* Primary pause manual failover mult. */
 #define CLUSTER_REPLICA_MIGRATION_DELAY 5000 /* Delay for replica migration. */
+#define CLUSTER_SLOT_MIGRATION_TIMEOUT 30000 /* Milliseconds to do a slot migration. */
 
 /* Reasons why a replica is not able to failover. */
 #define CLUSTER_CANT_FAILOVER_NONE 0
@@ -26,6 +27,7 @@
 #define CLUSTER_TODO_FSYNC_CONFIG (1 << 3)
 #define CLUSTER_TODO_HANDLE_MANUALFAILOVER (1 << 4)
 #define CLUSTER_TODO_BROADCAST_ALL (1 << 5)
+#define CLUSTER_TODO_HANDLE_SLOTMIGRATION (1 << 6)
 
 /* clusterLink encapsulates everything needed to talk with a remote node. */
 typedef struct clusterLink {
@@ -95,7 +97,9 @@ typedef struct clusterNodeFailReport {
 #define CLUSTERMSG_TYPE_MFSTART 8               /* Pause clients for manual failover */
 #define CLUSTERMSG_TYPE_MODULE 9                /* Module cluster API message. */
 #define CLUSTERMSG_TYPE_PUBLISHSHARD 10         /* Pub/Sub Publish shard propagation */
-#define CLUSTERMSG_TYPE_COUNT 11                /* Total number of message types. */
+#define CLUSTERMSG_TYPE_MIGRATE_SLOT_START 11   /* Pause clients for slot migration */
+#define CLUSTERMSG_TYPE_COUNT 12                /* Total number of message types. */
+
 
 #define CLUSTERMSG_LIGHT 0x8000 /* Modifier bit for message types that support light header */
 
@@ -141,6 +145,10 @@ typedef struct {
     uint8_t type;               /* Type from 0 to 255. */
     unsigned char bulk_data[3]; /* 3 bytes just as placeholder. */
 } clusterMsgModule;
+
+typedef struct {
+    unsigned char slot_bitmap[CLUSTER_SLOTS / 8]; /* Slots bitmap. */
+} clusterMsgSlotMigration;
 
 /* The cluster supports optional extension messages that can be sent
  * along with ping/pong/meet messages to give additional info in a
@@ -228,6 +236,12 @@ union clusterMsgData {
     struct {
         clusterMsgModule msg;
     } module;
+
+    /* SLOT_MIGRATION */
+    struct {
+        clusterMsgSlotMigration msg;
+    } slot_migration;
+
 };
 
 #define CLUSTER_PROTO_VER 1 /* Cluster bus protocol version. */
@@ -362,6 +376,31 @@ struct _clusterNode {
                                                Update with updateAndCountChangedNodeHealth(). */
 };
 
+typedef enum slotMigrationState {
+    SLOT_MIGRATION_QUEUED,          /* Queued behind some other slot migration. */
+    SLOT_MIGRATION_SYNCING,         /* Syncing contents from current owner. */
+    SLOT_MIGRATION_PAUSE_OWNER,
+    SLOT_MIGRATION_WAITING_FOR_OFFSET,
+    SLOT_MIGRATION_SYNCING_TO_OFFSET,
+    SLOT_MIGRATION_FINISH,
+    SLOT_MIGRATION_FAILED,
+} slotMigrationState;
+
+typedef struct slotMigration {
+    list *slot_ranges;
+    slotMigrationState state;
+    clusterNode *source_node;
+    mstime_t end_time; /* Slot migration time limit (ms unixtime).
+                          If not yet in progress (e.g. queued), will be zero. */
+    replicationLink *link;
+    mstime_t pause_end;
+    long long pause_primary_offset;
+    mstime_t vote_end_time;
+    mstime_t vote_retry_time;
+    uint64_t vote_epoch;
+    int auth_count;
+} slotMigration;
+
 /* Struct used for storing slot statistics. */
 typedef struct slotStat {
     uint64_t cpu_usec;
@@ -420,6 +459,7 @@ struct clusterState {
     unsigned char owner_not_claiming_slot[CLUSTER_SLOTS / 8];
     /* Struct used for storing slot statistics, for all slots owned by the current shard. */
     slotStat slot_stats[CLUSTER_SLOTS];
+    list *slot_migrations; /* Queue of ongoing slot migrations. */
 };
 
 #endif // CLUSTER_LEGACY_H

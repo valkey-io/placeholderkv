@@ -394,6 +394,7 @@ typedef enum {
     REPL_STATE_RECEIVE_AUTH_REPLY,    /* Wait for AUTH reply */
     REPL_STATE_RECEIVE_PORT_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_IP_REPLY,      /* Wait for REPLCONF reply */
+    REPL_STATE_RECEIVE_SLOT_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_CAPA_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_VERSION_REPLY, /* Wait for REPLCONF reply */
     REPL_STATE_SEND_PSYNC,            /* Send PSYNC */
@@ -401,6 +402,7 @@ typedef enum {
     /* --- End of handshake states --- */
     REPL_STATE_TRANSFER,  /* Receiving .rdb from primary */
     REPL_STATE_CONNECTED, /* Connected to primary */
+    REPL_STATE_CANCELLED, /* Replication was cancelled, and this link is pending deletion. */
 } repl_state;
 
 /* Replica rdb-channel replication state. Used in server.repl_rdb_channel_state for
@@ -446,6 +448,7 @@ typedef enum {
 #define REPLICA_REQ_RDB_EXCLUDE_DATA (1 << 0)      /* Exclude data from RDB */
 #define REPLICA_REQ_RDB_EXCLUDE_FUNCTIONS (1 << 1) /* Exclude functions from RDB */
 #define REPLICA_REQ_RDB_CHANNEL (1 << 2)           /* Use dual-channel-replication */
+#define REPLICA_REQ_AOF_FORMAT (1 << 3)            /* Use AOF-based replication format*/
 /* Mask of all bits in the replica requirements bitfield that represent non-standard (filtered) RDB requirements */
 #define REPLICA_REQ_RDB_MASK (REPLICA_REQ_RDB_EXCLUDE_DATA | REPLICA_REQ_RDB_EXCLUDE_FUNCTIONS)
 
@@ -1011,7 +1014,7 @@ typedef enum {
 } clientIOState;
 
 typedef struct ClientFlags {
-    uint64_t primary : 1;                  /* This client is a primary */
+    uint64_t replication_source : 1;       /* This client is a replication source (i.e. primary or slot migration source) */
     uint64_t replica : 1;                  /* This client is a replica */
     uint64_t monitor : 1;                  /* This client is a replica monitor, see MONITOR */
     uint64_t multi : 1;                    /* This client is in a MULTI context */
@@ -1103,6 +1106,7 @@ typedef struct ClientPubSubData {
                                       context of client side caching. */
 } ClientPubSubData;
 
+typedef struct replicationLink replicationLink;
 typedef struct ClientReplicationData {
     int repl_state;                      /* Replication state if this is a replica. */
     int repl_start_cmd_stream_on_ack;    /* Install replica write handler on first ACK. */
@@ -1133,6 +1137,8 @@ typedef struct ClientReplicationData {
                                            see the definition of replBufBlock. */
     size_t ref_block_pos;                /* Access position of referenced buffer block,
                                            i.e. the next offset to send. */
+    list *slot_ranges;               /* The slot range this replica is replicating for. */
+    replicationLink *link;               /* The replication link owning this. */
 } ClientReplicationData;
 
 typedef struct ClientModuleData {
@@ -1414,7 +1420,7 @@ typedef enum {
  * top-level primary. */
 typedef struct rdbSaveInfo {
     /* Used saving and loading. */
-    int repl_stream_db; /* DB to select in server.primary client. */
+    int repl_stream_db; /* DB to select in server.primary->client. */
 
     /* Used only loading. */
     int repl_id_is_set;                   /* True if repl_id field is set. */
@@ -1535,6 +1541,43 @@ typedef enum childInfoType {
     CHILD_INFO_TYPE_RDB_COW_SIZE,
     CHILD_INFO_TYPE_MODULE_COW_SIZE
 } childInfoType;
+
+typedef struct slotRange {
+    int start;
+    int end;
+} slotRange;
+
+typedef struct replicationLink {
+    int protected; /* Used to protect link from destruction during background loading. */
+    int state; /* State of the sync operation overall. */
+    int rdb_channel_state;
+    client *client;
+    client *snapshot_load_client; /* client used for full sync when AOF format is used. */
+    sds host;
+    int port;
+    connection *transfer_s;        /* Replica -> Primary SYNC connection */
+    connection *rdb_transfer_s;    /* Primary FULL SYNC connection (RDB download) */
+    uint64_t rdb_client_id; /* Rdb client id as it defined at primary side */
+    /* The following two fields is where we store primary PSYNC replid/offset
+     * while the PSYNC is in progress. At the end we'll copy the fields into
+     * the server->primary client structure. */
+    char replid[CONFIG_RUN_ID_SIZE + 1]; /* Primary PSYNC runid. */
+    long long initial_offset;            /* Primary PSYNC offset. */
+    off_t transfer_size;           /* Size of RDB to read from primary during sync. */
+    off_t transfer_read;           /* Amount of RDB read from primary during sync. */
+    off_t transfer_last_fsync_off; /* Offset when we fsync-ed last time. */
+    int transfer_fd;               /* Replica -> Primary SYNC temp file descriptor */
+    char *transfer_tmpfile;        /* Replica-> Primary SYNC temp file name */
+    time_t transfer_lastio;        /* Unix time of the latest read, for timeout */
+    struct {
+        char replid[CONFIG_RUN_ID_SIZE + 1];
+        long long reploff;
+        long long read_reploff;
+        int dbid;
+    } provisional_source_state; /* Information about the provisional state (after RDB) for the source node, stored during dual channel sync. */
+    replDataBuf pending_repl_data;             /* Replication data buffer for dual-channel-replication */
+    list *slot_ranges; /* Slot range used for slot import. */
+} replicationLink;
 
 struct valkeyServer {
     /* General */
@@ -1896,7 +1939,6 @@ struct valkeyServer {
     int repl_ping_replica_period;              /* Primary pings the replica every N seconds */
     replBacklog *repl_backlog;                 /* Replication backlog for partial syncs */
     long long repl_backlog_size;               /* Backlog circular buffer size */
-    replDataBuf pending_repl_data;             /* Replication data buffer for dual-channel-replication */
     time_t repl_backlog_time_limit;            /* Time without replicas after the backlog
                                                   gets released. */
     time_t repl_no_replicas_since;             /* We have no replicas since that time.
@@ -1920,52 +1962,28 @@ struct valkeyServer {
     list *repl_buffer_blocks;                  /* Replication buffers blocks list
                                                 * (serving replica clients and repl backlog) */
     /* Replication (replica) */
-    char *primary_user;     /* AUTH with this user and primary_auth with primary */
-    sds primary_auth;       /* AUTH with this password with primary */
-    char *primary_host;     /* Hostname of primary */
-    int primary_port;       /* Port of primary */
-    int repl_timeout;       /* Timeout after N seconds of primary idle */
-    client *primary;        /* Client that is primary for this replica */
-    uint64_t rdb_client_id; /* Rdb client id as it defined at primary side */
-    struct {
-        connection *conn;
-        char replid[CONFIG_RUN_ID_SIZE + 1];
-        long long reploff;
-        long long read_reploff;
-        int dbid;
-    } repl_provisional_primary;
-    client *cached_primary;             /* Cached primary to be reused for PSYNC. */
-    rio *loading_rio;                   /* Pointer to the rio object currently used for loading data. */
-    int repl_syncio_timeout;            /* Timeout for synchronous I/O calls */
-    int repl_state;                     /* Replication status if the instance is a replica */
-    int repl_rdb_channel_state;         /* State of the replica's rdb channel during dual-channel-replication */
-    off_t repl_transfer_size;           /* Size of RDB to read from primary during sync. */
-    off_t repl_transfer_read;           /* Amount of RDB read from primary during sync. */
-    off_t repl_transfer_last_fsync_off; /* Offset when we fsync-ed last time. */
-    connection *repl_transfer_s;        /* Replica -> Primary SYNC connection */
-    connection *repl_rdb_transfer_s;    /* Primary FULL SYNC connection (RDB download) */
-    int repl_transfer_fd;               /* Replica -> Primary SYNC temp file descriptor */
-    char *repl_transfer_tmpfile;        /* Replica-> Primary SYNC temp file name */
-    time_t repl_transfer_lastio;        /* Unix time of the latest read, for timeout */
-    int repl_serve_stale_data;          /* Serve stale data when link is down? */
-    int repl_replica_ro;                /* Replica is read only? */
-    int repl_replica_ignore_maxmemory;  /* If true replicas do not evict. */
-    time_t repl_down_since;             /* Unix time at which link with primary went down */
-    int repl_disable_tcp_nodelay;       /* Disable TCP_NODELAY after SYNC? */
-    int replica_priority;               /* Reported in INFO and used by Sentinel. */
-    int replica_announced;              /* If true, replica is announced by Sentinel */
-    int replica_announce_port;          /* Give the primary this listening port. */
-    char *replica_announce_ip;          /* Give the primary this ip address. */
-    int propagation_error_behavior;     /* Configures the behavior of the replica
-                                         * when it receives an error on the replication stream */
-    int repl_ignore_disk_write_error;   /* Configures whether replicas panic when unable to
-                                         * persist writes to AOF. */
-    /* The following two fields is where we store primary PSYNC replid/offset
-     * while the PSYNC is in progress. At the end we'll copy the fields into
-     * the server->primary client structure. */
-    char primary_replid[CONFIG_RUN_ID_SIZE + 1]; /* Primary PSYNC runid. */
-    long long primary_initial_offset;            /* Primary PSYNC offset. */
-    int repl_replica_lazy_flush;                 /* Lazy FLUSHALL before loading DB? */
+    char *primary_user;                /* AUTH with this user and primary_auth with primary */
+    sds primary_auth;                  /* AUTH with this password with primary */
+    int repl_timeout;                  /* Timeout after N seconds of primary idle */
+    replicationLink *primary;          /* Replication link for the primary. */
+    list *replication_links;           /* List of all current replication links. */
+    client *cached_primary;            /* Cached primary to be reused for PSYNC. */
+    int repl_syncio_timeout;           /* Timeout for synchronous I/O calls */
+    int repl_serve_stale_data;         /* Serve stale data when link is down? */
+    int repl_replica_ro;               /* Replica is read only? */
+    int repl_replica_ignore_maxmemory; /* If true replicas do not evict. */
+    time_t repl_down_since;            /* Unix time at which link with primary went down */
+    int repl_disable_tcp_nodelay;      /* Disable TCP_NODELAY after SYNC? */
+    int replica_priority;              /* Reported in INFO and used by Sentinel. */
+    int replica_announced;             /* If true, replica is announced by Sentinel */
+    int replica_announce_port;         /* Give the primary this listening port. */
+    char *replica_announce_ip;         /* Give the primary this ip address. */
+    int propagation_error_behavior;    /* Configures the behavior of the replica
+                                        * when it receives an error on the replication stream */
+    int repl_ignore_disk_write_error;  /* Configures whether replicas panic when unable to
+                                        * persist writes to AOF. */
+    int repl_replica_lazy_flush;       /* Lazy FLUSHALL before loading DB? */
+    rio *loading_rio;                  /* Pointer to the rio object currently used for loading data. */
     /* Import Mode */
     int import_mode; /* If true, server is in import mode and forbid expiration and eviction. */
     /* Synchronous replication. */
@@ -2745,6 +2763,9 @@ void ioThreadWriteToClient(void *data);
 int canParseCommand(client *c);
 int processIOThreadsReadDone(void);
 int processIOThreadsWriteDone(void);
+replicationLink *createReplicationLink(char *host, int port, list *slot_ranges);
+int connectReplicationLink(replicationLink *link);
+int freeReplicationLink(replicationLink *link);
 
 /* logreqres.c - logging of requests and responses */
 void reqresReset(client *c, int free_buf);
@@ -2898,7 +2919,7 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 void updateReplicasWaitingBgsave(int bgsaveerr, int type);
 void replicationCron(void);
 void replicationStartPendingFork(void);
-void replicationHandlePrimaryDisconnection(void);
+void replicationHandleSourceDisconnection(replicationLink *link);
 void replicationCachePrimary(client *c);
 void resizeReplicationBacklog(void);
 void replicationSetPrimary(char *ip, int port, int full_sync_required);
@@ -2909,7 +2930,7 @@ void processClientsWaitingReplicas(void);
 void unblockClientWaitingReplicas(client *c);
 int replicationCountAcksByOffset(long long offset);
 int replicationCountAOFAcksByOffset(long long offset);
-void replicationSendNewlineToPrimary(void);
+void replicationSendNewlineToConnectedLinks(void);
 long long replicationGetReplicaOffset(void);
 char *replicationGetReplicaName(client *c);
 long long getPsyncInitialOffset(void);
@@ -2974,6 +2995,7 @@ void aofOpenIfNeededOnServerStart(void);
 void aofManifestFree(aofManifest *am);
 int aofDelHistoryFiles(void);
 int aofRewriteLimited(void);
+int rewriteAppendOnlyFileRio(rio *aof, list *slot_ranges);
 
 /* Child info */
 void openChildInfoPipe(void);
@@ -3429,6 +3451,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor);
 int parseScanCursorOrReply(client *c, robj *o, unsigned long long *cursor);
 int dbAsyncDelete(serverDb *db, robj *key);
 void emptyDbAsync(serverDb *db);
+void emptyHashtableAsync(serverDb *db, int didx);
 size_t lazyfreeGetPendingObjectsCount(void);
 size_t lazyfreeGetFreedObjectsCount(void);
 void lazyfreeResetStats(void);
