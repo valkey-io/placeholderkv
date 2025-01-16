@@ -43,6 +43,7 @@
 #include "io_threads.h"
 #include "sds.h"
 #include "module.h"
+#include "scripting_engine.h"
 
 #include <time.h>
 #include <signal.h>
@@ -2895,12 +2896,15 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
+    if (scriptingEngineManagerInit() == C_ERR) {
+        serverPanic("Scripting engine manager initialization failed, check the server logs.");
+    }
+
     /* Initialize the LUA scripting engine. */
     scriptingInit(1);
     /* Initialize the functions engine based off of LUA initialization. */
     if (functionsInit() == C_ERR) {
         serverPanic("Functions initialization failed, check the server logs.");
-        exit(1);
     }
     slowlogInit();
     latencyMonitorInit();
