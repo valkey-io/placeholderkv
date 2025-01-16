@@ -1850,7 +1850,8 @@ void deleteExpiredKeyFromOverwriteAndPropagate(client *c, robj *keyobj) {
     robj *aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;
     rewriteClientCommandVector(c, 2, aux, keyobj);
     signalModifiedKey(c, c->db, keyobj);
-    notifyKeyspaceEvent(NOTIFY_GENERIC, "del", keyobj, c->db->id);
+    notifyKeyspaceEvent(NOTIFY_EXPIRED, "expired", keyobj, c->db->id);
+    server.stat_expiredkeys++;
 }
 
 /* Propagate an implicit key deletion into replicas and the AOF file.
