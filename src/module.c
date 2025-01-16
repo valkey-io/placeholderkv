@@ -62,8 +62,8 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
-#include "functions.h"
 #include "module.h"
+#include "scripting_engine.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -13165,10 +13165,10 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
         return VALKEYMODULE_ERR;
     }
 
-    if (functionsRegisterEngine(engine_name,
-                                module_ctx->module,
-                                engine_ctx,
-                                engine_methods) != C_OK) {
+    if (scriptingEngineManagerRegister(engine_name,
+                                       module_ctx->module,
+                                       engine_ctx,
+                                       engine_methods) != C_OK) {
         return VALKEYMODULE_ERR;
     }
 
@@ -13184,7 +13184,9 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
  */
 int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
     UNUSED(ctx);
-    functionsUnregisterEngine(engine_name);
+    if (scriptingEngineManagerUnregister(engine_name) != C_OK) {
+        return VALKEYMODULE_ERR;
+    }
     return VALKEYMODULE_OK;
 }
 
