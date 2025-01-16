@@ -2862,6 +2862,10 @@ void clusterProcessPingExtensions(clusterMsg *hdr, clusterLink *link) {
             if (n && n != myself && !(nodeIsReplica(myself) && myself->replicaof == n)) {
                 sds id = sdsnewlen(forgotten_node_ext->name, CLUSTER_NAMELEN);
                 dictEntry *de = dictAddOrFind(server.cluster->nodes_black_list, id);
+                if (dictGetKey(de) != id) {
+                    /* The dict did not take ownership of the id string, so we need to free it. */
+                    sdsfree(id);
+                }
                 uint64_t expire = server.unixtime + ntohu64(forgotten_node_ext->ttl);
                 dictSetUnsignedIntegerVal(de, expire);
                 clusterDelNode(n);
