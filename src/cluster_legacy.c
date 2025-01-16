@@ -3329,7 +3329,8 @@ int clusterProcessPacket(clusterLink *link) {
 
                 /* We should always receive a MEET packet on an inbound link. */
                 serverAssert(link != sender->link);
-                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s (%s) after receiving a MEET packet from this known node",
+                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s (%s) after receiving a MEET packet "
+                                     "from this known node",
                           sender->name, sender->human_nodename);
                 freeClusterLink(sender->link);
             }
