@@ -528,7 +528,7 @@ void fillCommandCDF(client *c, struct hdr_histogram *histogram) {
  * a per command cumulative distribution of latencies. */
 void latencyAllCommandsFillCDF(client *c, hashtable *commands, int *command_with_data) {
     hashtableIterator iter;
-    hashtableInitSafeIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, HASHTABLE_ITER_SAFE);
     void *next;
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
@@ -565,7 +565,7 @@ void latencySpecificCommandsFillCDF(client *c) {
 
         if (cmd->subcommands_ht) {
             hashtableIterator iter;
-            hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+            hashtableInitIterator(&iter, cmd->subcommands_ht, HASHTABLE_ITER_SAFE);
             void *next;
             while (hashtableNext(&iter, &next)) {
                 struct serverCommand *sub = next;

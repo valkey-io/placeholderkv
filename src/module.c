@@ -12162,7 +12162,7 @@ int moduleFreeCommand(struct ValkeyModule *module, struct serverCommand *cmd) {
     if (cmd->subcommands_ht) {
         hashtableIterator iter;
         void *next;
-        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        hashtableInitIterator(&iter, cmd->subcommands_ht, HASHTABLE_ITER_SAFE);
         while (hashtableNext(&iter, &next)) {
             struct serverCommand *sub = next;
             if (moduleFreeCommand(module, sub) != C_OK) continue;
@@ -12185,7 +12185,7 @@ void moduleUnregisterCommands(struct ValkeyModule *module) {
     /* Unregister all the commands registered by this module. */
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, server.commands);
+    hashtableInitIterator(&iter, server.commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         if (moduleFreeCommand(module, cmd) != C_OK) continue;

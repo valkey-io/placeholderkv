@@ -6347,7 +6347,7 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
 
     kvstoreHashtableIterator *kvs_di = NULL;
     void *next;
-    kvs_di = kvstoreGetHashtableSafeIterator(server.db->keys, hashslot);
+    kvs_di = kvstoreGetHashtableIterator(server.db->keys, hashslot, HASHTABLE_ITER_SAFE);
     while (kvstoreHashtableIteratorNext(kvs_di, &next)) {
         robj *valkey = next;
         enterExecutionUnit(1, 0);
