@@ -41,14 +41,10 @@ start_cluster 3 0 {tags {external:skip cluster}} {
         R 0 PUBLISH hello world
         assert_equal 2 [CI 0 cluster_stats_messages_publish_sent]
         wait_for_condition 50 100 {
-            [CI 1 cluster_stats_messages_publish_received] eq 1
-        } else {
-            fail "node 2 didn't receive clusterbus publish packet"
-        }
-        wait_for_condition 50 100 {
+            [CI 1 cluster_stats_messages_publish_received] eq 1 &&
             [CI 2 cluster_stats_messages_publish_received] eq 1
         } else {
-            fail "node 3 didn't receive clusterbus publish packet"
+            fail "node 2 or node 3 didn't receive clusterbus publish packet"
         }
     }
 }
