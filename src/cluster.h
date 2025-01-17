@@ -121,9 +121,10 @@ int bitmapTestBit(unsigned char *bitmap, int pos);
 void bitmapSetBit(unsigned char *bitmap, int pos);
 void bitmapClearBit(unsigned char *bitmap, int pos);
 void bitmapSetAllBits(unsigned char *bitmap, int len);
-void slotBitmapSetAll(slotBitmap bitmap);
-int isSlotBitmapAllSlots(slotBitmap bitmap);
+int slotBitmapCompare(slotBitmap bitmap, slotBitmap other);
+int isSlotBitmapEmpty(slotBitmap bitmap);
 int getSlotOrReply(client *c, robj *o);
+void clusterSlotMigrationDoneSyncing(long long initial_offset);
 
 /* functions with shared implementations */
 int clusterNodeIsMyself(clusterNode *n);

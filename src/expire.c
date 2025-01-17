@@ -524,7 +524,7 @@ int checkAlreadyExpired(long long when) {
      *
      * If the server is a primary and in the import mode, we also add the already
      * expired key and wait for an explicit DEL from the import source. */
-    return (when <= commandTimeSnapshot() && !server.loading && !server.primary && !server.import_mode);
+    return (when <= commandTimeSnapshot() && !server.loading && !server.primary_host && !server.import_mode);
 }
 
 #define EXPIRE_NX (1 << 0)

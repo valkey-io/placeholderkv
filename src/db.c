@@ -110,7 +110,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
          * It's possible that the WRITE flag is set even during a readonly
          * command, since the command may trigger events that cause modules to
          * perform additional writes. */
-        int is_ro_replica = server.primary && server.repl_replica_ro;
+        int is_ro_replica = server.primary_host && server.repl_replica_ro;
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
@@ -258,7 +258,7 @@ int getKeySlot(sds key) {
      * so we must always recompute the slot for commands coming from the primary.
      */
     if (server.current_client && server.current_client->slot >= 0 && server.current_client->flag.executing_command &&
-        !server.current_client->flag.replication_source) {
+        !server.current_client->flag.primary) {
         debugServerAssertWithInfo(server.current_client, NULL,
                                   (int)keyHashSlot(key, (int)sdslen(key)) == server.current_client->slot);
         return server.current_client->slot;
@@ -267,7 +267,7 @@ int getKeySlot(sds key) {
     /* For the case of replicated commands from primary, getNodeByQuery() never gets called,
      * and thus c->slot never gets populated. That said, if this command ends up accessing a key,
      * we are able to backfill c->slot here, where the key's hash calculation is made. */
-    if (server.current_client && server.current_client->flag.replication_source) {
+    if (server.current_client && server.current_client->flag.primary) {
         server.current_client->slot = slot;
     }
     return slot;
@@ -446,7 +446,7 @@ robj *dbRandomKey(serverDb *db) {
         sds key = objectGetKey(valkey);
         robj *keyobj = createStringObject(key, sdslen(key));
         if (objectIsExpired(valkey)) {
-            if (allvolatile && (server.primary || server.import_mode) && --maxtries == 0) {
+            if (allvolatile && (server.primary_host || server.import_mode) && --maxtries == 0) {
                 /* If the DB is composed only of keys with an expire set,
                  * it could happen that all the keys are already logically
                  * expired in the replica, so the function cannot stop because
@@ -1801,8 +1801,8 @@ robj *setExpire(client *c, serverDb *db, robj *key, long long when) {
         serverAssert(added);
     }
 
-    int writable_replica = server.primary && server.repl_replica_ro == 0;
-    if (c && writable_replica && !c->flag.replication_source) rememberReplicaKeyWithExpire(db, key);
+    int writable_replica = server.primary_host && server.repl_replica_ro == 0;
+    if (c && writable_replica && !c->flag.primary) rememberReplicaKeyWithExpire(db, key);
     return val;
 }
 
@@ -1907,7 +1907,7 @@ static int objectIsExpired(robj *val) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
     if (!timestampIsExpired(objectGetExpire(val))) return 0;
-    if (server.primary == NULL && server.import_mode) {
+    if (server.primary_host == NULL && server.import_mode) {
         if (server.current_client && server.current_client->flag.import_source) return 0;
     }
     return 1;
@@ -1925,7 +1925,7 @@ static int keyIsExpiredWithDictIndex(serverDb *db, robj *key, int dict_index) {
     if (!keyIsExpiredWithDictIndexImpl(db, key, dict_index)) return 0;
 
     /* See expireIfNeededWithDictIndex for more details. */
-    if (server.primary == NULL && server.import_mode) {
+    if (server.primary_host == NULL && server.import_mode) {
         if (server.current_client && server.current_client->flag.import_source) return 0;
     }
     return 1;
@@ -1959,8 +1959,8 @@ static keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, robj *val,
      *
      * When replicating commands from the primary, keys are never considered
      * expired. */
-    if (server.primary != NULL) {
-        if (server.current_client && (server.current_client->flag.replication_source)) return KEY_VALID;
+    if (server.primary_host != NULL) {
+        if (server.current_client && (server.current_client->flag.primary)) return KEY_VALID;
         if (!(flags & EXPIRE_FORCE_DELETE_EXPIRED)) return KEY_EXPIRED;
     } else if (server.import_mode) {
         /* If we are running in the import mode on a primary, instead of

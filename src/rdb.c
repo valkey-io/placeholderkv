@@ -1869,7 +1869,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
     int deep_integrity_validation = server.sanitize_dump_payload == SANITIZE_DUMP_YES;
     if (server.sanitize_dump_payload == SANITIZE_DUMP_CLIENTS) {
         /* Skip sanitization when loading (an RDB), or getting a RESTORE command
-         * from either the primary or a client using an ACL user with the skip-sanitize-payload flag. */
+         * from either a replication source or a client using an ACL user with the skip-sanitize-payload flag. */
         int skip = server.loading || (server.current_client && (server.current_client->flag.replication_source));
         if (!skip && server.current_client && server.current_client->user)
             skip = !!(server.current_client->user->flags & USER_FLAG_SANITIZE_PAYLOAD_SKIP);
@@ -2935,12 +2935,12 @@ void rdbLoadProgressCallback(rio *r, const void *buf, size_t len) {
     if (server.loading_process_events_interval_bytes &&
         (r->processed_bytes + len) / server.loading_process_events_interval_bytes >
             r->processed_bytes / server.loading_process_events_interval_bytes) {
-        replicationSendNewlineToConnectedLinks();
+        if (server.primary_host && server.repl_state == REPL_STATE_TRANSFER) replicationSendNewlineToPrimary();
         loadingAbsProgress(r->processed_bytes);
         processEventsWhileBlocked();
         processModuleLoadingProgressEvent(0);
     }
-    if (server.primary && server.primary->state == REPL_STATE_TRANSFER && rioCheckType(r) == RIO_TYPE_CONN) {
+    if (server.repl_state == REPL_STATE_TRANSFER && rioCheckType(r) == RIO_TYPE_CONN) {
         server.stat_net_repl_input_bytes += len;
     }
 }
@@ -3624,8 +3624,8 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) 
             retval = rewriteAppendOnlyFileRio(&rdb, slot_bitmap);
             rioWrite(&rdb, "*3\r\n", 4);
             rioWriteBulkString(&rdb, "REPLCONF", 8);
-            rioWriteBulkString(&rdb, "SYNC-PAYLOAD-END", 17);
-            rioWriteBulkLongLong(&rdb, rsi->repl_stream_db);
+            rioWriteBulkString(&rdb, "AOF-PAYLOAD-END", 15);
+            rioWriteBulkLongLong(&rdb, server.primary_repl_offset);
         } else {
             retval = rdbSaveRioWithEOFMark(req, &rdb, NULL, rsi);
         }
@@ -3791,7 +3791,7 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
      * connects to us, the NULL repl_backlog will trigger a full
      * synchronization, at the same time we will use a new replid and clear
      * replid2. */
-    if (!server.primary && server.repl_backlog) {
+    if (!server.primary_host && server.repl_backlog) {
         /* Note that when server.replicas_eldb is -1, it means that this primary
          * didn't apply any write commands after a full synchronization.
          * So we can let repl_stream_db be 0, this allows a restarted replica
@@ -3804,7 +3804,7 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
     /* If the instance is a replica we need a connected primary
      * in order to fetch the currently selected DB. */
     if (server.primary) {
-        rsi->repl_stream_db = server.primary->client->db->id;
+        rsi->repl_stream_db = server.primary->db->id;
         return rsi;
     }
 

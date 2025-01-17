@@ -221,11 +221,13 @@ typedef struct ValkeyModuleStreamID {
 #define VALKEYMODULE_CTX_FLAGS_ASYNC_LOADING (1 << 23)
 /* Valkey is starting. */
 #define VALKEYMODULE_CTX_FLAGS_SERVER_STARTUP (1 << 24)
+/* The command was sent via slot migration link. */
+#define VALKEYMODULE_CTX_FLAGS_IMPORTING_SLOT (1 << 25)
 
 /* Next context flag, must be updated when adding new flags above!
 This flag should not be used directly by the module.
  * Use ValkeyModule_GetContextFlagsAll instead. */
-#define _VALKEYMODULE_CTX_FLAGS_NEXT (1 << 25)
+#define _VALKEYMODULE_CTX_FLAGS_NEXT (1 << 26)
 
 /* Keyspace changes notification classes. Every class is associated with a
  * character for configuration purposes.

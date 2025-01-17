@@ -221,7 +221,7 @@ void serverLogRaw(int level, const char *msg) {
         } else if (pid != server.pid) {
             role_index = 1; /* RDB / AOF writing child. */
         } else {
-            role_index = (server.primary ? 2 : 3); /* Replica or Primary. */
+            role_index = (server.primary_host ? 2 : 3); /* Replica or Primary. */
         }
         switch (server.log_format) {
         case LOG_FORMAT_LOGFMT:
@@ -901,7 +901,7 @@ int clientsCronResizeQueryBuffer(client *c) {
             /* 1) Query is idle for a long time. */
             size_t remaining = sdslen(c->querybuf) - c->qb_pos;
             if (!c->flag.replication_source && !remaining) {
-                /* If the client is not a primary and no data is pending,
+                /* If the client is not for replication and no data is pending,
                  * The client can safely use the shared query buffer in the next read - free the client's querybuf. */
                 sdsfree(c->querybuf);
                 /* By setting the querybuf to NULL, the client will use the shared query buffer in the next read.
@@ -2223,12 +2223,21 @@ void initServerConfig(void) {
     appendServerSaveParams(60, 10000);  /* save after 1 minute and 10000 changes */
 
     /* Replication related */
+    server.primary_host = NULL;
+    server.primary_port = 6379;
     server.primary = NULL;
     server.cached_primary = NULL;
+    server.primary_initial_offset = -1;
+    server.repl_state = REPL_STATE_NONE;
+    server.repl_rdb_channel_state = REPL_DUAL_CHANNEL_STATE_NONE;
+    server.repl_transfer_tmpfile = NULL;
+    server.repl_transfer_fd = -1;
+    server.repl_transfer_s = NULL;
     server.repl_syncio_timeout = CONFIG_REPL_SYNCIO_TIMEOUT;
     server.repl_down_since = 0; /* Never connected, repl is down since EVER. */
     server.primary_repl_offset = 0;
     server.fsynced_reploff_pending = 0;
+    server.rdb_client_id = -1;
     server.loading_process_events_interval_ms = LOADING_PROCESS_EVENTS_INTERVAL_DEFAULT;
     server.loading_rio = NULL;
 
@@ -2339,7 +2348,7 @@ int restartServer(client *c, int flags, mstime_t delay) {
  * depending on current role.
  */
 int setOOMScoreAdj(int process_class) {
-    if (process_class == -1) process_class = (server.primary ? CONFIG_OOM_REPLICA : CONFIG_OOM_PRIMARY);
+    if (process_class == -1) process_class = (server.primary_host ? CONFIG_OOM_REPLICA : CONFIG_OOM_PRIMARY);
 
     serverAssert(process_class >= 0 && process_class < CONFIG_OOM_COUNT);
 
@@ -2751,7 +2760,6 @@ void initServer(void) {
     server.reply_buffer_peak_reset_time = REPLY_BUFFER_DEFAULT_PEAK_RESET_TIME;
     server.reply_buffer_resizing_enabled = 1;
     server.client_mem_usage_buckets = NULL;
-    server.replication_links = listCreate();
     resetReplicationBuffer();
 
     /* Make sure the locale is set on startup based on the config file. */
@@ -3349,7 +3357,7 @@ struct serverCommand *lookupCommandOrOriginal(robj **argv, int argc) {
     return cmd;
 }
 
-/* Commands arriving from the primary client or AOF client, should never be rejected. */
+/* Commands arriving from a replication source or AOF client, should never be rejected. */
 int mustObeyClient(client *c) {
     return c->id == CLIENT_ID_AOF || c->flag.replication_source;
 }
@@ -4103,7 +4111,7 @@ int processCommand(client *c) {
         }
     }
 
-    if (!server.cluster_enabled && c->capa & CLIENT_CAPA_REDIRECT && server.primary && !obey_client &&
+    if (!server.cluster_enabled && c->capa & CLIENT_CAPA_REDIRECT && server.primary_host && !obey_client &&
         (is_write_command || (is_read_command && !c->flag.readonly))) {
         if (server.failover_state == FAILOVER_IN_PROGRESS) {
             /* During the FAILOVER process, when conditions are met (such as
@@ -4134,7 +4142,7 @@ int processCommand(client *c) {
             }
             c->duration = 0;
             c->cmd->rejected_calls++;
-            addReplyErrorSds(c, sdscatprintf(sdsempty(), "-REDIRECT %s:%d", server.primary->host, server.primary->port));
+            addReplyErrorSds(c, sdscatprintf(sdsempty(), "-REDIRECT %s:%d", server.primary_host, server.primary_port));
         }
         return C_OK;
     }
@@ -4219,7 +4227,7 @@ int processCommand(client *c) {
 
     /* Don't accept write commands if this is a read only replica. But
      * accept write commands if this is our primary. */
-    if (server.primary && server.repl_replica_ro && !obey_client && is_write_command) {
+    if (server.primary_host && server.repl_replica_ro && !obey_client && is_write_command) {
         rejectCommand(c, shared.roreplicaerr);
         return C_OK;
     }
@@ -4240,7 +4248,7 @@ int processCommand(client *c) {
     /* Only allow commands with flag "t", such as INFO, REPLICAOF and so on,
      * when replica-serve-stale-data is no and we are a replica with a broken
      * link with primary. */
-    if (server.primary && server.primary->state != REPL_STATE_CONNECTED && server.repl_serve_stale_data == 0 &&
+    if (server.primary_host && server.repl_state != REPL_STATE_CONNECTED && server.repl_serve_stale_data == 0 &&
         is_denystale_command) {
         rejectCommand(c, shared.primarydownerr);
         return C_OK;
@@ -5964,14 +5972,14 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         info = sdscatprintf(info,
                             "# Replication\r\n"
                             "role:%s\r\n",
-                            server.primary == NULL ? "master" : "slave");
-        if (server.primary) {
+                            server.primary_host == NULL ? "master" : "slave");
+        if (server.primary_host) {
             long long replica_repl_offset = 1;
             long long replica_read_repl_offset = 1;
 
-            if (server.primary->client) {
-                replica_repl_offset = server.primary->client->repl_data->reploff;
-                replica_read_repl_offset = server.primary->client->repl_data->read_reploff;
+            if (server.primary) {
+                replica_repl_offset = server.primary->repl_data->reploff;
+                replica_read_repl_offset = server.primary->repl_data->read_reploff;
             } else if (server.cached_primary) {
                 replica_repl_offset = server.cached_primary->repl_data->reploff;
                 replica_read_repl_offset = server.cached_primary->repl_data->read_reploff;
@@ -5980,32 +5988,32 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             info = sdscatprintf(
                 info,
                 FMTARGS(
-                    "master_host:%s\r\n", server.primary->host,
-                    "master_port:%d\r\n", server.primary->port,
-                    "master_link_status:%s\r\n", (server.primary->state == REPL_STATE_CONNECTED) ? "up" : "down",
-                    "master_last_io_seconds_ago:%d\r\n", server.primary->client ? ((int)(server.unixtime - server.primary->client->last_interaction)) : -1,
-                    "master_sync_in_progress:%d\r\n", server.primary->state == REPL_STATE_TRANSFER,
+                    "master_host:%s\r\n", server.primary_host,
+                    "master_port:%d\r\n", server.primary_port,
+                    "master_link_status:%s\r\n", (server.repl_state == REPL_STATE_CONNECTED) ? "up" : "down",
+                    "master_last_io_seconds_ago:%d\r\n", server.primary ? ((int)(server.unixtime - server.primary->last_interaction)) : -1,
+                    "master_sync_in_progress:%d\r\n", server.repl_state == REPL_STATE_TRANSFER,
                     "slave_read_repl_offset:%lld\r\n", replica_read_repl_offset,
                     "slave_repl_offset:%lld\r\n", replica_repl_offset,
-                    "replicas_repl_buffer_size:%zu\r\n", server.primary->pending_repl_data.len,
-                    "replicas_repl_buffer_peak:%zu\r\n", server.primary->pending_repl_data.peak));
+                    "replicas_repl_buffer_size:%zu\r\n", server.pending_repl_data.len,
+                    "replicas_repl_buffer_peak:%zu\r\n", server.pending_repl_data.peak));
 
-            if (server.primary->state == REPL_STATE_TRANSFER) {
+            if (server.repl_state == REPL_STATE_TRANSFER) {
                 double perc = 0;
-                if (server.primary->transfer_size) {
-                    perc = ((double)server.primary->transfer_read / server.primary->transfer_size) * 100;
+                if (server.repl_transfer_size) {
+                    perc = ((double)server.repl_transfer_read / server.repl_transfer_size) * 100;
                 }
                 info = sdscatprintf(
                     info,
                     FMTARGS(
-                        "master_sync_total_bytes:%lld\r\n", (long long)server.primary->transfer_size,
-                        "master_sync_read_bytes:%lld\r\n", (long long)server.primary->transfer_read,
-                        "master_sync_left_bytes:%lld\r\n", (long long)(server.primary->transfer_size - server.primary->transfer_read),
+                        "master_sync_total_bytes:%lld\r\n", (long long)server.repl_transfer_size,
+                        "master_sync_read_bytes:%lld\r\n", (long long)server.repl_transfer_read,
+                        "master_sync_left_bytes:%lld\r\n", (long long)(server.repl_transfer_size - server.repl_transfer_read),
                         "master_sync_perc:%.2f\r\n", perc,
-                        "master_sync_last_io_seconds_ago:%d\r\n", (int)(server.unixtime - server.primary->transfer_lastio)));
+                        "master_sync_last_io_seconds_ago:%d\r\n", (int)(server.unixtime - server.repl_transfer_lastio)));
             }
 
-            if (server.primary->state != REPL_STATE_CONNECTED) {
+            if (server.repl_state != REPL_STATE_CONNECTED) {
                 info = sdscatprintf(info, "master_link_down_since_seconds:%jd\r\n",
                                     server.repl_down_since ? (intmax_t)(server.unixtime - server.repl_down_since) : -1);
             }
@@ -6840,7 +6848,7 @@ int serverIsSupervised(int mode) {
 }
 
 int iAmPrimary(void) {
-    return ((!server.cluster_enabled && server.primary == NULL) ||
+    return ((!server.cluster_enabled && server.primary_host == NULL) ||
             (server.cluster_enabled && clusterNodeIsPrimary(getMyClusterNode())));
 }
 
@@ -7123,7 +7131,7 @@ __attribute__((weak)) int main(int argc, char **argv) {
         }
 
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
-            if (!server.primary) {
+            if (!server.primary_host) {
                 serverCommunicateSystemd("STATUS=Ready to accept connections\n");
             } else {
                 serverCommunicateSystemd(

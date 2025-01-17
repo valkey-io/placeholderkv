@@ -288,9 +288,9 @@ int prepareClientToWrite(client *c) {
      * CLIENT_PUSHING handling: disables the reply silencing flags. */
     if ((c->flag.reply_off || c->flag.reply_skip) && !c->flag.pushing) return C_ERR;
 
-    /* Primaries don't receive replies, unless CLIENT_PRIMARY_FORCE_REPLY flag
+    /* Replication sources don't receive replies, unless force reply flag
      * is set. */
-    if (c->flag.replication_source && !c->flag.primary_force_reply) return C_ERR;
+    if ((c->flag.replication_source) && !c->flag.replication_force_reply) return C_ERR;
 
     /* Skip the fake client, such as the fake client for AOF loading.
      * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client
@@ -581,7 +581,7 @@ void afterErrorReply(client *c, const char *s, size_t len, int flags) {
      * the commands sent by the primary. However it is useful to log such events since
      * they are rare and may hint at errors in a script or a bug in the server. */
     int ctype = getClientType(c);
-    if (ctype == CLIENT_TYPE_PRIMARY || ctype == CLIENT_TYPE_REPLICA || c->id == CLIENT_ID_AOF) {
+    if (ctype == CLIENT_TYPE_PRIMARY || ctype == CLIENT_TYPE_REPLICA || c->id == CLIENT_ID_AOF || ctype == CLIENT_TYPE_SLOT_MIGRATION) {
         char *to, *from;
 
         if (c->id == CLIENT_ID_AOF) {
@@ -590,9 +590,12 @@ void afterErrorReply(client *c, const char *s, size_t len, int flags) {
         } else if (ctype == CLIENT_TYPE_PRIMARY) {
             to = "primary";
             from = "replica";
-        } else {
+        } else if (ctype == CLIENT_TYPE_REPLICA) {
             to = "replica";
             from = "primary";
+        } else {
+            to = "slot-migration-source";
+            from = "slot-migration-target";
         }
 
         if (len > 4096) len = 4096;
@@ -1668,7 +1671,7 @@ void freeClient(client *c) {
      *
      * Note that before doing this we make sure that the client is not in
      * some unexpected state, by checking its flags. */
-    if (server.primary && server.primary->client == c) {
+    if (server.primary && c->flag.primary) {
         serverLog(LL_NOTICE, "Connection with primary lost.");
         if (!c->flag.dont_cache_primary && !(c->flag.protocol_error || c->flag.blocked)) {
             c->flag.close_asap = 0;
@@ -1819,14 +1822,14 @@ void beforeNextClient(client *c) {
 
     /* Trim the query buffer to the current position. */
     if (c->flag.replication_source) {
-        /* If the client is a primary, trim the querybuf to repl_applied,
-         * since primary client is very special, its querybuf not only
+        /* If the client is a replication source, trim the querybuf to repl_applied,
+         * since replication clients are very special, its querybuf not only
          * used to parse command, but also proxy to sub-replicas.
          *
          * Here are some scenarios we cannot trim to qb_pos:
-         * 1. we don't receive complete command from primary
-         * 2. primary client blocked cause of client pause
-         * 3. io threads operate read, primary client flagged with CLIENT_PENDING_COMMAND
+         * 1. we don't receive complete command from replication
+         * 2. replication client blocked cause of client pause
+         * 3. io threads operate read, replication client flagged with CLIENT_PENDING_COMMAND
          *
          * In these scenarios, qb_pos points to the part of the current command
          * or the beginning of next command, and the current command is not applied yet,
@@ -2144,7 +2147,7 @@ int postWriteToClient(client *c) {
     }
     if (c->nwritten > 0) {
         c->net_output_bytes += c->nwritten;
-        /* For clients representing primaries we don't count sending data
+        /* For clients representing replication sources we don't count sending data
          * as an interaction, since we always send REPLCONF ACK commands
          * that take some time to just fill the socket output buffer.
          * We just rely on data / pings received for timeout detection. */
@@ -2238,7 +2241,11 @@ int handleReadResult(client *c) {
     c->net_input_bytes += c->nread;
     if (c->flag.replication_source) {
         c->repl_data->read_reploff += c->nread;
-        server.stat_net_repl_input_bytes += c->nread;
+        if (c->flag.primary) {
+            server.stat_net_repl_input_bytes += c->nread;
+        } else if (c->flag.slot_migration_source) {
+            server.stat_net_slot_migration_input_bytes += c->nread;
+        }
     } else {
         server.stat_net_input_bytes += c->nread;
     }
@@ -2281,7 +2288,7 @@ void handleParseError(client *c) {
     } else if (flags & READ_FLAGS_ERROR_UNBALANCED_QUOTES) {
         addReplyError(c, "Protocol error: unbalanced quotes in request");
         setProtocolError("unbalanced quotes in inline request", c);
-    } else if (flags & READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_PRIMARY) {
+    } else if (flags & READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_REPLICATION_SOURCE) {
         serverLog(LL_WARNING, "WARNING: Receiving inline protocol from primary, primary stream corruption? Closing the "
                               "primary connection and discarding the cached primary.");
         setProtocolError("Master using the inline protocol. Desync?", c);
@@ -2295,7 +2302,7 @@ int isParsingError(client *c) {
                             READ_FLAGS_ERROR_INVALID_MULTIBULK_LEN | READ_FLAGS_ERROR_UNAUTHENTICATED_MULTIBULK_LEN |
                             READ_FLAGS_ERROR_UNAUTHENTICATED_BULK_LEN | READ_FLAGS_ERROR_MBULK_INVALID_BULK_LEN |
                             READ_FLAGS_ERROR_BIG_BULK_COUNT | READ_FLAGS_ERROR_MBULK_UNEXPECTED_CHARACTER |
-                            READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_PRIMARY | READ_FLAGS_ERROR_UNBALANCED_QUOTES);
+                            READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_REPLICATION_SOURCE | READ_FLAGS_ERROR_UNBALANCED_QUOTES);
 }
 
 /* This function is called after the query-buffer was parsed.
@@ -2556,7 +2563,7 @@ void processInlineBuffer(client *c) {
     int argc, j, linefeed_chars = 1;
     sds *argv, aux;
     size_t querylen;
-    int is_primary = c->read_flags & READ_FLAGS_PRIMARY;
+    int is_replication_source = c->read_flags & READ_FLAGS_REPLICATION_SOURCE;
 
     /* Search for end of line */
     newline = strchr(c->querybuf + c->qb_pos, '\n');
@@ -2593,9 +2600,9 @@ void processInlineBuffer(client *c) {
      *
      * However there is an exception: primaries may send us just a newline
      * to keep the connection active. */
-    if (querylen != 0 && is_primary) {
+    if (querylen != 0 && is_replication_source) {
         sdsfreesplitres(argv, argc);
-        c->read_flags |= READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_PRIMARY;
+        c->read_flags |= READ_FLAGS_ERROR_UNEXPECTED_INLINE_FROM_REPLICATION_SOURCE;
         return;
     }
 
@@ -2683,7 +2690,7 @@ void processMultibulkBuffer(client *c) {
     char *newline = NULL;
     int ok;
     long long ll;
-    int is_primary = c->read_flags & READ_FLAGS_PRIMARY;
+    int is_replication_source = c->read_flags & READ_FLAGS_REPLICATION_SOURCE;
     int auth_required = c->read_flags & READ_FLAGS_AUTH_REQUIRED;
 
     if (c->multibulklen == 0) {
@@ -2787,7 +2794,7 @@ void processMultibulkBuffer(client *c) {
 
             size_t bulklen_slen = newline - (c->querybuf + c->qb_pos + 1);
             ok = string2ll(c->querybuf + c->qb_pos + 1, bulklen_slen, &ll);
-            if (!ok || ll < 0 || (!(is_primary) && ll > server.proto_max_bulk_len)) {
+            if (!ok || ll < 0 || (!(is_replication_source) && ll > server.proto_max_bulk_len)) {
                 c->read_flags |= READ_FLAGS_ERROR_MBULK_INVALID_BULK_LEN;
                 return;
             } else if (ll > 16384 && auth_required) {
@@ -2796,7 +2803,7 @@ void processMultibulkBuffer(client *c) {
             }
 
             c->qb_pos = newline - c->querybuf + 2;
-            if (!(is_primary) && ll >= PROTO_MBULK_BIG_ARG) {
+            if (!(is_replication_source) && ll >= PROTO_MBULK_BIG_ARG) {
                 /* When the client is not a primary client (because primary
                  * client's querybuf can only be trimmed after data applied
                  * and sent to replicas).
@@ -2845,7 +2852,7 @@ void processMultibulkBuffer(client *c) {
             /* Optimization: if a non-primary client's buffer contains JUST our bulk element
              * instead of creating a new object by *copying* the sds we
              * just use the current sds string. */
-            if (!is_primary && c->qb_pos == 0 && c->bulklen >= PROTO_MBULK_BIG_ARG &&
+            if (!is_replication_source && c->qb_pos == 0 && c->bulklen >= PROTO_MBULK_BIG_ARG &&
                 sdslen(c->querybuf) == (size_t)(c->bulklen + 2)) {
                 c->argv[c->argc++] = createObject(OBJ_STRING, c->querybuf);
                 c->argv_len_sum += c->bulklen;
@@ -2895,15 +2902,15 @@ void commandProcessed(client *c) {
     if (!c->repl_data) return;
 
     long long prev_offset = c->repl_data->reploff;
-    if (c->flag.replication_source && !c->flag.multi) {
-        /* Update the applied replication offset of our primary. */
+    if (!c->flag.multi && c->flag.replication_source) {
+        /* Update the applied replication offset of our source. */
         c->repl_data->reploff = c->repl_data->read_reploff - sdslen(c->querybuf) + c->qb_pos;
     }
 
-    /* If the client is a primary we need to compute the difference
+    /* If the client is a replication source we need to compute the difference
      * between the applied offset before and after processing the buffer,
      * to understand how much of the replication stream was actually
-     * applied to the primary state: this quantity, and its corresponding
+     * applied to the replication state: this quantity, and its corresponding
      * part of the replication stream, will be propagated to the
      * sub-replicas and to the replication backlog. */
     if (c->flag.replication_source) {
@@ -3010,7 +3017,7 @@ int canParseCommand(client *c) {
      * commands to execute in c->argv. */
     if (c->flag.pending_command) return 0;
 
-    /* Don't process input from the primary while there is a busy script
+    /* Don't process input from replication while there is a busy script
      * condition on the replica. We want just to accumulate the replication
      * stream (instead of replying -BUSY like we do with other clients) and
      * later resume the processing. */
@@ -3033,7 +3040,7 @@ int processInputBuffer(client *c) {
             break;
         }
 
-        c->read_flags = c->flag.replication_source ? READ_FLAGS_PRIMARY : 0;
+        c->read_flags = c->flag.replication_source ? READ_FLAGS_REPLICATION_SOURCE : 0;
         c->read_flags |= authRequired(c) ? READ_FLAGS_AUTH_REQUIRED : 0;
 
         parseCommand(c);
@@ -3076,7 +3083,7 @@ void readToQueryBuf(client *c) {
     /* If the replica RDB client is marked as closed ASAP, do not try to read from it */
     if (c->flag.close_asap) return;
 
-    int is_primary = c->read_flags & READ_FLAGS_PRIMARY;
+    int is_replication_source = c->read_flags & READ_FLAGS_REPLICATION_SOURCE;
 
     readlen = PROTO_IOBUF_LEN;
     qblen = c->querybuf ? sdslen(c->querybuf) : 0;
@@ -3110,7 +3117,7 @@ void readToQueryBuf(client *c) {
      * Although we have ensured that c->querybuf will not be expanded in the current
      * thread_shared_qb, we still add this check for code robustness. */
     int use_thread_shared_qb = (c->querybuf == thread_shared_qb) ? 1 : 0;
-    if (!is_primary && // primary client's querybuf can grow greedy.
+    if (!is_replication_source && /* replication client's querybuf can grow greedy. */
         (big_arg || sdsalloc(c->querybuf) < PROTO_IOBUF_LEN)) {
         /* When reading a BIG_ARG we won't be reading more than that one arg
          * into the query buffer, so we don't need to pre-allocate more than we
@@ -3137,7 +3144,7 @@ void readToQueryBuf(client *c) {
     sdsIncrLen(c->querybuf, c->nread);
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
-    if (!is_primary) {
+    if (!is_replication_source) {
         /* The commands cached in the MULTI/EXEC queue have not been executed yet,
          * so they are also considered a part of the query buffer in a broader sense.
          *
@@ -3240,7 +3247,7 @@ sds catClientInfoString(sds s, client *client, int hide_user_data) {
             *p++ = 'S';
     }
 
-    if (client->flag.replication_source) *p++ = 'M';
+    if (client->flag.primary) *p++ = 'M';
     if (client->flag.pubsub) *p++ = 'P';
     if (client->flag.multi) *p++ = 'x';
     if (client->flag.blocked) *p++ = 'b';
@@ -4132,7 +4139,7 @@ void helloCommand(client *c) {
 
     if (!server.sentinel_mode) {
         addReplyBulkCString(c, "role");
-        addReplyBulkCString(c, server.primary ? "replica" : "master");
+        addReplyBulkCString(c, server.primary_host ? "replica" : "master");
     }
 
     addReplyBulkCString(c, "modules");
@@ -4361,13 +4368,15 @@ size_t getClientMemoryUsage(client *c, size_t *output_buffer_mem_usage) {
  * CLIENT_TYPE_REPLICA  -> replica
  * CLIENT_TYPE_PUBSUB -> Client subscribed to Pub/Sub channels
  * CLIENT_TYPE_PRIMARY -> The client representing our replication primary.
+ * CLIENT_TYPE_SLOT_MIGRATION -> The client representing a slot migration.
  */
 int getClientType(client *c) {
-    if (c->flag.replication_source) return CLIENT_TYPE_PRIMARY;
+    if (c->flag.primary) return CLIENT_TYPE_PRIMARY;
     /* Even though MONITOR clients are marked as replicas, we
      * want the expose them as normal clients. */
     if (c->flag.replica && !c->flag.monitor) return CLIENT_TYPE_REPLICA;
     if (c->flag.pubsub) return CLIENT_TYPE_PUBSUB;
+    if (c->flag.slot_migration_source) return CLIENT_TYPE_SLOT_MIGRATION;
     return CLIENT_TYPE_NORMAL;
 }
 
@@ -4382,6 +4391,8 @@ int getClientTypeByName(char *name) {
         return CLIENT_TYPE_PUBSUB;
     else if (!strcasecmp(name, "master") || !strcasecmp(name, "primary"))
         return CLIENT_TYPE_PRIMARY;
+    else if (!strcasecmp(name, "slot-migration"))
+        return CLIENT_TYPE_SLOT_MIGRATION;
     else
         return -1;
 }
@@ -4392,6 +4403,7 @@ char *getClientTypeName(int class) {
     case CLIENT_TYPE_REPLICA: return "slave";
     case CLIENT_TYPE_PUBSUB: return "pubsub";
     case CLIENT_TYPE_PRIMARY: return "master";
+    case CLIENT_TYPE_SLOT_MIGRATION: return "slot-migration";
     default: return NULL;
     }
 }
@@ -4407,9 +4419,9 @@ int checkClientOutputBufferLimits(client *c) {
     unsigned long used_mem = getClientOutputBufferMemoryUsage(c);
 
     class = getClientType(c);
-    /* For the purpose of output buffer limiting, primaries are handled
-     * like normal clients. */
-    if (class == CLIENT_TYPE_PRIMARY) class = CLIENT_TYPE_NORMAL;
+    /* For the purpose of output buffer limiting, primaries and slot migrations
+     * are handled like normal clients. */
+    if (class == CLIENT_TYPE_PRIMARY || class == CLIENT_TYPE_SLOT_MIGRATION) class = CLIENT_TYPE_NORMAL;
 
     /* Note that it doesn't make sense to set the replica clients output buffer
      * limit lower than the repl-backlog-size config (partial sync will succeed
@@ -4892,7 +4904,7 @@ void ioThreadReadQueryFromClient(void *data) {
 done:
     /* Only trim query buffer for non-primary clients
      * Primary client's buffer is handled by main thread using repl_applied position */
-    if (!(c->read_flags & READ_FLAGS_PRIMARY)) {
+    if (!(c->read_flags & READ_FLAGS_REPLICATION_SOURCE)) {
         trimClientQueryBuffer(c);
     }
     atomic_thread_fence(memory_order_release);

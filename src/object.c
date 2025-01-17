@@ -1337,7 +1337,8 @@ struct serverMemOverhead *getMemoryOverheadData(void) {
      * updateClientMemoryUsage(). */
     mh->clients_normal = server.stat_clients_type_memory[CLIENT_TYPE_PRIMARY] +
                          server.stat_clients_type_memory[CLIENT_TYPE_PUBSUB] +
-                         server.stat_clients_type_memory[CLIENT_TYPE_NORMAL];
+                         server.stat_clients_type_memory[CLIENT_TYPE_NORMAL] +
+                         server.stat_clients_type_memory[CLIENT_TYPE_SLOT_MIGRATION];
     mem_total += mh->clients_normal;
 
     mh->cluster_links = server.stat_cluster_links_memory;

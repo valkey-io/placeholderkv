@@ -377,8 +377,12 @@ struct _clusterNode {
 };
 
 typedef enum slotMigrationState {
-    SLOT_MIGRATION_QUEUED,          /* Queued behind some other slot migration. */
-    SLOT_MIGRATION_SYNCING,         /* Syncing contents from current owner. */
+    SLOT_MIGRATION_QUEUED,
+    SLOT_MIGRATION_CONNECTING,
+    SLOT_MIGRATION_REPL_HANDSHAKE,  /* The handshake has it's own state machine,
+                                     * see replicationProceedWithHandshake */
+    SLOT_MIGRATION_SEND_SYNC,
+    SLOT_MIGRATION_RECEIVE_SYNC,
     SLOT_MIGRATION_PAUSE_OWNER,
     SLOT_MIGRATION_WAITING_FOR_OFFSET,
     SLOT_MIGRATION_SYNCING_TO_OFFSET,
@@ -392,13 +396,11 @@ typedef struct slotMigration {
     clusterNode *source_node;
     mstime_t end_time; /* Slot migration time limit (ms unixtime).
                           If not yet in progress (e.g. queued), will be zero. */
-    replicationLink *link;
+    connection *replication_connection; /* Connection for replication. */
+    client *replication_client; /* Client for replication */
+    int replication_handshake_state;
     mstime_t pause_end;
     long long pause_primary_offset;
-    mstime_t vote_end_time;
-    mstime_t vote_retry_time;
-    uint64_t vote_epoch;
-    int auth_count;
 } slotMigration;
 
 /* Struct used for storing slot statistics. */
