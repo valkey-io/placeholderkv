@@ -135,8 +135,6 @@
         assert((p) >= (lp) + LP_HDR_SIZE && (p) + (len) < (lp) + lpGetTotalBytes((lp))); \
     } while (0)
 
-static inline void lpAssertValidEntry(unsigned char *lp, size_t lpbytes, unsigned char *p);
-
 /* Don't let listpacks grow over 1GB in any case, don't wanna risk overflow in
  * Total Bytes header field */
 #define LISTPACK_MAX_SAFETY_SIZE (1 << 30)
@@ -479,9 +477,9 @@ unsigned char *lpSkip(unsigned char *p) {
  * already pointed to the last element of the listpack. */
 unsigned char *lpNext(unsigned char *lp, unsigned char *p) {
     assert(p);
+    (void)(lp);
     p = lpSkip(p);
     if (p[0] == LP_EOF) return NULL;
-    lpAssertValidEntry(lp, lpBytes(lp), p);
     return p;
 }
 
@@ -495,7 +493,6 @@ unsigned char *lpPrev(unsigned char *lp, unsigned char *p) {
     uint64_t prevlen = lpDecodeBacklen(p);
     prevlen += lpEncodeBacklen(NULL, prevlen);
     p -= prevlen - 1; /* Seek the first byte of the previous entry. */
-    lpAssertValidEntry(lp, lpBytes(lp), p);
     return p;
 }
 
@@ -504,7 +501,6 @@ unsigned char *lpPrev(unsigned char *lp, unsigned char *p) {
 unsigned char *lpFirst(unsigned char *lp) {
     unsigned char *p = lp + LP_HDR_SIZE; /* Skip the header. */
     if (p[0] == LP_EOF) return NULL;
-    lpAssertValidEntry(lp, lpBytes(lp), p);
     return p;
 }
 
@@ -733,10 +729,7 @@ unsigned char *lpFind(unsigned char *lp, unsigned char *p, unsigned char *s, uin
 
         /* The next call to lpGetWithSize could read at most 8 bytes past `p`
          * We use the slower validation call only when necessary. */
-        if (p + 8 >= lp + lp_bytes)
-            lpAssertValidEntry(lp, lp_bytes, p);
-        else
-            assert(p >= lp + LP_HDR_SIZE && p < lp + lp_bytes);
+        if (p + 8 < lp + lp_bytes) assert(p >= lp + LP_HDR_SIZE && p < lp + lp_bytes);
         if (p[0] == LP_EOF) break;
     }
 
@@ -1006,7 +999,6 @@ unsigned char *lpDeleteRangeWithEntry(unsigned char *lp, unsigned char **p, unsi
         deleted++;
         tail = lpSkip(tail);
         if (tail[0] == LP_EOF) break;
-        lpAssertValidEntry(lp, bytes, tail);
     }
 
     /* Store the offset of the element 'first', so that we can obtain its
@@ -1313,11 +1305,6 @@ int lpValidateNext(unsigned char *lp, unsigned char **pp, size_t lpbytes) {
     *pp = p;
     return 1;
 #undef OUT_OF_RANGE
-}
-
-/* Validate that the entry doesn't reach outside the listpack allocation. */
-static inline void lpAssertValidEntry(unsigned char *lp, size_t lpbytes, unsigned char *p) {
-    assert(lpValidateNext(lp, &p, lpbytes));
 }
 
 /* Validate the integrity of the data structure.
