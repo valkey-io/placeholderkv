@@ -54,14 +54,15 @@ robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long
     /* Calculate sizes */
     int has_expire = (expire != -1 ||
                       (key != NULL && sdslen(key) >= KEY_SIZE_TO_INCLUDE_EXPIRE_THRESHOLD));
-    size_t key_sds_size = 0;
+    size_t key_sds_len = key != NULL ? sdslen(key) : 0;
+    char key_sds_type = key != NULL ? sdsReqType(key_sds_len) : 0;
+    size_t key_sds_size = key != NULL ? sdsReqSize(key_sds_len, key_sds_type) : 0;
     size_t min_size = sizeof(robj);
     if (has_expire) {
         min_size += sizeof(long long);
     }
     if (key != NULL) {
         /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
-        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
         min_size += 1 + key_sds_size;
     }
     /* Allocate and set the declared fields. */
@@ -83,7 +84,7 @@ robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long
     o->hasexpire = has_expire;
 
     /* The memory after the struct where we embedded data. */
-    unsigned char *data = (void *)(o + 1);
+    char *data = (void *)(o + 1);
 
     /* Set the expire field. */
     if (o->hasexpire) {
@@ -93,7 +94,8 @@ robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long
 
     /* Copy embedded key. */
     if (o->hasembkey) {
-        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        *data = sdsHdrSize(key_sds_type);
+        sdswrite(data + 1, key_sds_size, key_sds_type, key, key_sds_len);
         data += 1 + key_sds_size;
     }
 
@@ -146,18 +148,19 @@ static robj *createEmbeddedStringObjectWithKeyAndExpire(const char *val_ptr,
                                                         const sds key,
                                                         long long expire) {
     /* Calculate sizes */
-    size_t key_sds_size = 0;
+    size_t key_sds_len = key != NULL ? sdslen(key) : 0;
+    char key_sds_type = key != NULL ? sdsReqType(key_sds_len) : 0;
+    size_t key_sds_size = key != NULL ? sdsReqSize(key_sds_len, key_sds_type) : 0;
     size_t min_size = sizeof(robj);
     if (expire != -1) {
         min_size += sizeof(long long);
     }
     if (key != NULL) {
         /* Size of embedded key, incl. 1 byte for prefixed sds hdr size. */
-        key_sds_size = sdscopytobuffer(NULL, 0, key, NULL);
         min_size += 1 + key_sds_size;
     }
     /* Size of embedded value (EMBSTR) including \0 term. */
-    min_size += sizeof(struct sdshdr8) + val_len + 1;
+    min_size += sdsReqSize(val_len, SDS_TYPE_8);
 
     /* Allocate and set the declared fields. */
     size_t bufsize = 0;
@@ -177,7 +180,7 @@ static robj *createEmbeddedStringObjectWithKeyAndExpire(const char *val_ptr,
     }
 
     /* The memory after the struct where we embedded data. */
-    unsigned char *data = (void *)(o + 1);
+    char *data = (void *)(o + 1);
 
     /* Set the expire field. */
     if (o->hasexpire) {
@@ -187,26 +190,16 @@ static robj *createEmbeddedStringObjectWithKeyAndExpire(const char *val_ptr,
 
     /* Copy embedded key. */
     if (o->hasembkey) {
-        sdscopytobuffer(data + 1, key_sds_size, key, data);
+        *data = sdsHdrSize(key_sds_type);
+        sdswrite(data + 1, key_sds_size, key_sds_type, key, key_sds_len);
         data += 1 + key_sds_size;
     }
 
     /* Copy embedded value (EMBSTR). */
-    struct sdshdr8 *sh = (void *)data;
-    sh->flags = SDS_TYPE_8;
-    sh->len = val_len;
-    size_t capacity = bufsize - (min_size - val_len);
-    sh->alloc = capacity;
-    serverAssert(capacity == sh->alloc); /* Overflow check. */
-    if (val_ptr == SDS_NOINIT) {
-        sh->buf[val_len] = '\0';
-    } else if (val_ptr != NULL) {
-        memcpy(sh->buf, val_ptr, val_len);
-        sh->buf[val_len] = '\0';
-    } else {
-        memset(sh->buf, 0, val_len + 1);
-    }
-    o->ptr = sh->buf;
+    size_t sz = bufsize - (data - (char *)(void *)o);
+    size_t remaining_space = bufsize - min_size + sdsReqSize(val_len, SDS_TYPE_8);
+    assert(sz == remaining_space);
+    o->ptr = sdswrite(data, remaining_space, SDS_TYPE_8, val_ptr, val_len);
 
     return o;
 }
