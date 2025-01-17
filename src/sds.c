@@ -206,6 +206,8 @@ size_t sdscopytobuffer(unsigned char *buf, size_t buf_len, const_sds s, uint8_t 
     }
     assert(buf_len >= required_keylen);
     memcpy(buf, sdsAllocPtr(s), required_keylen);
+    /* Store buf size in the sds alloc size field. */
+    sdssetalloc((sds)(buf + sdsHdrSize(s[-1])), buf_len - sdsHdrSize(s[-1]) - 1);
     *hdr_size = sdsHdrSize(s[-1]);
     return required_keylen;
 }
