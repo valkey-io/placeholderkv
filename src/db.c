@@ -101,7 +101,7 @@ void updateLFU(robj *val) {
 robj *lookupKey(serverDb *db, robj *key, int flags) {
     int dict_index = getKVStoreIndexForKey(key->ptr);
     robj *val = dbFindWithDictIndex(db, key->ptr, dict_index);
-    int is_expired = 0;
+    bool is_expired = false;
     if (val) {
         /* Forcing deletion of expired keys on a replica makes the replica
          * inconsistent with the primary. We forbid it on readonly replicas, but
@@ -118,7 +118,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         if (expireIfNeededWithDictIndex(db, key, val, expire_flags, dict_index) != KEY_VALID) {
             /* The key is no longer valid. */
             val = NULL;
-            is_expired = 1;
+            is_expired = true;
         }
     }
 
@@ -1839,13 +1839,16 @@ long long getExpire(serverDb *db, robj *key) {
     return getExpireWithDictIndex(db, key, dict_index);
 }
 
-void deleteExpiredKeyAndPropagateWithDictIndex(serverDb *db, robj *keyobj, int dict_index) {
+void deleteExpiredKeyAndPropagateWithDictIndex(serverDb *db, robj *keyobj, int dict_index, bool lazy) {
     mstime_t expire_latency;
     latencyStartMonitor(expire_latency);
     dbGenericDeleteWithDictIndex(db, keyobj, server.lazyfree_lazy_expire, DB_FLAG_KEY_EXPIRED, dict_index);
     latencyEndMonitor(expire_latency);
     latencyAddSampleIfNeeded("expire-del", expire_latency);
     notifyKeyspaceEvent(NOTIFY_EXPIRED, "expired", keyobj, db->id);
+    if (lazy) {
+        notifyKeyspaceEvent(NOTIFY_LAZY_EXPIRED, "lazyexpired", keyobj, db->id);
+    }
     signalModifiedKey(NULL, db, keyobj);
     propagateDeletion(db, keyobj, server.lazyfree_lazy_expire);
     server.stat_expiredkeys++;
@@ -1854,7 +1857,7 @@ void deleteExpiredKeyAndPropagateWithDictIndex(serverDb *db, robj *keyobj, int d
 /* Delete the specified expired key and propagate expire. */
 void deleteExpiredKeyAndPropagate(serverDb *db, robj *keyobj) {
     int dict_index = getKVStoreIndexForKey(keyobj->ptr);
-    deleteExpiredKeyAndPropagateWithDictIndex(db, keyobj, dict_index);
+    deleteExpiredKeyAndPropagateWithDictIndex(db, keyobj, dict_index, false);
 }
 
 /* Delete the specified expired key from overwriting and propagate the DEL or UNLINK. */
@@ -2014,7 +2017,7 @@ static keyStatus expireIfNeededWithDictIndex(serverDb *db, robj *key, robj *val,
         key = createStringObject(key->ptr, sdslen(key->ptr));
     }
     /* Delete the key */
-    deleteExpiredKeyAndPropagateWithDictIndex(db, key, dict_index);
+    deleteExpiredKeyAndPropagateWithDictIndex(db, key, dict_index, true);
     if (static_key) {
         decrRefCount(key);
     }

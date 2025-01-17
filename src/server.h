@@ -632,6 +632,7 @@ typedef enum {
 #define NOTIFY_LOADED (1 << 12)   /* module only key space notification, indicate a key loaded from rdb */
 #define NOTIFY_MODULE (1 << 13)   /* d, module key space notification */
 #define NOTIFY_NEW (1 << 14)      /* n, new key notification */
+#define NOTIFY_LAZY_EXPIRED (1 << 15) /* X, lazy expire key notification */
 #define NOTIFY_ALL                                                                                            \
     (NOTIFY_GENERIC | NOTIFY_STRING | NOTIFY_LIST | NOTIFY_SET | NOTIFY_HASH | NOTIFY_ZSET | NOTIFY_EXPIRED | \
      NOTIFY_EVICTED | NOTIFY_STREAM | NOTIFY_MODULE) /* A flag */
