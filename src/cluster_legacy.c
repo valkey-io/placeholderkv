@@ -2503,7 +2503,7 @@ void clusterSetNodeAsPrimary(clusterNode *n) {
  * The 'sender' is the node for which we received a configuration update.
  * Sometimes it is not actually the "Sender" of the information, like in the
  * case we receive the info via an UPDATE packet. */
-void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoch, unsigned char *slots) {
+void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoch, slotBitmap slots) {
     int j;
     clusterNode *cur_primary = NULL, *new_primary = NULL;
     /* The dirty slots list is a list of slots for which we lose the ownership
@@ -2572,9 +2572,13 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
                 }
 
                 /* Was this slot mine and it was in a paused state for slot
-                 * migration? If so, clear the manual failover state. */
-                if (server.cluster->slots[j] == myself && server.cluster->mf_end && server.cluster->mf_replica == sender) {
-                    resetManualFailover();
+                 * migration? If so, mark the move as done. */
+                if (server.cluster->slots[j] == myself && server.cluster->mf_end && server.cluster->mf_slots_target == sender) {
+                    bitmapClearBit(server.cluster->mf_slots, j);
+                    if (isSlotBitmapEmpty(server.cluster->mf_slots)) {
+                        serverLog(LL_NOTICE, "Slot migration to node %s (%s) has finished. Unpausing myself.", server.cluster->mf_slots_target->name, server.cluster->mf_slots_target->human_nodename);
+                        resetManualFailover();
+                    }
                 }
 
                 /* If the sender who claims this slot is not in the same shard,
@@ -3252,7 +3256,7 @@ int clusterProcessPacket(clusterLink *link) {
                       "primary manual failover: %lld",
                       server.cluster->mf_primary_offset);
         }
-        /* If we are a importing a slot and the slot owner sent its offset
+        /* If we are importing a slot and the slot owner sent its offset
          * while already paused, populate the migration state. */
         slotMigration * curr_migration = clusterGetCurrentSlotMigration();
         if (hdr->mflags[0] & CLUSTERMSG_FLAG0_PAUSED && curr_migration != NULL &&
@@ -3729,11 +3733,12 @@ int clusterProcessPacket(clusterLink *link) {
         /* Initialize the slot migration state accordingly */
         resetManualFailover();
         server.cluster->mf_end = now + CLUSTER_MF_TIMEOUT;
-        server.cluster->mf_replica = sender;
+        server.cluster->mf_slots_target = sender;
+        memcpy(server.cluster->mf_slots, hdr->data.slot_migration.msg.slot_bitmap, sizeof(slotBitmap));
         /* TODO(murphyjacob4) pause subset of slots */
         pauseActions(PAUSE_DURING_FAILOVER, now + (CLUSTER_MF_TIMEOUT * CLUSTER_MF_PAUSE_MULT),
                      PAUSE_ACTIONS_CLIENT_WRITE_SET);
-        serverLog(LL_NOTICE, "Slot migration requested by node %.40s (%s).", sender->name, sender->human_nodename);
+        serverLog(LL_NOTICE, "Slot migration requested by node %.40s (%s). Pausing myself to allow slot takeover.", sender->name, sender->human_nodename);
         /* We need to send a ping message to the replica, as it would carry
          * `server.cluster->mf_primary_offset`, which means the primary paused clients
          * at offset `server.cluster->mf_primary_offset`, so that the replica would
@@ -5281,7 +5286,7 @@ void manualFailoverCanStart(void) {
  * The function can be used both to initialize the manual failover state at
  * startup or to abort a manual failover in progress. */
 void resetManualFailover(void) {
-    if (server.cluster->mf_replica) {
+    if (server.cluster->mf_replica || server.cluster->mf_slots_target) {
         /* We were a primary failing over, so we paused clients and related actions.
          * Regardless of the outcome we unpause now to allow traffic again. */
         unpauseActions(PAUSE_DURING_FAILOVER);
@@ -5290,6 +5295,8 @@ void resetManualFailover(void) {
     server.cluster->mf_can_start = 0;
     server.cluster->mf_replica = NULL;
     server.cluster->mf_primary_offset = -1;
+    memset(server.cluster->mf_slots, 0, sizeof(server.cluster->mf_slots));
+    server.cluster->mf_slots_target = NULL;
 }
 
 /* If a manual failover timed out, abort it. */
@@ -7370,19 +7377,18 @@ int clusterCommandSpecial(client *c) {
             return 1;
         }
         if (c->argc < 5 || strcasecmp(c->argv[2]->ptr, "slotsrange")) {
-            addReplyError(c, "Migrate command requires at least one ");
+            addReplyError(c, "Migrate command requires at least one slot range");
             return 1;
         }
-        unsigned char requested_slots[CLUSTER_SLOTS/8];
-        memset(requested_slots, 0, sizeof(requested_slots));
+        if (c->argc % 2 == 0) {
+            addReplyError(c, "Invalid SLOTSRANGE, missing end slot");
+            return 1;
+        }
+        slotBitmap requested_slots;
+        memset(requested_slots, 0, sizeof(slotBitmap));
         int i;
         clusterNode * curr_owner = NULL;
         for (i = 3; i + 1 < c->argc; i+=2) {
-            if (i > 3 && getLongLongFromObject(c->argv[i], NULL) != C_OK) {
-                /* If we find a non-integer in the args and we have already
-                 * parsed >=1 slot range, we assume it is the next token. */
-                break;
-            }
             int start = getSlotOrReply(c, c->argv[i]);
             if (start < 0) {
                 return 1;

@@ -340,7 +340,7 @@ struct _clusterNode {
     char shard_id[CLUSTER_NAMELEN];         /* shard id, hex string, sha1-size */
     int flags;                              /* CLUSTER_NODE_... */
     uint64_t configEpoch;                   /* Last configEpoch observed for this node */
-    unsigned char slots[CLUSTER_SLOTS / 8]; /* slots handled by this node */
+    slotBitmap slots;                       /* slots handled by this node */
     uint16_t *slot_info_pairs;              /* Slots info represented as (start/end) pair (consecutive index). */
     int slot_info_pairs_count;              /* Used number of slots in slot_info_pairs */
     int numslots;                           /* Number of slots handled by this node */
@@ -441,6 +441,9 @@ struct clusterState {
                                    or -1 if still not received. */
     int mf_can_start;            /* If non-zero signal that the manual failover
                                     can start requesting primary vote. */
+    /* Manual failover state for slot migration */
+    slotBitmap mf_slots; /* Slots in migration. */
+    clusterNode *mf_slots_target;
     /* The following fields are used by primaries to take state on elections. */
     uint64_t lastVoteEpoch; /* Epoch of the last vote granted. */
     int todo_before_sleep;  /* Things to do in clusterBeforeSleep(). */
@@ -458,7 +461,7 @@ struct clusterState {
      * the ownership transfer. Set the bit corresponding to the slot when a node
      * stops claiming the slot. This prevents spreading incorrect information (that
      * source still owns the slot) using UPDATE messages. */
-    unsigned char owner_not_claiming_slot[CLUSTER_SLOTS / 8];
+    slotBitmap owner_not_claiming_slot;
     /* Struct used for storing slot statistics, for all slots owned by the current shard. */
     slotStat slot_stats[CLUSTER_SLOTS];
     list *slot_migrations; /* Queue of ongoing slot migrations. */

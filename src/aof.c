@@ -2204,7 +2204,7 @@ int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
     kvstoreIterator *kvs_it = NULL;
 
     /* Record timestamp at the beginning of rewriting AOF. */
-    if (server.aof_timestamp_enabled && !slot_bitmap) {
+    if (server.aof_timestamp_enabled && (slot_bitmap == NULL || isSlotBitmapEmpty(slot_bitmap))) {
         sds ts = genAofTimestampAnnotationIfNeeded(1);
         if (rioWrite(aof, ts, sdslen(ts)) == 0) {
             sdsfree(ts);
@@ -2224,7 +2224,7 @@ int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
         if (rioWrite(aof, selectcmd, sizeof(selectcmd) - 1) == 0) goto werr;
         if (rioWriteBulkLongLong(aof, j) == 0) goto werr;
 
-        if (!slot_bitmap) {
+        if (slot_bitmap == NULL || isSlotBitmapEmpty(slot_bitmap)) {
             kvs_it = kvstoreIteratorInit(db->keys);
         } else {
             kvs_it = kvstoreFilteredIteratorInit(db->keys, &shouldFilterSlot, slot_bitmap);

@@ -3768,6 +3768,8 @@ void syncWithPrimary(connection *conn) {
         } else if (server.repl_state == REPL_STATE_ERROR) {
             goto error;
         }
+        if (server.repl_state != REPL_STATE_SEND_PSYNC)
+            return;
     }
 
     /* Try a partial resynchronization. If we don't have a cached primary
@@ -3908,6 +3910,7 @@ error:
     server.repl_transfer_tmpfile = NULL;
     server.repl_transfer_fd = -1;
     server.repl_state = REPL_STATE_CONNECT;
+    return;
 
 write_error: /* Handle sendCommand() errors. */
     serverLog(LL_WARNING, "Sending command to primary in replication handshake: %s", err);
