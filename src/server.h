@@ -3915,7 +3915,7 @@ void debugPauseProcess(void);
 /* dualChannelServerLog - Log messages related to dual-channel operations
  * This macro wraps the serverLog function, prepending "<Dual Channel>"
  * to the log message. */
-#define dualChannelServerLog(level, ...) serverLog(level, "<Dual Channel> " __VA_ARGS__)
+#define dualChannelServerLog(level, ...) serverLog(level, "Dual channel replication: " __VA_ARGS__)
 
 #define serverDebug(fmt, ...) printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define serverDebugMark() printf("-- MARK %s:%d --\n", __FILE__, __LINE__)
