@@ -109,7 +109,7 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value) {
         size_t value_buf_size = buf_size - field_size - 1;
         sdscopytobuffer(buf + field_size + 1, value_buf_size, value, buf + field_size);
         /* Unused space in the field sds is zero. We use this to encode that the
-         * entry is an embedded-value entry. For sds5, there is no usused space,
+         * entry is an embedded-value entry. For sds5, there is no unused space,
          * which is why the value of ENTRY_ENC_EMB_VALUE was chosen to be 0. */
         serverAssert(entryGetEncoding(embedded_field_sds) == ENTRY_ENC_EMB_VALUE);
         sdsfree(value);
@@ -147,20 +147,18 @@ sds hashTypeEntryGetField(const hashTypeEntry *entry) {
 
 sds hashTypeEntryGetValue(const hashTypeEntry *entry) {
     switch (entryGetEncoding(entry)) {
-    case ENTRY_ENC_EMB_VALUE:
-        {
-            /* To find the embedded value sds content, skip field, field null
-             * term, value hdr_size and hdr. */
-            size_t offset = sdslen(entry) + 1;
-            char *buf = (char *)entry + offset;
-            char hdr_size = buf[0];
-            return buf + 1 + hdr_size;
-        }
-    case ENTRY_ENC_PTR_VALUE:
-        {
-            const hashTypeEntryPtrValue *entry_struct = getEntryStruct(entry);
-            return entry_struct->value;
-        }
+    case ENTRY_ENC_EMB_VALUE: {
+        /* To find the embedded value sds content, skip field, field null term,
+         * value hdr_size and hdr. */
+        size_t offset = sdslen(entry) + 1;
+        char *buf = (char *)entry + offset;
+        char hdr_size = buf[0];
+        return buf + 1 + hdr_size;
+    }
+    case ENTRY_ENC_PTR_VALUE: {
+        const hashTypeEntryPtrValue *entry_struct = getEntryStruct(entry);
+        return entry_struct->value;
+    }
     default:
         serverPanic("Unknown type");
     }
@@ -182,14 +180,13 @@ static void *hashTypeEntryAllocPtr(hashTypeEntry *entry) {
  * reallocated). */
 static hashTypeEntry *hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value) {
     switch (entryGetEncoding(entry)) {
-    case ENTRY_ENC_EMB_VALUE:
-        {
-            /* TODO: Reuse existing allocation if possible. */
-            hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value);
-            freeHashTypeEntry(entry);
-            return new_entry;
-        }
-    case ENTRY_ENC_PTR_VALUE:
+    case ENTRY_ENC_EMB_VALUE: {
+        /* TODO: Reuse existing allocation if possible. */
+        hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value);
+        freeHashTypeEntry(entry);
+        return new_entry;
+    }
+    case ENTRY_ENC_PTR_VALUE: {
         if (canUseEmbeddedValueEntry(hashTypeEntryGetField(entry), value)) {
             /* Convert to entry with embedded value. */
             hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value);
@@ -202,6 +199,7 @@ static hashTypeEntry *hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value)
             entry_struct->value = value;
             return entry;
         }
+    }
     default:
         serverPanic("Unknown type");
     }
@@ -213,11 +211,10 @@ size_t hashTypeEntryAllocSize(hashTypeEntry *entry) {
     switch (entryGetEncoding(entry)) {
     case ENTRY_ENC_EMB_VALUE:
         return zmalloc_usable_size(sdsAllocPtr(entry));
-    case ENTRY_ENC_PTR_VALUE:
-        {
-            hashTypeEntryPtrValue *entry_struct = getEntryStruct(entry);
-            return zmalloc_usable_size(entry_struct) + sdsAllocSize(entry_struct->value);
-        }
+    case ENTRY_ENC_PTR_VALUE: {
+        hashTypeEntryPtrValue *entry_struct = getEntryStruct(entry);
+        return zmalloc_usable_size(entry_struct) + sdsAllocSize(entry_struct->value);
+    }
     default:
         serverPanic("Unknown type");
     }
@@ -235,13 +232,14 @@ hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void 
     switch (entryGetEncoding(entry)) {
     case ENTRY_ENC_EMB_VALUE:
         break;
-    case ENTRY_ENC_PTR_VALUE:
-        {
-            hashTypeEntryPtrValue *entry_struct = alloc_ptr;
-            sds new_value = sdsdefragfn(entry_struct->value);
-            if (new_value) entry_struct->value = new_value;
-        }
+    case ENTRY_ENC_PTR_VALUE: {
+        hashTypeEntryPtrValue *entry_struct = alloc_ptr;
+        sds new_value = sdsdefragfn(entry_struct->value);
+        if (new_value) entry_struct->value = new_value;
         break;
+    }
+    default:
+        serverPanic("Unknown type");
     }
     return defragfn(alloc_ptr);
 }
