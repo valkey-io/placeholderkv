@@ -143,11 +143,7 @@ tags {"needs:debug"} {
 } ;# tag
 
     test {LATENCY of expire events are correctly collected} {
-<<<<<<< Updated upstream
-        r config set latency-monitor-threshold 5
-=======
-        r config set latency-monitor-threshold 2
->>>>>>> Stashed changes
+        r config set latency-monitor-threshold 1
         r config set lazyfree-lazy-expire no
         r flushdb
         if {$::valgrind} {set count 100000} else {set count 1000000}
