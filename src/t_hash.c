@@ -29,6 +29,7 @@
 
 #include "server.h"
 #include <math.h>
+#include <stdbool.h>
 
 /*-----------------------------------------------------------------------------
  * Hash Entry API
