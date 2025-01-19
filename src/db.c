@@ -258,7 +258,7 @@ int getKeySlot(sds key) {
      * so we must always recompute the slot for commands coming from the primary.
      */
     if (server.current_client && server.current_client->slot >= 0 && server.current_client->flag.executing_command &&
-        !server.current_client->flag.primary) {
+        !server.current_client->flag.replicated) {
         debugServerAssertWithInfo(server.current_client, NULL,
                                   (int)keyHashSlot(key, (int)sdslen(key)) == server.current_client->slot);
         return server.current_client->slot;
@@ -267,7 +267,7 @@ int getKeySlot(sds key) {
     /* For the case of replicated commands from primary, getNodeByQuery() never gets called,
      * and thus c->slot never gets populated. That said, if this command ends up accessing a key,
      * we are able to backfill c->slot here, where the key's hash calculation is made. */
-    if (server.current_client && server.current_client->flag.primary) {
+    if (server.current_client && server.current_client->flag.replicated) {
         server.current_client->slot = slot;
     }
     return slot;

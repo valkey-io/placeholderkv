@@ -49,6 +49,7 @@
 void replicationDiscardCachedPrimary(void);
 void replicationResurrectCachedPrimary(connection *conn);
 void replicationResurrectProvisionalPrimary(void);
+void replicationSendAck(void);
 int replicaPutOnline(client *replica);
 void replicaStartCommandStream(client *replica);
 int cancelReplicationHandshake(int reconnect);
@@ -951,7 +952,7 @@ need_full_resync:
  *    started.
  *
  * Returns C_OK on success or C_ERR otherwise. */
-int startBgsaveForReplication(int mincapa, int req, slotBitmap slot_bitmap) {
+int startBgsaveForReplication(int mincapa, int req) {
     int retval;
     int socket_target = 0;
     listIter li;
@@ -960,14 +961,13 @@ int startBgsaveForReplication(int mincapa, int req, slotBitmap slot_bitmap) {
     /* We use a socket target if replica can handle the EOF marker and we're configured to do diskless syncs.
      * Note that in case we're creating a "filtered" RDB (functions-only, for example) we also force socket replication
      * to avoid overwriting the snapshot RDB file with filtered data. */
-    socket_target = (server.repl_diskless_sync || req & REPLICA_REQ_RDB_MASK) && (mincapa & REPLICA_CAPA_EOF || req & REPLICA_REQ_AOF_FORMAT);
+    socket_target = (server.repl_diskless_sync || req & REPLICA_REQ_RDB_MASK) && (mincapa & REPLICA_CAPA_EOF);
     /* `SYNC` should have failed with error if we don't support socket and require a filter, assert this here */
     serverAssert(socket_target || !(req & REPLICA_REQ_RDB_MASK));
 
-    serverLog(LL_NOTICE, "Starting BGSAVE for SYNC with target: %s using: %s with format: %s",
+    serverLog(LL_NOTICE, "Starting BGSAVE for SYNC with target: %s using: %s",
               socket_target ? "replicas sockets" : "disk",
-              (req & REPLICA_REQ_RDB_CHANNEL) ? "dual-channel" : "normal sync",
-              (req & REPLICA_REQ_AOF_FORMAT) ? "AOF" : "RDB");
+              (req & REPLICA_REQ_RDB_CHANNEL) ? "dual-channel" : "normal sync");
 
     rdbSaveInfo rsi, *rsiptr;
     rsiptr = rdbPopulateSaveInfo(&rsi);
@@ -975,7 +975,7 @@ int startBgsaveForReplication(int mincapa, int req, slotBitmap slot_bitmap) {
      * otherwise replica will miss repl-stream-db. */
     if (rsiptr) {
         if (socket_target)
-            retval = rdbSaveToReplicasSockets(req, rsiptr, slot_bitmap);
+            retval = rdbSaveToReplicasSockets(req, rsiptr);
         else {
             /* Keep the page cache since it'll get used soon */
             retval = rdbSaveBackground(req, server.rdb_filename, rsiptr, RDBFLAGS_REPLICATION | RDBFLAGS_KEEP_CACHE);
@@ -1193,7 +1193,7 @@ void syncCommand(client *c) {
          * capabilities of the replica that triggered the current BGSAVE
          * and its exact requirements. */
         if (ln && ((c->repl_data->replica_capa & replica->repl_data->replica_capa) == replica->repl_data->replica_capa) &&
-            c->repl_data->replica_req == replica->repl_data->replica_req && isSlotBitmapEmpty(c->repl_data->slot_bitmap)) {
+            c->repl_data->replica_req == replica->repl_data->replica_req) {
             /* Perfect, the server is already registering differences for
              * another replica. Set the right state, and copy the buffer.
              * We don't copy buffer if clients don't want. */
@@ -1215,7 +1215,7 @@ void syncCommand(client *c) {
 
         /* CASE 3: There is no BGSAVE is in progress. */
     } else {
-        if (server.repl_diskless_sync && (c->repl_data->replica_capa & REPLICA_CAPA_EOF) && server.repl_diskless_sync_delay && isSlotBitmapEmpty(c->repl_data->slot_bitmap)) {
+        if (server.repl_diskless_sync && (c->repl_data->replica_capa & REPLICA_CAPA_EOF) && server.repl_diskless_sync_delay) {
             /* Diskless replication RDB child is created inside
              * replicationCron() since we want to delay its start a
              * few seconds to wait for more replicas to arrive. */
@@ -1224,7 +1224,7 @@ void syncCommand(client *c) {
             /* We don't have a BGSAVE in progress, let's start one. Diskless
              * or disk-based mode is determined by replica's capacity. */
             if (!hasActiveChildProcess()) {
-                startBgsaveForReplication(c->repl_data->replica_capa, c->repl_data->replica_req, c->repl_data->slot_bitmap);
+                startBgsaveForReplication(c->repl_data->replica_capa, c->repl_data->replica_req);
             } else {
                 serverLog(LL_NOTICE, "No BGSAVE in progress, but another BG operation is active. "
                                      "BGSAVE for replication delayed");
@@ -1254,7 +1254,6 @@ int anyOtherReplicaWaitRdb(client *except_me) {
 void initClientReplicationData(client *c) {
     if (c->repl_data) return;
     c->repl_data = (ClientReplicationData *)zcalloc(sizeof(ClientReplicationData));
-    memset(c->repl_data->slot_bitmap, 0, sizeof(c->repl_data->slot_bitmap));
 }
 
 void freeClientReplicationData(client *c) {
@@ -1421,7 +1420,7 @@ void replconfCommand(client *c) {
         } else if (!strcasecmp(c->argv[j]->ptr, "getack")) {
             /* REPLCONF GETACK is used in order to request an ACK ASAP
              * to the replica. */
-            if (server.primary_host && server.primary) replicationSendAck(server.primary);
+            if (server.primary_host && server.primary) replicationSendAck();
             return;
         } else if (!strcasecmp(c->argv[j]->ptr, "rdb-only")) {
             /* REPLCONF RDB-ONLY is used to identify the client only wants
@@ -1492,41 +1491,6 @@ void replconfCommand(client *c) {
                 return;
             }
             c->repl_data->associated_rdb_client_id = (uint64_t)client_id;
-        } else if (!strcasecmp(c->argv[j]->ptr, "slot-bitmap")) {
-            /* REPLCONF slot-bitmap <slot-bitmap> is used to filter the replication stream to just a set number of slots. */
-            if (!server.cluster_enabled) {
-                addReplyError(c, "Cannot replicate a slot when cluster mode is disabled");
-            }
-            if (stringObjectLen(c->argv[j + 1]) != sizeof(slotBitmap)) {
-                addReplyError(c, "Invalid slot bitmap length");
-                return;
-            }
-            for (int slot = 0; slot <= CLUSTER_SLOTS; slot++) {
-                if (bitmapTestBit(c->argv[j + 1]->ptr, slot) && server.cluster->slots[slot] != server.cluster->myself) {
-                    addReplyErrorFormat(c, "I cannot replicate slot %d since I do not own it", slot);
-                    return;
-                }
-            }
-            memcpy(c->repl_data->slot_bitmap, c->argv[j + 1]->ptr, sizeof(slotBitmap));
-
-            /* For now, we only support AOF for slot transfer. */
-            c->repl_data->replica_req |= REPLICA_REQ_AOF_FORMAT;
-        } else if (!strcasecmp(c->argv[j]->ptr, "aof-payload-end")) {
-            /* REPLCONF aof-payload-end <offset> is used to inform the target
-             * that the replication source has finished sending the AOF formatted
-             * sync snapshot, and that it is free to begin processing the
-             * replication backlog. */
-            long long initial_offset = 0;
-            if (getLongLongFromObjectOrReply(c, c->argv[j + 1], &initial_offset, NULL) != C_OK) {
-                return;
-            }
-            if (c->flag.slot_migration_source) {
-                clusterSlotMigrationDoneSyncing(initial_offset);
-                return;
-            }
-            /* Right now, we only support this for slot migration. */
-            addReplyErrorFormat(c, "AOF sync is not in progress.");
-            return;
         } else {
             addReplyErrorFormat(c, "Unrecognized REPLCONF option: %s", (char *)c->argv[j]->ptr);
             return;
@@ -2019,7 +1983,7 @@ void replicationCreatePrimaryClientWithHandler(connection *conn, int dbid, Conne
      * connection. */
     server.primary->flag.primary = 1;
     server.primary->flag.authenticated = 1;
-    server.primary->flag.replication_source = 1;
+    server.primary->flag.replicated = 1;
 
     /* Allocate a private query buffer for the primary client instead of using the shared query buffer.
      * This is done because the primary's query buffer data needs to be preserved for my sub-replicas to use. */
@@ -2517,7 +2481,7 @@ void readSyncBulkPayload(connection *conn) {
         server.repl_state = REPL_STATE_CONNECTED;
         server.repl_down_since = 0;
         /* Send the initial ACK immediately to put this replica in online state. */
-        replicationSendAck(server.primary);
+        replicationSendAck();
     }
 
     /* Fire the primary link modules event. */
@@ -3060,7 +3024,7 @@ void dualChannelSyncSuccess(void) {
     dualChannelServerLog(LL_NOTICE, "Successfully streamed replication data into memory");
     /* We can resume reading from the primary connection once the local replication buffer has been loaded. */
     replicationSteadyStateInit();
-    replicationSendAck(server.primary); /* Send ACK to notify primary that replica is synced */
+    replicationSendAck(); /* Send ACK to notify primary that replica is synced */
     server.rdb_client_id = -1;
     server.repl_rdb_channel_state = REPL_DUAL_CHANNEL_STATE_NONE;
 }
@@ -3445,229 +3409,6 @@ void dualChannelSetupMainConnForPsync(connection *conn) {
     sdsfree(err);
 }
 
-int replicationProceedWithHandshake(connection *conn, int curr_state, slotBitmap slot_bitmap) {
-    char *err = NULL;
-
-    /* Check for errors in the socket: after a non blocking connect() we
-     * may find that the socket is in error state. */
-    if (connGetState(conn) != CONN_STATE_CONNECTED) {
-        serverLog(LL_WARNING, "Error condition on socket for SYNC: %s", connGetLastError(conn));
-        goto error;
-    }
-
-    /* Send a PING to check the primary is able to reply without errors. */
-    if (curr_state == REPL_STATE_CONNECTING) {
-        serverLog(LL_NOTICE, "Non blocking connect for SYNC fired the event.");
-        /* Send the PING, don't check for errors at all, we have the timeout
-         * that will take care about this. */
-        err = sendCommand(conn, "PING", NULL);
-        if (err) goto write_error;
-        return REPL_STATE_RECEIVE_PING_REPLY;
-    }
-        /* Receive the PONG command. */
-    if (curr_state == REPL_STATE_RECEIVE_PING_REPLY) {
-        err = receiveSynchronousResponse(conn);
-
-        /* The primary did not reply */
-        if (err == NULL) goto no_response_error;
-
-        /* We accept only two replies as valid, a positive +PONG reply
-         * (we just check for "+") or an authentication error.
-         * Note that older versions of Redis OSS replied with "operation not
-         * permitted" instead of using a proper error code, so we test
-         * both. */
-        if (err[0] != '+' && strncmp(err, "-NOAUTH", 7) != 0 && strncmp(err, "-NOPERM", 7) != 0 &&
-            strncmp(err, "-ERR operation not permitted", 28) != 0) {
-            serverLog(LL_WARNING, "Error reply to PING from primary: '%s'", err);
-            sdsfree(err);
-            goto error;
-        } else {
-            serverLog(LL_NOTICE, "Primary replied to PING, replication can continue...");
-        }
-        sdsfree(err);
-        err = NULL;
-        curr_state = REPL_STATE_SEND_HANDSHAKE;
-    }
-
-    if (curr_state == REPL_STATE_SEND_HANDSHAKE) {
-        /* AUTH with the primary if required. */
-        if (server.primary_auth) {
-            char *args[3] = {"AUTH", NULL, NULL};
-            size_t lens[3] = {4, 0, 0};
-            int argc = 1;
-            if (server.primary_user) {
-                args[argc] = server.primary_user;
-                lens[argc] = strlen(server.primary_user);
-                argc++;
-            }
-            args[argc] = server.primary_auth;
-            lens[argc] = sdslen(server.primary_auth);
-            argc++;
-            err = sendCommandArgv(conn, argc, args, lens);
-            if (err) goto write_error;
-        }
-
-        /* Set the replica port, so that primary's INFO command can list the
-         * replica listening port correctly. */
-        {
-            sds portstr = getReplicaPortString();
-            err = sendCommand(conn, "REPLCONF", "listening-port", portstr, NULL);
-            sdsfree(portstr);
-            if (err) goto write_error;
-        }
-
-        /* Set the replica ip, so that primary's INFO command can list the
-         * replica IP address port correctly in case of port forwarding or NAT.
-         * Skip REPLCONF ip-address if there is no replica-announce-ip option set. */
-        if (server.replica_announce_ip) {
-            err = sendCommand(conn, "REPLCONF", "ip-address", server.replica_announce_ip, NULL);
-            if (err) goto write_error;
-        }
-
-        /* Set the slot bitmap, so that the primary only provides us with the appropriate slot dictionary. */
-        if (slot_bitmap != NULL && !isSlotBitmapEmpty(slot_bitmap)) {
-            char *argv[3] = {"REPLCONF", "slot-bitmap", NULL};
-            size_t lens[3] = {8, 11, 0};
-            argv[2] = (char *)slot_bitmap;
-            lens[2] = sizeof(slotBitmap);
-            err = sendCommandArgv(conn, 3, argv, lens);
-            if (err) goto write_error;
-        }
-
-        /* Inform the primary of our (replica) capabilities.
-         *
-         * EOF: supports EOF-style RDB transfer for diskless replication.
-         * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
-         *
-         * The primary will ignore capabilities it does not understand. */
-        err = sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2",
-                          server.dual_channel_replication ? "capa" : NULL,
-                          server.dual_channel_replication ? "dual-channel" : NULL, NULL);
-        if (err) goto write_error;
-
-        /* Inform the primary of our (replica) version. */
-        err = sendCommand(conn, "REPLCONF", "version", VALKEY_VERSION, NULL);
-        if (err) goto write_error;
-
-        return REPL_STATE_RECEIVE_AUTH_REPLY;
-    }
-
-    if (curr_state == REPL_STATE_RECEIVE_AUTH_REPLY && !server.primary_auth)
-        curr_state = REPL_STATE_RECEIVE_PORT_REPLY;
-
-    /* Receive AUTH reply. */
-    if (curr_state == REPL_STATE_RECEIVE_AUTH_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        if (err[0] == '-') {
-            serverLog(LL_WARNING, "Unable to AUTH to PRIMARY: %s", err);
-            sdsfree(err);
-            goto error;
-        }
-        sdsfree(err);
-        err = NULL;
-        return REPL_STATE_RECEIVE_PORT_REPLY;
-    }
-
-    /* Receive REPLCONF listening-port reply. */
-    if (curr_state == REPL_STATE_RECEIVE_PORT_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        /* Ignore the error if any, not all the Redis OSS versions support
-         * REPLCONF listening-port. */
-        if (err[0] == '-') {
-            serverLog(LL_NOTICE,
-                      "(Non critical) Primary does not understand "
-                      "REPLCONF listening-port: %s",
-                      err);
-        }
-        sdsfree(err);
-        return REPL_STATE_RECEIVE_IP_REPLY;
-    }
-
-    if (curr_state == REPL_STATE_RECEIVE_IP_REPLY && !server.replica_announce_ip)
-        curr_state = REPL_STATE_RECEIVE_SLOT_REPLY;
-
-    /* Receive REPLCONF ip-address reply. */
-    if (curr_state == REPL_STATE_RECEIVE_IP_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        /* Ignore the error if any, not all the Redis OSS versions support
-         * REPLCONF ip-address. */
-        if (err[0] == '-') {
-            serverLog(LL_NOTICE,
-                      "(Non critical) Primary does not understand "
-                      "REPLCONF ip-address: %s",
-                      err);
-        }
-        sdsfree(err);
-        return REPL_STATE_RECEIVE_SLOT_REPLY;
-    }
-
-    if (curr_state == REPL_STATE_RECEIVE_SLOT_REPLY && (slot_bitmap == NULL || isSlotBitmapEmpty(slot_bitmap)))
-        curr_state = REPL_STATE_RECEIVE_CAPA_REPLY;
-
-    if (curr_state == REPL_STATE_RECEIVE_SLOT_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        /* If we sent the slot bitmap, we need it to be properly acked, or we can't do slot migration. */
-        if (err[0] == '-') {
-            serverLog(LL_WARNING, "Source does not understand REPLCONF slot-num. Cannot continue with slot-level sync: %s", err);
-            sdsfree(err);
-            goto error;
-        }
-        sdsfree(err);
-        return REPL_STATE_RECEIVE_CAPA_REPLY;
-    }
-
-
-    /* Receive CAPA reply. */
-    if (curr_state == REPL_STATE_RECEIVE_CAPA_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        /* Ignore the error if any, not all the Redis OSS versions support
-         * REPLCONF capa. */
-        if (err[0] == '-') {
-            serverLog(LL_NOTICE,
-                      "(Non critical) Primary does not understand "
-                      "REPLCONF capa: %s",
-                      err);
-        }
-        sdsfree(err);
-        err = NULL;
-        return REPL_STATE_RECEIVE_VERSION_REPLY;
-    }
-
-    /* Receive VERSION reply. */
-    if (curr_state == REPL_STATE_RECEIVE_VERSION_REPLY) {
-        err = receiveSynchronousResponse(conn);
-        if (err == NULL) goto no_response_error;
-        /* Ignore the error if any. Valkey >= 8 supports REPLCONF VERSION. */
-        if (err[0] == '-') {
-            serverLog(LL_NOTICE,
-                      "(Non critical) Primary does not understand "
-                      "REPLCONF VERSION: %s",
-                      err);
-        }
-        sdsfree(err);
-        err = NULL;
-        return REPL_STATE_SEND_PSYNC;
-    }
-
-
-no_response_error: /* Handle receiveSynchronousResponse() error when primary has no reply */
-    serverLog(LL_WARNING, "Primary did not respond to command during SYNC handshake");
-    /* Fall through to regular error handling */
-
-error:
-    return REPL_STATE_ERROR;
-
-write_error: /* Handle sendCommand() errors. */
-    serverLog(LL_WARNING, "Sending command to primary in replication handshake: %s", err);
-    sdsfree(err);
-    goto error;
-}
-
 /*
  * Dual channel for full sync
  *
@@ -3757,19 +3498,194 @@ void syncWithPrimary(connection *conn) {
         return;
     }
 
-    if (server.repl_state < REPL_STATE_SEND_PSYNC) {
-        server.repl_state = replicationProceedWithHandshake(conn, server.repl_state, NULL);
+    /* Check for errors in the socket: after a non blocking connect() we
+     * may find that the socket is in error state. */
+    if (connGetState(conn) != CONN_STATE_CONNECTED) {
+        serverLog(LL_WARNING, "Error condition on socket for SYNC: %s", connGetLastError(conn));
+        goto error;
+    }
 
-        if (server.repl_state == REPL_STATE_RECEIVE_PING_REPLY) {
-            /* Delete the writable event so that the readable event remains
-            * registered and we can wait for the PONG reply. */
-            connSetReadHandler(conn, syncWithPrimary);
-            connSetWriteHandler(conn, NULL);
-        } else if (server.repl_state == REPL_STATE_ERROR) {
+    /* Send a PING to check the primary is able to reply without errors. */
+    if (server.repl_state == REPL_STATE_CONNECTING) {
+        serverLog(LL_NOTICE, "Non blocking connect for SYNC fired the event.");
+        /* Delete the writable event so that the readable event remains
+         * registered and we can wait for the PONG reply. */
+        connSetReadHandler(conn, syncWithPrimary);
+        connSetWriteHandler(conn, NULL);
+        server.repl_state = REPL_STATE_RECEIVE_PING_REPLY;
+        /* Send the PING, don't check for errors at all, we have the timeout
+         * that will take care about this. */
+        err = sendCommand(conn, "PING", NULL);
+        if (err) goto write_error;
+        return;
+    }
+
+    /* Receive the PONG command. */
+    if (server.repl_state == REPL_STATE_RECEIVE_PING_REPLY) {
+        err = receiveSynchronousResponse(conn);
+
+        /* The primary did not reply */
+        if (err == NULL) goto no_response_error;
+
+        /* We accept only two replies as valid, a positive +PONG reply
+         * (we just check for "+") or an authentication error.
+         * Note that older versions of Redis OSS replied with "operation not
+         * permitted" instead of using a proper error code, so we test
+         * both. */
+        if (err[0] != '+' && strncmp(err, "-NOAUTH", 7) != 0 && strncmp(err, "-NOPERM", 7) != 0 &&
+            strncmp(err, "-ERR operation not permitted", 28) != 0) {
+            serverLog(LL_WARNING, "Error reply to PING from primary: '%s'", err);
+            sdsfree(err);
+            goto error;
+        } else {
+            serverLog(LL_NOTICE, "Primary replied to PING, replication can continue...");
+        }
+        sdsfree(err);
+        err = NULL;
+        server.repl_state = REPL_STATE_SEND_HANDSHAKE;
+    }
+
+    if (server.repl_state == REPL_STATE_SEND_HANDSHAKE) {
+        /* AUTH with the primary if required. */
+        if (server.primary_auth) {
+            char *args[3] = {"AUTH", NULL, NULL};
+            size_t lens[3] = {4, 0, 0};
+            int argc = 1;
+            if (server.primary_user) {
+                args[argc] = server.primary_user;
+                lens[argc] = strlen(server.primary_user);
+                argc++;
+            }
+            args[argc] = server.primary_auth;
+            lens[argc] = sdslen(server.primary_auth);
+            argc++;
+            err = sendCommandArgv(conn, argc, args, lens);
+            if (err) goto write_error;
+        }
+
+        /* Set the replica port, so that primary's INFO command can list the
+         * replica listening port correctly. */
+        {
+            sds portstr = getReplicaPortString();
+            err = sendCommand(conn, "REPLCONF", "listening-port", portstr, NULL);
+            sdsfree(portstr);
+            if (err) goto write_error;
+        }
+
+        /* Set the replica ip, so that primary's INFO command can list the
+         * replica IP address port correctly in case of port forwarding or NAT.
+         * Skip REPLCONF ip-address if there is no replica-announce-ip option set. */
+        if (server.replica_announce_ip) {
+            err = sendCommand(conn, "REPLCONF", "ip-address", server.replica_announce_ip, NULL);
+            if (err) goto write_error;
+        }
+
+        /* Inform the primary of our (replica) capabilities.
+         *
+         * EOF: supports EOF-style RDB transfer for diskless replication.
+         * PSYNC2: supports PSYNC v2, so understands +CONTINUE <new repl ID>.
+         *
+         * The primary will ignore capabilities it does not understand. */
+        err = sendCommand(conn, "REPLCONF", "capa", "eof", "capa", "psync2",
+                          server.dual_channel_replication ? "capa" : NULL,
+                          server.dual_channel_replication ? "dual-channel" : NULL, NULL);
+        if (err) goto write_error;
+
+        /* Inform the primary of our (replica) version. */
+        err = sendCommand(conn, "REPLCONF", "version", VALKEY_VERSION, NULL);
+        if (err) goto write_error;
+
+        server.repl_state = REPL_STATE_RECEIVE_AUTH_REPLY;
+        return;
+    }
+
+    if (server.repl_state == REPL_STATE_RECEIVE_AUTH_REPLY && !server.primary_auth)
+        server.repl_state = REPL_STATE_RECEIVE_PORT_REPLY;
+
+    /* Receive AUTH reply. */
+    if (server.repl_state == REPL_STATE_RECEIVE_AUTH_REPLY) {
+        err = receiveSynchronousResponse(conn);
+        if (err == NULL) goto no_response_error;
+        if (err[0] == '-') {
+            serverLog(LL_WARNING, "Unable to AUTH to PRIMARY: %s", err);
+            sdsfree(err);
             goto error;
         }
-        if (server.repl_state != REPL_STATE_SEND_PSYNC)
-            return;
+        sdsfree(err);
+        err = NULL;
+        server.repl_state = REPL_STATE_RECEIVE_PORT_REPLY;
+        return;
+    }
+
+    /* Receive REPLCONF listening-port reply. */
+    if (server.repl_state == REPL_STATE_RECEIVE_PORT_REPLY) {
+        err = receiveSynchronousResponse(conn);
+        if (err == NULL) goto no_response_error;
+        /* Ignore the error if any, not all the Redis OSS versions support
+         * REPLCONF listening-port. */
+        if (err[0] == '-') {
+            serverLog(LL_NOTICE,
+                      "(Non critical) Primary does not understand "
+                      "REPLCONF listening-port: %s",
+                      err);
+        }
+        sdsfree(err);
+        server.repl_state = REPL_STATE_RECEIVE_IP_REPLY;
+        return;
+    }
+
+    if (server.repl_state == REPL_STATE_RECEIVE_IP_REPLY && !server.replica_announce_ip)
+        server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
+
+    /* Receive REPLCONF ip-address reply. */
+    if (server.repl_state == REPL_STATE_RECEIVE_IP_REPLY) {
+        err = receiveSynchronousResponse(conn);
+        if (err == NULL) goto no_response_error;
+        /* Ignore the error if any, not all the Redis OSS versions support
+         * REPLCONF ip-address. */
+        if (err[0] == '-') {
+            serverLog(LL_NOTICE,
+                      "(Non critical) Primary does not understand "
+                      "REPLCONF ip-address: %s",
+                      err);
+        }
+        sdsfree(err);
+        server.repl_state = REPL_STATE_RECEIVE_CAPA_REPLY;
+        return;
+    }
+
+    /* Receive CAPA reply. */
+    if (server.repl_state == REPL_STATE_RECEIVE_CAPA_REPLY) {
+        err = receiveSynchronousResponse(conn);
+        if (err == NULL) goto no_response_error;
+        /* Ignore the error if any, not all the Redis OSS versions support
+         * REPLCONF capa. */
+        if (err[0] == '-') {
+            serverLog(LL_NOTICE,
+                      "(Non critical) Primary does not understand "
+                      "REPLCONF capa: %s",
+                      err);
+        }
+        sdsfree(err);
+        err = NULL;
+        server.repl_state = REPL_STATE_RECEIVE_VERSION_REPLY;
+        return;
+    }
+
+    /* Receive VERSION reply. */
+    if (server.repl_state == REPL_STATE_RECEIVE_VERSION_REPLY) {
+        err = receiveSynchronousResponse(conn);
+        if (err == NULL) goto no_response_error;
+        /* Ignore the error if any. Valkey >= 8 supports REPLCONF VERSION. */
+        if (err[0] == '-') {
+            serverLog(LL_NOTICE,
+                      "(Non critical) Primary does not understand "
+                      "REPLCONF VERSION: %s",
+                      err);
+        }
+        sdsfree(err);
+        err = NULL;
+        server.repl_state = REPL_STATE_SEND_PSYNC;
     }
 
     /* Try a partial resynchronization. If we don't have a cached primary
@@ -3897,6 +3813,10 @@ void syncWithPrimary(connection *conn) {
     server.repl_transfer_last_fsync_off = 0;
     server.repl_transfer_lastio = server.unixtime;
     return;
+
+no_response_error: /* Handle receiveSynchronousResponse() error when primary has no reply */
+    serverLog(LL_WARNING, "Primary did not respond to command during SYNC handshake");
+    /* Fall through to regular error handling */
 
 error:
     connClose(conn);
@@ -4241,7 +4161,9 @@ void roleCommand(client *c) {
 /* Send a REPLCONF ACK command to the primary to inform it about the current
  * processed offset. If we are not connected with a primary, the command has
  * no effects. */
-void replicationSendAck(client *c) {
+void replicationSendAck(void) {
+    client *c = server.primary;
+
     if (c != NULL) {
         int send_fack = server.fsynced_reploff != -1;
         c->flag.replication_force_reply = 1;
@@ -4773,7 +4695,7 @@ void replicationCron(void) {
     /* Send ACK to primary from time to time.
      * Note that we do not send periodic acks to primary that don't
      * support PSYNC and replication offsets. */
-    if (server.primary_host && server.primary && !(server.primary->flag.pre_psync)) replicationSendAck(server.primary);
+    if (server.primary_host && server.primary && !(server.primary->flag.pre_psync)) replicationSendAck();
 
     /* If we have attached replicas, PING them from time to time.
      * So replicas can implement an explicit timeout to primaries, and will
@@ -4917,7 +4839,7 @@ void replicationCron(void) {
     replication_cron_loops++; /* Incremented with frequency 1 HZ. */
 }
 
-int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_bitmap_out) {
+int shouldStartChildReplication(int *mincapa_out, int *req_out) {
     /* We should start a BGSAVE good for replication if we have replicas in
      * WAIT_BGSAVE_START state.
      *
@@ -4929,7 +4851,6 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_
         int replicas_waiting = 0;
         int mincapa;
         int req;
-        slotBitmap slot_bitmap;
         int first = 1;
         listNode *ln;
         listIter li;
@@ -4941,8 +4862,7 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_
                 if (first) {
                     /* Get first replica's requirements */
                     req = replica->repl_data->replica_req;
-                    memcpy(slot_bitmap, replica->repl_data->slot_bitmap, sizeof(slotBitmap));
-                } else if (req != replica->repl_data->replica_req || slotBitmapCompare(slot_bitmap, replica->repl_data->slot_bitmap) != 0) {
+                } else if (req != replica->repl_data->replica_req) {
                     /* Skip replicas that don't match */
                     continue;
                 }
@@ -4960,7 +4880,6 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_
                                  max_idle >= server.repl_diskless_sync_delay)) {
             if (mincapa_out) *mincapa_out = mincapa;
             if (req_out) *req_out = req;
-            if (slot_bitmap_out) memcpy(slot_bitmap_out, slot_bitmap, sizeof(slotBitmap));
             return 1;
         }
     }
@@ -4971,13 +4890,12 @@ int shouldStartChildReplication(int *mincapa_out, int *req_out, slotBitmap slot_
 void replicationStartPendingFork(void) {
     int mincapa = -1;
     int req = -1;
-    slotBitmap slot_bitmap;
 
-    if (shouldStartChildReplication(&mincapa, &req, slot_bitmap)) {
+    if (shouldStartChildReplication(&mincapa, &req)) {
         /* Start the BGSAVE. The called function may start a
          * BGSAVE with socket target or disk target depending on the
          * configuration and replicas capabilities and requirements. */
-        startBgsaveForReplication(mincapa, req, slot_bitmap);
+        startBgsaveForReplication(mincapa, req);
     }
 }
 

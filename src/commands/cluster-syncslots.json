@@ -1,0 +1,14 @@
+{
+    "SYNCSLOTS": {
+        "summary": "An internal command used in slot migration.",
+        "group": "cluster",
+        "since": "8.1.0",
+        "arity": -2,
+        "container": "CLUSTER",
+        "function": "clusterCommand",
+        "command_flags": [
+            "ADMIN",
+            "STALE"
+        ]
+    }
+}

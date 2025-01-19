@@ -1870,7 +1870,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
     if (server.sanitize_dump_payload == SANITIZE_DUMP_CLIENTS) {
         /* Skip sanitization when loading (an RDB), or getting a RESTORE command
          * from either a replication source or a client using an ACL user with the skip-sanitize-payload flag. */
-        int skip = server.loading || (server.current_client && (server.current_client->flag.replication_source));
+        int skip = server.loading || (server.current_client && (server.current_client->flag.replicated));
         if (!skip && server.current_client && server.current_client->user)
             skip = !!(server.current_client->user->flags & USER_FLAG_SANITIZE_PAYLOAD_SKIP);
         deep_integrity_validation = !skip;
@@ -3525,16 +3525,14 @@ void killRDBChild(void) {
      * - rdbRemoveTempFile */
 }
 
-/* Spawn an RDB child that writes the RDB to the sockets of the replicas
- * that are currently in REPLICA_STATE_WAIT_BGSAVE_START state. */
-int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) {
-    listNode *ln;
-    listIter li;
+/* Save snapshot to the provided connections, spawning a child process and
+ * running the provided function.
+ *
+ * Connections array provided will be freed after the save is completed, and
+ * should not be freed by the caller. */
+int saveSnapshotToConnectionSockets(connection **conns, int connsnum, int use_pipe, int req, ChildSnapshotFunc snapshot_func, void *privdata) {
     pid_t childpid;
     int pipefds[2], rdb_pipe_write = 0, safe_to_exit_pipe = 0;
-    int dual_channel = (req & REPLICA_REQ_RDB_CHANNEL);
-    int aof = (req & REPLICA_REQ_AOF_FORMAT);
-
     if (hasActiveChildProcess()) return C_ERR;
     serverAssert(server.rdb_pipe_read == -1 && server.rdb_child_exit_pipe == -1);
 
@@ -3542,7 +3540,7 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) 
      * drained the pipe. */
     if (server.rdb_pipe_conns) return C_ERR;
 
-    if (!dual_channel) {
+    if (use_pipe) {
         /* Before to fork, create a pipe that is used to transfer the rdb bytes to
          * the parent, we can't let it write directly to the sockets, since in case
          * of TLS we must let the parent handle a continuous TLS state when the
@@ -3561,16 +3559,111 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) 
         safe_to_exit_pipe = pipefds[0];          /* read end */
         server.rdb_child_exit_pipe = pipefds[1]; /* write end */
     }
-    /* Collect the connections of the replicas we want to transfer
-     * the RDB to, which are in WAIT_BGSAVE_START state. */
-    int connsnum = 0;
-    connection **conns = zmalloc(sizeof(connection *) * listLength(server.replicas));
     server.rdb_pipe_conns = NULL;
-    if (!dual_channel) {
+    if (use_pipe) {
         server.rdb_pipe_conns = conns;
         server.rdb_pipe_numconns = 0;
         server.rdb_pipe_numconns_writing = 0;
+    } else {
+        server.rdb_pipe_numconns = connsnum;
     }
+    /* Create the child process. */
+    if ((childpid = serverFork(CHILD_TYPE_RDB)) == 0) {
+        /* Child */
+        int retval, dummy;
+        rio rdb;
+        if (!use_pipe) {
+            rioInitWithConnset(&rdb, conns, connsnum);
+        } else {
+            rioInitWithFd(&rdb, rdb_pipe_write);
+        }
+
+        /* Close the reading part, so that if the parent crashes, the child will
+         * get a write error and exit. */
+        if (use_pipe) close(server.rdb_pipe_read);
+        if (strstr(server.exec_argv[0], "redis-server") != NULL) {
+            serverSetProcTitle("redis-rdb-to-slaves");
+        } else {
+            serverSetProcTitle("valkey-rdb-to-replicas");
+        }
+        serverSetCpuAffinity(server.bgsave_cpulist);
+
+        retval = snapshot_func(req, &rdb, privdata);
+        if (retval == C_OK && rioFlush(&rdb) == 0) retval = C_ERR;
+
+        if (retval == C_OK) {
+            sendChildCowInfo(CHILD_INFO_TYPE_RDB_COW_SIZE, "RDB");
+        }
+        if (!use_pipe) {
+            rioFreeConnset(&rdb);
+        } else {
+            rioFreeFd(&rdb);
+            /* wake up the reader, tell it we're done. */
+            close(rdb_pipe_write);
+            close(server.rdb_child_exit_pipe); /* close write end so that we can detect the close on the parent. */
+        }
+        zfree(conns);
+        /* hold exit until the parent tells us it's safe. we're not expecting
+         * to read anything, just get the error when the pipe is closed. */
+        if (use_pipe) dummy = read(safe_to_exit_pipe, pipefds, 1);
+        UNUSED(dummy);
+        exitFromChild((retval == C_OK) ? 0 : 1);
+    } else {
+        /* Parent */
+        if (childpid == -1) {
+            serverLog(LL_WARNING, "Can't save in background: fork: %s", strerror(errno));
+
+            if (use_pipe) {
+                close(rdb_pipe_write);
+                close(server.rdb_pipe_read);
+                close(server.rdb_child_exit_pipe);
+            }
+            zfree(conns);
+            if (!use_pipe) {
+                closeChildInfoPipe();
+            } else {
+                server.rdb_pipe_conns = NULL;
+                server.rdb_pipe_numconns = 0;
+                server.rdb_pipe_numconns_writing = 0;
+            }
+        } else {
+            serverLog(LL_NOTICE, "Background RDB transfer started by pid %ld to %s", (long)childpid,
+                      !use_pipe ? "direct socket to replica" : "pipe through parent process");
+            server.rdb_save_time_start = time(NULL);
+            server.rdb_child_type = RDB_CHILD_TYPE_SOCKET;
+            if (!use_pipe) {
+                /* For dual channel sync, the main process no longer requires these RDB connections. */
+                zfree(conns);
+            } else {
+                close(rdb_pipe_write); /* close write in parent so that it can detect the close on the child. */
+                if (aeCreateFileEvent(server.el, server.rdb_pipe_read, AE_READABLE, rdbPipeReadHandler, NULL) ==
+                    AE_ERR) {
+                    serverPanic("Unrecoverable error creating server.rdb_pipe_read file event.");
+                }
+            }
+        }
+        if (use_pipe) close(safe_to_exit_pipe);
+        return (childpid == -1) ? C_ERR : C_OK;
+    }
+    return C_OK; /* Unreached. */
+}
+
+int childSnapshotUsingRDB(int req, rio *rdb, void *privdata) {
+    return rdbSaveRioWithEOFMark(req, rdb, NULL, (rdbSaveInfo *)privdata);
+}
+
+/* Spawn an RDB child that writes the RDB to the sockets of the replicas
+ * that are currently in REPLICA_STATE_WAIT_BGSAVE_START state. */
+int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
+    listNode *ln;
+    listIter li;
+    int dual_channel = (req & REPLICA_REQ_RDB_CHANNEL);
+
+    /* Collect the connections of the replicas we want to transfer
+     * the RDB to, which are i WAIT_BGSAVE_START state. */
+    int connsnum = 0;
+    connection **conns = zmalloc(sizeof(connection *) * listLength(server.replicas));
+
     /* Filter replica connections pending full sync (ie. in WAIT_BGSAVE_START state). */
     listRewind(server.replicas, &li);
     while ((ln = listNext(&li))) {
@@ -3578,8 +3671,6 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) 
         if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_START) {
             /* Check replica has the exact requirements */
             if (replica->repl_data->replica_req != req) continue;
-            /* Check matching slot bitmaps. */
-            if (memcmp(replica->repl_data->slot_bitmap, slot_bitmap, sizeof(slotBitmap)) != 0) continue;
 
             conns[connsnum++] = replica->conn;
             if (dual_channel) {
@@ -3591,111 +3682,28 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi, slotBitmap slot_bitmap) 
                 addRdbReplicaToPsyncWait(replica);
                 /* Put the socket in blocking mode to simplify RDB transfer. */
                 connBlock(replica->conn);
-            } else {
-                server.rdb_pipe_numconns++;
             }
             replicationSetupReplicaForFullResync(replica, getPsyncInitialOffset());
         }
     }
 
-    /* Create the child process. */
-    if ((childpid = serverFork(CHILD_TYPE_RDB)) == 0) {
-        /* Child */
-        int retval, dummy;
-        rio rdb;
-        if (dual_channel) {
-            rioInitWithConnset(&rdb, conns, connsnum);
-        } else {
-            rioInitWithFd(&rdb, rdb_pipe_write);
-        }
+    int retval = saveSnapshotToConnectionSockets(conns, connsnum, !dual_channel, req, childSnapshotUsingRDB, (void *) rsi);
 
-        /* Close the reading part, so that if the parent crashes, the child will
-         * get a write error and exit. */
-        if (!dual_channel) close(server.rdb_pipe_read);
-        if (strstr(server.exec_argv[0], "redis-server") != NULL) {
-            serverSetProcTitle("redis-rdb-to-slaves");
-        } else {
-            serverSetProcTitle("valkey-rdb-to-replicas");
-        }
-        serverSetCpuAffinity(server.bgsave_cpulist);
+    if (retval != C_OK) {
+        serverLog(LL_WARNING, "Can't save in background: fork: %s", strerror(errno));
 
-        if (aof) {
-            serverLog(LL_NOTICE, "Background AOF transfer started by pid %ld", (long)getpid());
-            retval = rewriteAppendOnlyFileRio(&rdb, slot_bitmap);
-            rioWrite(&rdb, "*3\r\n", 4);
-            rioWriteBulkString(&rdb, "REPLCONF", 8);
-            rioWriteBulkString(&rdb, "AOF-PAYLOAD-END", 15);
-            rioWriteBulkLongLong(&rdb, server.primary_repl_offset);
-        } else {
-            retval = rdbSaveRioWithEOFMark(req, &rdb, NULL, rsi);
-        }
-        if (retval == C_OK && rioFlush(&rdb) == 0) retval = C_ERR;
-
-        if (retval == C_OK) {
-            sendChildCowInfo(CHILD_INFO_TYPE_RDB_COW_SIZE, "RDB");
-        }
-        if (dual_channel) {
-            rioFreeConnset(&rdb);
-        } else {
-            rioFreeFd(&rdb);
-            /* wake up the reader, tell it we're done. */
-            close(rdb_pipe_write);
-            close(server.rdb_child_exit_pipe); /* close write end so that we can detect the close on the parent. */
-        }
-        zfree(conns);
-        /* hold exit until the parent tells us it's safe. we're not expecting
-         * to read anything, just get the error when the pipe is closed. */
-        if (!dual_channel) dummy = read(safe_to_exit_pipe, pipefds, 1);
-        UNUSED(dummy);
-        exitFromChild((retval == C_OK) ? 0 : 1);
-    } else {
-        /* Parent */
-        if (childpid == -1) {
-            serverLog(LL_WARNING, "Can't save in background: fork: %s", strerror(errno));
-
-            /* Undo the state change. The caller will perform cleanup on
-             * all the replicas in BGSAVE_START state, but an early call to
-             * replicationSetupReplicaForFullResync() turned it into BGSAVE_END */
-            listRewind(server.replicas, &li);
-            while ((ln = listNext(&li))) {
-                client *replica = ln->value;
-                if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_END) {
-                    replica->repl_data->repl_state = REPLICA_STATE_WAIT_BGSAVE_START;
-                }
-            }
-            if (!dual_channel) {
-                close(rdb_pipe_write);
-                close(server.rdb_pipe_read);
-                close(server.rdb_child_exit_pipe);
-            }
-            zfree(conns);
-            if (dual_channel) {
-                closeChildInfoPipe();
-            } else {
-                server.rdb_pipe_conns = NULL;
-                server.rdb_pipe_numconns = 0;
-                server.rdb_pipe_numconns_writing = 0;
-            }
-        } else {
-            serverLog(LL_NOTICE, "Background RDB transfer started by pid %ld to %s", (long)childpid,
-                      dual_channel ? "direct socket to replica" : "pipe through parent process");
-            server.rdb_save_time_start = time(NULL);
-            server.rdb_child_type = RDB_CHILD_TYPE_SOCKET;
-            if (dual_channel) {
-                /* For dual channel sync, the main process no longer requires these RDB connections. */
-                zfree(conns);
-            } else {
-                close(rdb_pipe_write); /* close write in parent so that it can detect the close on the child. */
-                if (aeCreateFileEvent(server.el, server.rdb_pipe_read, AE_READABLE, rdbPipeReadHandler, NULL) ==
-                    AE_ERR) {
-                    serverPanic("Unrecoverable error creating server.rdb_pipe_read file event.");
-                }
+        /* Undo the state change. The caller will perform cleanup on
+            * all the replicas in BGSAVE_START state, but an early call to
+            * replicationSetupReplicaForFullResync() turned it into BGSAVE_END */
+        listRewind(server.replicas, &li);
+        while ((ln = listNext(&li))) {
+            client *replica = ln->value;
+            if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_END) {
+                replica->repl_data->repl_state = REPLICA_STATE_WAIT_BGSAVE_START;
             }
         }
-        if (!dual_channel) close(safe_to_exit_pipe);
-        return (childpid == -1) ? C_ERR : C_OK;
     }
-    return C_OK; /* Unreached. */
+    return retval;
 }
 
 void saveCommand(client *c) {

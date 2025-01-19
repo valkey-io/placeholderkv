@@ -900,7 +900,7 @@ int clientsCronResizeQueryBuffer(client *c) {
         if (idletime > 2) {
             /* 1) Query is idle for a long time. */
             size_t remaining = sdslen(c->querybuf) - c->qb_pos;
-            if (!c->flag.replication_source && !remaining) {
+            if (!c->flag.replicated && !remaining) {
                 /* If the client is not for replication and no data is pending,
                  * The client can safely use the shared query buffer in the next read - free the client's querybuf. */
                 sdsfree(c->querybuf);
@@ -1451,7 +1451,7 @@ long long serverCron(struct aeEventLoop *eventLoop, long long id, void *clientDa
         monotime current_time = getMonotonicUs();
         long long factor = 1000000; // us
         trackInstantaneousMetric(STATS_METRIC_COMMAND, server.stat_numcommands, current_time, factor);
-        trackInstantaneousMetric(STATS_METRIC_NET_INPUT, server.stat_net_input_bytes + server.stat_net_repl_input_bytes,
+        trackInstantaneousMetric(STATS_METRIC_NET_INPUT, server.stat_net_input_bytes + server.stat_net_repl_input_bytes + server.stat_net_slot_migration_input_bytes,
                                  current_time, factor);
         trackInstantaneousMetric(STATS_METRIC_NET_OUTPUT,
                                  server.stat_net_output_bytes + server.stat_net_repl_output_bytes, current_time,
@@ -1464,6 +1464,8 @@ long long serverCron(struct aeEventLoop *eventLoop, long long id, void *clientDa
                                  factor);
         trackInstantaneousMetric(STATS_METRIC_EL_DURATION, server.duration_stats[EL_DURATION_TYPE_EL].sum,
                                  server.duration_stats[EL_DURATION_TYPE_EL].cnt, 1);
+        trackInstantaneousMetric(STATS_METRIC_NET_INPUT_SLOT_MIGRATION, server.stat_net_slot_migration_input_bytes,
+                                 current_time, factor);
     }
 
     /* We have just LRU_BITS bits per object for LRU information.
@@ -2684,6 +2686,7 @@ void resetServerStats(void) {
     server.stat_net_input_bytes = 0;
     server.stat_net_output_bytes = 0;
     server.stat_net_repl_input_bytes = 0;
+    server.stat_net_slot_migration_input_bytes = 0;
     server.stat_net_repl_output_bytes = 0;
     server.stat_unexpected_error_replies = 0;
     server.stat_total_error_replies = 0;
@@ -3359,7 +3362,7 @@ struct serverCommand *lookupCommandOrOriginal(robj **argv, int argc) {
 
 /* Commands arriving from a replication source or AOF client, should never be rejected. */
 int mustObeyClient(client *c) {
-    return c->id == CLIENT_ID_AOF || c->flag.replication_source;
+    return c->id == CLIENT_ID_AOF || c->flag.replicated;
 }
 
 static int shouldPropagate(int target) {
@@ -3369,7 +3372,7 @@ static int shouldPropagate(int target) {
         if (server.aof_state != AOF_OFF) return 1;
     }
     if (target & PROPAGATE_REPL) {
-        if (server.primary == NULL && (server.repl_backlog || listLength(server.replicas) != 0)) return 1;
+        if (server.primary_host == NULL && (server.repl_backlog || listLength(server.replicas) != 0)) return 1;
     }
 
     return 0;
@@ -3418,7 +3421,12 @@ static void propagateNow(int dbid, robj **argv, int argc, int target) {
                  server.server_del_keys_in_slot);
 
     if (server.aof_state != AOF_OFF && target & PROPAGATE_AOF) feedAppendOnlyFile(dbid, argv, argc);
-    if (target & PROPAGATE_REPL) replicationFeedReplicas(dbid, argv, argc);
+    if (target & PROPAGATE_REPL) {
+        replicationFeedReplicas(dbid, argv, argc);
+        if (server.cluster_enabled) {
+            clusterFeedSlotMigration(dbid, argv, argc);
+        }
+    }
 }
 
 /* Used inside commands to schedule the propagation of additional commands
@@ -4297,7 +4305,7 @@ int processCommand(client *c) {
 
     /* If the server is paused, block the client until
      * the pause has ended. Replicas are never paused. */
-    if (!c->flag.replica && ((isPausedActions(PAUSE_ACTION_CLIENT_ALL)) ||
+    if (!c->flag.replica && !c->flag.slot_migration_target && ((isPausedActions(PAUSE_ACTION_CLIENT_ALL)) ||
                              ((isPausedActions(PAUSE_ACTION_CLIENT_WRITE)) && is_may_replicate_command))) {
         blockPostponeClient(c);
         return C_OK;
@@ -5903,8 +5911,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "total_connections_received:%lld\r\n", server.stat_numconnections,
                 "total_commands_processed:%lld\r\n", server.stat_numcommands,
                 "instantaneous_ops_per_sec:%lld\r\n", getInstantaneousMetric(STATS_METRIC_COMMAND),
-                "total_net_input_bytes:%lld\r\n", server.stat_net_input_bytes + server.stat_net_repl_input_bytes,
-                "total_net_output_bytes:%lld\r\n", server.stat_net_output_bytes + server.stat_net_repl_output_bytes,
+                "total_net_input_bytes:%lld\r\n", server.stat_net_input_bytes + server.stat_net_repl_input_bytes + server.stat_net_slot_migration_input_bytes,
+                "total_net_output_bytes:%lld\r\n", server.stat_net_output_bytes + server.stat_net_repl_output_bytes + server.stat_net_slot_migration_output_bytes,
                 "total_net_repl_input_bytes:%lld\r\n", server.stat_net_repl_input_bytes,
                 "total_net_repl_output_bytes:%lld\r\n", server.stat_net_repl_output_bytes,
                 "instantaneous_input_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT) / 1024,
@@ -5962,7 +5970,11 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "eventloop_duration_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_EL].sum,
                 "eventloop_duration_cmd_sum:%llu\r\n", server.duration_stats[EL_DURATION_TYPE_CMD].sum,
                 "instantaneous_eventloop_cycles_per_sec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_CYCLE),
-                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION)));
+                "instantaneous_eventloop_duration_usec:%llu\r\n", getInstantaneousMetric(STATS_METRIC_EL_DURATION),
+                "total_net_slot_migration_input_bytes:%lld\r\n", server.stat_net_slot_migration_input_bytes,
+                "total_net_slot_migration_output_bytes:%lld\r\n", server.stat_net_slot_migration_output_bytes,
+                "instantaneous_slot_migration_input_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_INPUT_SLOT_MIGRATION) / 1024,
+                "instantaneous_slot_migration_output_kbps:%.2f\r\n", (float)getInstantaneousMetric(STATS_METRIC_NET_OUTPUT_SLOT_MIGRATION) / 1024));
         info = genValkeyInfoStringACLStats(info);
     }
 

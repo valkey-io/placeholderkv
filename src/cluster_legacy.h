@@ -10,7 +10,7 @@
 #define CLUSTER_MF_TIMEOUT 5000              /* Milliseconds to do a manual failover. */
 #define CLUSTER_MF_PAUSE_MULT 2              /* Primary pause manual failover mult. */
 #define CLUSTER_REPLICA_MIGRATION_DELAY 5000 /* Delay for replica migration. */
-#define CLUSTER_SLOT_MIGRATION_TIMEOUT 30000 /* Milliseconds to do a slot migration. */
+#define CLUSTER_SLOT_IMPORT_TIMEOUT 30000    /* Milliseconds to do a slot migration. */
 
 /* Reasons why a replica is not able to failover. */
 #define CLUSTER_CANT_FAILOVER_NONE 0
@@ -376,32 +376,50 @@ struct _clusterNode {
                                                Update with updateAndCountChangedNodeHealth(). */
 };
 
-typedef enum slotMigrationState {
-    SLOT_MIGRATION_QUEUED,
-    SLOT_MIGRATION_CONNECTING,
-    SLOT_MIGRATION_REPL_HANDSHAKE,  /* The handshake has it's own state machine,
-                                     * see replicationProceedWithHandshake */
-    SLOT_MIGRATION_SEND_SYNC,
-    SLOT_MIGRATION_RECEIVE_SYNC,
-    SLOT_MIGRATION_PAUSE_OWNER,
-    SLOT_MIGRATION_WAITING_FOR_OFFSET,
-    SLOT_MIGRATION_SYNCING_TO_OFFSET,
-    SLOT_MIGRATION_FINISH,
-    SLOT_MIGRATION_FAILED,
-} slotMigrationState;
+typedef enum slotImportState {
+    SLOT_IMPORT_QUEUED,
+    SLOT_IMPORT_REPLICA_TRACKING, /* Replicas track the slot import as well */
+    SLOT_IMPORT_CONNECTING,
+    SLOT_IMPORT_SEND_AUTH,
+    SLOT_IMPORT_RECEIVE_AUTH,
+    SLOT_IMPORT_SEND_SYNCSLOTS,
+    SLOT_IMPORT_RECEIVE_SYNCSLOTS,
+    SLOT_IMPORT_PAUSE_OWNER,
+    SLOT_IMPORT_WAITING_FOR_OFFSET,
+    SLOT_IMPORT_SYNCING_TO_OFFSET,
+    SLOT_IMPORT_FINISH,
+    SLOT_IMPORT_FAILED,
+} slotImportState;
 
-typedef struct slotMigration {
+typedef struct slotImport {
     slotBitmap slot_bitmap;
-    slotMigrationState state;
+    slotImportState state;
     clusterNode *source_node;
     mstime_t end_time; /* Slot migration time limit (ms unixtime).
                           If not yet in progress (e.g. queued), will be zero. */
-    connection *replication_connection; /* Connection for replication. */
-    client *replication_client; /* Client for replication */
-    int replication_handshake_state;
+    connection *conn;
+    client *client;
     mstime_t pause_end;
-    long long pause_primary_offset;
-} slotMigration;
+    long long syncslots_offset;
+    long long paused_at_offset;
+} slotImport;
+
+typedef enum slotExportState {
+    SLOT_EXPORT_QUEUED,
+    SLOT_EXPORT_SNAPSHOTTING,
+    SLOT_EXPORT_PAUSE_AND_REPLY,
+    SLOT_EXPORT_PAUSED,
+    SLOT_EXPORT_FINISH,
+    SLOT_EXPORT_FAILED,
+} slotExportState;
+
+typedef struct slotExport {
+    slotBitmap slot_bitmap;
+    slotExportState state;
+    client *client; /* Client for replication */
+    unsigned long long syncslot_offset;
+    mstime_t pause_end;
+} slotExport;
 
 /* Struct used for storing slot statistics. */
 typedef struct slotStat {
@@ -464,7 +482,8 @@ struct clusterState {
     slotBitmap owner_not_claiming_slot;
     /* Struct used for storing slot statistics, for all slots owned by the current shard. */
     slotStat slot_stats[CLUSTER_SLOTS];
-    list *slot_migrations; /* Queue of ongoing slot migrations. */
+    list *slot_import_jobs; /* Queue of ongoing slot imports (we are the target). */
+    list *slot_export_jobs; /* Queue of ongoing slot exports (we are the source). */
 };
 
 #endif // CLUSTER_LEGACY_H

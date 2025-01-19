@@ -2191,10 +2191,10 @@ werr:
     return 0;
 }
 
-int shouldFilterSlot(int slot, void * privdata) {
-    if (privdata == NULL) return 0;
+int slotFilterPredicate(int slot, void * privdata) {
+    if (privdata == NULL) return 1;
     unsigned char *slot_bitmap = (unsigned char *)privdata;
-    return !bitmapTestBit(slot_bitmap, slot);
+    return bitmapTestBit(slot_bitmap, slot);
 }
 
 int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
@@ -2227,7 +2227,7 @@ int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
         if (slot_bitmap == NULL || isSlotBitmapEmpty(slot_bitmap)) {
             kvs_it = kvstoreIteratorInit(db->keys);
         } else {
-            kvs_it = kvstoreFilteredIteratorInit(db->keys, &shouldFilterSlot, slot_bitmap);
+            kvs_it = kvstoreFilteredIteratorInit(db->keys, &slotFilterPredicate, slot_bitmap);
         }
         /* Iterate this DB writing every entry */
         void *next;

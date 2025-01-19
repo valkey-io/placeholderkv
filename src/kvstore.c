@@ -74,7 +74,7 @@ struct _kvstoreIterator {
     kvstore *kvs;
     long long didx;
     long long next_didx;
-    kvstoreIteratorFilter *filter;
+    kvstoreIteratorPredicate *predicate;
     void *filter_privdata;
     hashtableIterator di;
 };
@@ -600,19 +600,22 @@ kvstoreIterator *kvstoreIteratorInit(kvstore *kvs) {
     kvs_it->kvs = kvs;
     kvs_it->didx = -1;
     kvs_it->next_didx = kvstoreGetFirstNonEmptyHashtableIndex(kvs_it->kvs); /* Finds first non-empty hashtable index. */
-    kvs_it->filter = NULL;
+    kvs_it->predicate = NULL;
     kvs_it->filter_privdata = NULL;
     hashtableInitSafeIterator(&kvs_it->di, NULL);
     return kvs_it;
 }
 
 /* Returns kvstore iterator that filters out hash tables based on the predicate.*/
-kvstoreIterator *kvstoreFilteredIteratorInit(kvstore *kvs, kvstoreIteratorFilter *filter, void *privdata) {
+kvstoreIterator *kvstoreFilteredIteratorInit(kvstore *kvs, kvstoreIteratorPredicate *predicate, void *privdata) {
     kvstoreIterator *kvs_it = zmalloc(sizeof(*kvs_it));
     kvs_it->kvs = kvs;
     kvs_it->didx = -1;
     kvs_it->next_didx = kvstoreGetFirstNonEmptyHashtableIndex(kvs_it->kvs);
-    kvs_it->filter = filter;
+    while (kvs_it->next_didx != -1 && predicate && !predicate(kvs_it->next_didx, privdata)) {
+        kvs_it->next_didx = kvstoreGetNextNonEmptyHashtableIndex(kvs_it->kvs, kvs_it->next_didx);
+    }
+    kvs_it->predicate = predicate;
     kvs_it->filter_privdata = privdata;
     hashtableInitSafeIterator(&kvs_it->di, NULL);
     return kvs_it;
@@ -640,11 +643,10 @@ static hashtable *kvstoreIteratorNextHashtable(kvstoreIterator *kvs_it) {
         freeHashtableIfNeeded(kvs_it->kvs, kvs_it->didx);
     }
 
+    kvs_it->didx = kvs_it->next_didx;
     do {
-        kvs_it->didx = kvs_it->next_didx;
-        if (kvs_it->didx == -1) return NULL;
-        kvs_it->next_didx = kvstoreGetNextNonEmptyHashtableIndex(kvs_it->kvs, kvs_it->didx);
-    } while (kvs_it->filter && kvs_it->filter(kvs_it->didx, kvs_it->filter_privdata));
+        kvs_it->next_didx = kvstoreGetNextNonEmptyHashtableIndex(kvs_it->kvs, kvs_it->next_didx);
+    } while (kvs_it->next_didx != -1 && kvs_it->predicate && !kvs_it->predicate(kvs_it->didx, kvs_it->filter_privdata));
     return kvs_it->kvs->hashtables[kvs_it->didx];
 }
 

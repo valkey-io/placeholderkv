@@ -182,15 +182,17 @@ struct hdr_histogram;
 #define RIO_CONNSET_WRITE_MAX_CHUNK_SIZE 16384
 
 /* Instantaneous metrics tracking. */
-#define STATS_METRIC_SAMPLES 16               /* Number of samples per metric. */
-#define STATS_METRIC_COMMAND 0                /* Number of commands executed. */
-#define STATS_METRIC_NET_INPUT 1              /* Bytes read to network. */
-#define STATS_METRIC_NET_OUTPUT 2             /* Bytes written to network. */
-#define STATS_METRIC_NET_INPUT_REPLICATION 3  /* Bytes read to network during replication. */
-#define STATS_METRIC_NET_OUTPUT_REPLICATION 4 /* Bytes written to network during replication. */
-#define STATS_METRIC_EL_CYCLE 5               /* Number of eventloop cycled. */
-#define STATS_METRIC_EL_DURATION 6            /* Eventloop duration. */
-#define STATS_METRIC_COUNT 7
+#define STATS_METRIC_SAMPLES 16                 /* Number of samples per metric. */
+#define STATS_METRIC_COMMAND 0                  /* Number of commands executed. */
+#define STATS_METRIC_NET_INPUT 1                /* Bytes read to network. */
+#define STATS_METRIC_NET_OUTPUT 2               /* Bytes written to network. */
+#define STATS_METRIC_NET_INPUT_REPLICATION 3    /* Bytes read to network during replication. */
+#define STATS_METRIC_NET_OUTPUT_REPLICATION 4   /* Bytes written to network during replication. */
+#define STATS_METRIC_EL_CYCLE 5                 /* Number of eventloop cycled. */
+#define STATS_METRIC_EL_DURATION 6              /* Eventloop duration. */
+#define STATS_METRIC_NET_INPUT_SLOT_MIGRATION 7 /* Bytes read to network during slot migration. */
+#define STATS_METRIC_NET_OUTPUT_SLOT_MIGRATION 7 /* Bytes written to network during slot migration. */
+#define STATS_METRIC_COUNT 8
 
 /* Protocol and I/O related defines */
 #define PROTO_IOBUF_LEN (1024 * 16)         /* Generic I/O buffer size */
@@ -599,6 +601,7 @@ typedef enum {
     PAUSE_BY_CLIENT_COMMAND = 0,
     PAUSE_DURING_SHUTDOWN,
     PAUSE_DURING_FAILOVER,
+    PAUSE_DURING_SLOT_MIGRATION,
     NUM_PAUSE_PURPOSES /* This value is the number of purposes above. */
 } pause_purpose;
 
@@ -1091,8 +1094,9 @@ typedef struct ClientFlags {
                                             * flag, we won't cache the primary in freeClient. */
     uint64_t fake : 1;                     /* This is a fake client without a real connection. */
     uint64_t import_source : 1;            /* This client is importing data to server and can visit expired key. */
-    uint64_t replication_source : 1;       /* This client is a replication source (i.e. primary or slot migration). */
+    uint64_t replicated : 1;       /* This client is a replication source (i.e. primary or slot migration). */
     uint64_t slot_migration_source : 1;    /* This client is a slot migration source. */
+    uint64_t slot_migration_target : 1;    /* This client is a slot migration target. */
     uint64_t reserved : 3;                 /* Reserved for future use */
 } ClientFlags;
 
@@ -1144,7 +1148,6 @@ typedef struct ClientReplicationData {
                                             see the definition of replBufBlock. */
     size_t ref_block_pos;                /* Access position of referenced buffer block,
                                             i.e. the next offset to send. */
-    slotBitmap slot_bitmap;              /* The slot range this replica is replicating for. */
 } ClientReplicationData;
 
 typedef struct ClientModuleData {
@@ -1540,6 +1543,7 @@ typedef struct {
 #define CHILD_TYPE_AOF 2
 #define CHILD_TYPE_LDB 3
 #define CHILD_TYPE_MODULE 4
+#define CHILD_TYPE_SYNCSLOTS 5
 
 typedef enum childInfoType {
     CHILD_INFO_TYPE_CURRENT_INFO,
@@ -1708,9 +1712,10 @@ struct valkeyServer {
     long long stat_net_input_bytes;                /* Bytes read from network. */
     long long stat_net_output_bytes;               /* Bytes written to network. */
     long long stat_net_repl_input_bytes;           /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
-    long long stat_net_slot_migration_input_bytes; /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
     /* Bytes written during replication, added to stat_net_output_bytes in 'info'. */
     long long stat_net_repl_output_bytes;
+    long long stat_net_slot_migration_input_bytes; /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
+    long long stat_net_slot_migration_output_bytes; /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
     size_t stat_current_cow_peak;                       /* Peak size of copy on write bytes. */
     size_t stat_current_cow_bytes;                      /* Copy on write bytes while child is active. */
     monotime stat_current_cow_updated;                  /* Last update time of stat_current_cow_bytes */
@@ -2621,7 +2626,7 @@ void dictVanillaFree(void *val);
 #define READ_FLAGS_INLINE_ZERO_QUERY_LEN (1 << 11)
 #define READ_FLAGS_PARSING_NEGATIVE_MBULK_LEN (1 << 12)
 #define READ_FLAGS_PARSING_COMPLETED (1 << 13)
-#define READ_FLAGS_REPLICATION_SOURCE (1 << 14)
+#define READ_FLAGS_REPLICATED (1 << 14)
 #define READ_FLAGS_DONT_PARSE (1 << 15)
 #define READ_FLAGS_AUTH_REQUIRED (1 << 16)
 
@@ -2948,8 +2953,8 @@ int sendCurrentOffsetToReplica(client *replica);
 void addRdbReplicaToPsyncWait(client *replica);
 void initClientReplicationData(client *c);
 void freeClientReplicationData(client *c);
-void replicationSendAck(client *c);
-int replicationProceedWithHandshake(connection *conn, int curr_state, slotBitmap slot_bitmap);
+char *sendCommandArgv(connection *conn, int argc, char **argv, size_t *argv_lens);
+char *receiveSynchronousResponse(connection *conn);
 
 /* Generic persistence functions */
 void startLoadingFile(size_t size, char *filename, int rdbflags);
@@ -2961,6 +2966,8 @@ void updateLoadingFileName(char *filename);
 void startSaving(int rdbflags);
 void stopSaving(int success);
 int allPersistenceDisabled(void);
+typedef int(*ChildSnapshotFunc)(int req, rio *rdb, void *privdata);
+int saveSnapshotToConnectionSockets(connection **conns, int connsnum, int use_pipe, int req, ChildSnapshotFunc snapshot_func, void *privdata);
 
 #define DISK_ERROR_TYPE_AOF 1  /* Don't accept writes: AOF errors. */
 #define DISK_ERROR_TYPE_RDB 2  /* Don't accept writes: RDB errors. */
@@ -3684,6 +3691,7 @@ void sdiffCommand(client *c);
 void sdiffstoreCommand(client *c);
 void sscanCommand(client *c);
 void syncCommand(client *c);
+void syncSlotsCommand(client *c);
 void flushdbCommand(client *c);
 void flushallCommand(client *c);
 void sortCommand(client *c);
