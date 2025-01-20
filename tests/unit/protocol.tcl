@@ -88,7 +88,6 @@ start_server {tags {"protocol network"}} {
                     puts -nonewline $s $payload
                     flush $s
                 }]} {
-                    puts "exception after writing $payload_size bytes"
                     assert_morethan $payload_size $PROTO_INLINE_MAX_SIZE
                     break
                 }
