@@ -302,7 +302,12 @@ kvstore *kvstoreCreate(hashtableType *type, int num_hashtables_bits, int flags) 
 
 void kvstoreEmpty(kvstore *kvs, void(callback)(hashtable *)) {
     for (int didx = 0; didx < kvs->num_hashtables; didx++) {
-        kvstoreEmptyHashtable(kvs, didx, callback);
+        hashtable *ht = kvstoreGetHashtable(kvs, didx);
+        if (!ht) continue;
+        kvstoreHashtableMetadata *metadata = (kvstoreHashtableMetadata *)hashtableMetadata(ht);
+        if (metadata->rehashing_node) metadata->rehashing_node = NULL;
+        hashtableEmpty(ht, callback);
+        freeHashtableIfNeeded(kvs, didx);
     }
 
     listEmpty(kvs->rehashing);
@@ -313,28 +318,6 @@ void kvstoreEmpty(kvstore *kvs, void(callback)(hashtable *)) {
     kvs->bucket_count = 0;
     if (kvs->hashtable_size_index) memset(kvs->hashtable_size_index, 0, sizeof(unsigned long long) * (kvs->num_hashtables + 1));
     kvs->overhead_hashtable_rehashing = 0;
-}
-
-void kvstoreEmptyHashtable(kvstore *kvs, int didx, void(callback)(hashtable *)) {
-    hashtable *ht = kvstoreGetHashtable(kvs, didx);
-    if (!ht) return;
-    kvstoreHashtableMetadata *metadata = (kvstoreHashtableMetadata *)hashtableMetadata(ht);
-    if (metadata->rehashing_node) metadata->rehashing_node = NULL;
-    hashtableEmpty(ht, callback);
-    freeHashtableIfNeeded(kvs, didx);
-}
-
-hashtable *kvstoreUnlinkHashtable(kvstore *kvs, int didx) {
-    hashtable *oldht = kvstoreGetHashtable(kvs, didx);
-    if (!oldht) return NULL;
-
-    /* Pause rehashing on the to be unlinked node. */
-    kvstoreHashtableMetadata *oldmetadata = (kvstoreHashtableMetadata *)hashtableMetadata(oldht);
-    if (oldmetadata->rehashing_node) oldmetadata->rehashing_node = NULL;
-
-    kvs->hashtables[didx] = NULL;
-    kvs->allocated_hashtables--;
-    return oldht;
 }
 
 void kvstoreRelease(kvstore *kvs) {

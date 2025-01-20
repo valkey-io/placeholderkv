@@ -3562,10 +3562,8 @@ int saveSnapshotToConnectionSockets(connection **conns, int connsnum, int use_pi
     server.rdb_pipe_conns = NULL;
     if (use_pipe) {
         server.rdb_pipe_conns = conns;
-        server.rdb_pipe_numconns = 0;
-        server.rdb_pipe_numconns_writing = 0;
-    } else {
         server.rdb_pipe_numconns = connsnum;
+        server.rdb_pipe_numconns_writing = 0;
     }
     /* Create the child process. */
     if ((childpid = serverFork(CHILD_TYPE_RDB)) == 0) {

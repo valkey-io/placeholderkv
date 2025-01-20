@@ -114,8 +114,6 @@ client *createCachedResponseClient(int resp);
 void deleteCachedResponseClient(client *recording_client);
 void clearCachedClusterSlotsResponse(void);
 unsigned int countKeysInSlot(unsigned int hashslot);
-unsigned int dropKeysInSlotBitmap(slotBitmap slot_bitmap, int async);
-unsigned int dropKeysInSlot(unsigned int hashslot, int async);
 void bitmapToSlotRanges(unsigned char *bitmap, slotBitmap slot_bitmap_out);
 int bitmapTestBit(unsigned char *bitmap, int pos);
 void bitmapSetBit(unsigned char *bitmap, int pos);

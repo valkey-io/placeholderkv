@@ -32,18 +32,6 @@ void lazyfreeFreeDatabase(void *args[]) {
     atomic_fetch_add_explicit(&lazyfreed_objects, numkeys, memory_order_relaxed);
 }
 
-/* Release a hashtable from the lazyfree thread. */
-void lazyfreeFreeHashtable(void *args[]) {
-    hashtable *ht1 = args[0];
-    hashtable *ht2 = args[1];
-
-    size_t numkeys = hashtableSize(ht1);
-    hashtableRelease(ht1);
-    if (ht2) hashtableRelease(ht2);
-    atomic_fetch_sub_explicit(&lazyfree_objects, numkeys, memory_order_relaxed);
-    atomic_fetch_add_explicit(&lazyfreed_objects, numkeys, memory_order_relaxed);
-}
-
 /* Release the key tracking table. */
 void lazyFreeTrackingTable(void *args[]) {
     rax *rt = args[0];
@@ -209,17 +197,6 @@ void emptyDbAsync(serverDb *db) {
     db->expires = kvstoreCreate(&kvstoreExpiresHashtableType, slot_count_bits, flags);
     atomic_fetch_add_explicit(&lazyfree_objects, kvstoreSize(oldkeys), memory_order_relaxed);
     bioCreateLazyFreeJob(lazyfreeFreeDatabase, 2, oldkeys, oldexpires);
-}
-
-/* Empty a hashtable asynchrounously. */
-void emptyHashtableAsync(serverDb *db, int didx) {
-    hashtable *oldkeys = kvstoreUnlinkHashtable(db->keys, didx);
-    hashtable *oldexpires = kvstoreUnlinkHashtable(db->expires, didx);
-    if (!oldkeys) {
-        return;
-    }
-    atomic_fetch_add_explicit(&lazyfree_objects, hashtableSize(oldkeys), memory_order_relaxed);
-    bioCreateLazyFreeJob(lazyfreeFreeHashtable, 2, oldkeys, oldexpires);
 }
 
 /* Free the key tracking table.

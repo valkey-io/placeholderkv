@@ -815,27 +815,6 @@ unsigned int countKeysInSlot(unsigned int slot) {
     return kvstoreHashtableSize(server.db->keys, slot);
 }
 
-unsigned int dropKeysInSlotBitmap(slotBitmap slot_bitmap, int async) {
-    unsigned int result = 0;
-    for (int i = 0; i < CLUSTER_SLOTS; i++) {
-        if (bitmapTestBit(slot_bitmap, i)) {
-            result += dropKeysInSlot(i, async);
-        }
-    }
-    return result;
-}
-
-unsigned int dropKeysInSlot(unsigned int hashslot, int async) {
-    unsigned int result = kvstoreHashtableSize(server.db->keys, hashslot);
-    if (async) {
-        emptyHashtableAsync(server.db, hashslot);
-    } else {
-        kvstoreEmptyHashtable(server.db->keys, hashslot, NULL);
-        kvstoreEmptyHashtable(server.db->expires, hashslot, NULL);
-    }
-    return result;
-}
-
 void clusterCommandHelp(client *c) {
     const char *help[] = {
         "COUNTKEYSINSLOT <slot>",

@@ -242,7 +242,8 @@ void putClientInPendingWriteQueue(client *c) {
     if (!c->flag.pending_write &&
         (!c->repl_data ||
          c->repl_data->repl_state == REPL_STATE_NONE ||
-         (isReplicaReadyForReplData(c) && !c->repl_data->repl_start_cmd_stream_on_ack))) {
+         (isReplicaReadyForReplData(c) && !c->repl_data->repl_start_cmd_stream_on_ack)) &&
+        (!c->flag.slot_migration_target || clusterShouldWriteToSlotMigrationTarget())) {
         /* Here instead of installing the write handler, we just flag the
          * client and put it into a list of clients that have something
          * to write to the socket. This way before re-entering the event
@@ -291,8 +292,6 @@ int prepareClientToWrite(client *c) {
     /* Replication sources don't receive replies, unless force reply flag
      * is set. */
     if ((c->flag.replicated) && !c->flag.replication_force_reply) return C_ERR;
-
-    if ((c->flag.slot_migration_target && !clusterShouldWriteToSlotMigrationTarget())) return C_ERR;
 
     /* Skip the fake client, such as the fake client for AOF loading.
      * But CLIENT_ID_CACHED_RESPONSE is allowed since it is a fake client

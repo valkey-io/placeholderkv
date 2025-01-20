@@ -378,7 +378,6 @@ struct _clusterNode {
 
 typedef enum slotImportState {
     SLOT_IMPORT_QUEUED,
-    SLOT_IMPORT_REPLICA_TRACKING, /* Replicas track the slot import as well */
     SLOT_IMPORT_CONNECTING,
     SLOT_IMPORT_SEND_AUTH,
     SLOT_IMPORT_RECEIVE_AUTH,
