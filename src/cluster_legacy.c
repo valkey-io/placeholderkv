@@ -4496,7 +4496,7 @@ void clusterFeedSlotMigration(int dbid, robj **argv, int argc) {
     curr_export->syncslot_offset += curr_export->client->reply_bytes - prev_pending;
 }
 
-int clusterShouldWriteToSlotMigrationTarget() {
+int clusterShouldWriteToSlotMigrationTarget(void) {
     slotExport *curr_export = clusterGetCurrentSlotExport();
     return curr_export && (curr_export->state == SLOT_EXPORT_PAUSE_AND_REPLY || curr_export->state == SLOT_EXPORT_PAUSED);
 }
