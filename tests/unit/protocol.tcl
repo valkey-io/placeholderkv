@@ -69,7 +69,7 @@ start_server {tags {"protocol network"}} {
     }
 
     set c 0
-    foreach seq [list "\x00" "*\x00" "$\x00"] {
+    foreach seq [list "\x00" "*\x00" "$\x00" "*1\r\n$\x00"] {
         incr c
         test "Protocol desync regression test #$c" {
             if {$::tls} {
@@ -88,6 +88,8 @@ start_server {tags {"protocol network"}} {
                     puts -nonewline $s $payload
                     flush $s
                 }]} {
+                    set retval [gets $s]
+                    puts "got error response from client: $retval"
                     puts "exception after writing $payload_size bytes"
                     assert_morethan $payload_size $PROTO_INLINE_MAX_SIZE
                     break
