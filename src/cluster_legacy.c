@@ -4635,6 +4635,7 @@ void clusterProceedWithSlotImport(void) {
                  * straight to readQueryFromClient. */
                 connSetReadHandler(curr_import->client->conn, readQueryFromClient);
                 curr_import->state = SLOT_IMPORT_RECEIVE_SYNCSLOTS;
+                continue;
             case SLOT_IMPORT_RECEIVE_SYNCSLOTS:
                 /* Nothing to do in this state. Waiting for CLUSTER SYNCSLOTS ENDSNAPSHOT to be processed. */
                 return;
