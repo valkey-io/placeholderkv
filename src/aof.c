@@ -2291,7 +2291,6 @@ int rewriteAppendOnlyFileRio(rio *aof, slotBitmap slot_bitmap) {
                     updated_time = now;
                 }
             }
-            serverLog(LL_NOTICE, "AOF rewrite: %s, key_count: %ld", keystr, key_count);
 
             /* Delay before next key if required (for testing) */
             if (server.rdb_key_save_delay) debugDelay(server.rdb_key_save_delay);
