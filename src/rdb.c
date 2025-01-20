@@ -3685,14 +3685,14 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
         }
     }
 
-    int retval = saveSnapshotToConnectionSockets(conns, connsnum, !dual_channel, req, childSnapshotUsingRDB, (void *) rsi);
+    int retval = saveSnapshotToConnectionSockets(conns, connsnum, !dual_channel, req, childSnapshotUsingRDB, (void *)rsi);
 
     if (retval != C_OK) {
         serverLog(LL_WARNING, "Can't save in background: fork: %s", strerror(errno));
 
         /* Undo the state change. The caller will perform cleanup on
-            * all the replicas in BGSAVE_START state, but an early call to
-            * replicationSetupReplicaForFullResync() turned it into BGSAVE_END */
+         * all the replicas in BGSAVE_START state, but an early call to
+         * replicationSetupReplicaForFullResync() turned it into BGSAVE_END */
         listRewind(server.replicas, &li);
         while ((ln = listNext(&li))) {
             client *replica = ln->value;

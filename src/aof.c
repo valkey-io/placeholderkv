@@ -2191,7 +2191,7 @@ werr:
     return 0;
 }
 
-int slotFilterPredicate(int slot, void * privdata) {
+int slotFilterPredicate(int slot, void *privdata) {
     if (privdata == NULL) return 1;
     unsigned char *slot_bitmap = (unsigned char *)privdata;
     return bitmapTestBit(slot_bitmap, slot);

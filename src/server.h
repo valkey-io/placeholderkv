@@ -182,15 +182,15 @@ struct hdr_histogram;
 #define RIO_CONNSET_WRITE_MAX_CHUNK_SIZE 16384
 
 /* Instantaneous metrics tracking. */
-#define STATS_METRIC_SAMPLES 16                 /* Number of samples per metric. */
-#define STATS_METRIC_COMMAND 0                  /* Number of commands executed. */
-#define STATS_METRIC_NET_INPUT 1                /* Bytes read to network. */
-#define STATS_METRIC_NET_OUTPUT 2               /* Bytes written to network. */
-#define STATS_METRIC_NET_INPUT_REPLICATION 3    /* Bytes read to network during replication. */
-#define STATS_METRIC_NET_OUTPUT_REPLICATION 4   /* Bytes written to network during replication. */
-#define STATS_METRIC_EL_CYCLE 5                 /* Number of eventloop cycled. */
-#define STATS_METRIC_EL_DURATION 6              /* Eventloop duration. */
-#define STATS_METRIC_NET_INPUT_SLOT_MIGRATION 7 /* Bytes read to network during slot migration. */
+#define STATS_METRIC_SAMPLES 16                  /* Number of samples per metric. */
+#define STATS_METRIC_COMMAND 0                   /* Number of commands executed. */
+#define STATS_METRIC_NET_INPUT 1                 /* Bytes read to network. */
+#define STATS_METRIC_NET_OUTPUT 2                /* Bytes written to network. */
+#define STATS_METRIC_NET_INPUT_REPLICATION 3     /* Bytes read to network during replication. */
+#define STATS_METRIC_NET_OUTPUT_REPLICATION 4    /* Bytes written to network during replication. */
+#define STATS_METRIC_EL_CYCLE 5                  /* Number of eventloop cycled. */
+#define STATS_METRIC_EL_DURATION 6               /* Eventloop duration. */
+#define STATS_METRIC_NET_INPUT_SLOT_MIGRATION 7  /* Bytes read to network during slot migration. */
 #define STATS_METRIC_NET_OUTPUT_SLOT_MIGRATION 7 /* Bytes written to network during slot migration. */
 #define STATS_METRIC_COUNT 8
 
@@ -380,10 +380,10 @@ typedef enum blocking_type {
 #define CLIENT_TYPE_PUBSUB 2         /* Clients subscribed to PubSub channels. */
 #define CLIENT_TYPE_PRIMARY 3        /* Primary. */
 #define CLIENT_TYPE_SLOT_MIGRATION 4 /* Slot migration client. */
-#define CLIENT_TYPE_COUNT 5      /* Total number of client types. */
-#define CLIENT_TYPE_OBUF_COUNT 3 /* Number of clients to expose to output \
-                                    buffer configuration. Just the first  \
-                                    three: normal, replica, pubsub. */
+#define CLIENT_TYPE_COUNT 5          /* Total number of client types. */
+#define CLIENT_TYPE_OBUF_COUNT 3     /* Number of clients to expose to output \
+                                        buffer configuration. Just the first  \
+                                        three: normal, replica, pubsub. */
 
 /* Replica replication state. Used in server.repl_state for replicas to remember
  * what to do next. */
@@ -1110,8 +1110,8 @@ typedef struct ClientPubSubData {
                                       context of client side caching. */
 } ClientPubSubData;
 
-#define CLUSTER_SLOT_MASK_BITS 14                                   /* Number of bits used for slot id. */
-#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS)                 /* Total number of slots in cluster mode, which is 16384. */
+#define CLUSTER_SLOT_MASK_BITS 14                   /* Number of bits used for slot id. */
+#define CLUSTER_SLOTS (1 << CLUSTER_SLOT_MASK_BITS) /* Total number of slots in cluster mode, which is 16384. */
 
 typedef unsigned char slotBitmap[CLUSTER_SLOTS / 8];
 
@@ -1710,8 +1710,8 @@ struct valkeyServer {
     long long stat_net_repl_input_bytes;           /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
     /* Bytes written during replication, added to stat_net_output_bytes in 'info'. */
     long long stat_net_repl_output_bytes;
-    long long stat_net_slot_migration_input_bytes; /* Bytes read during slot migration, added to stat_net_input_bytes in 'info'. */
-    long long stat_net_slot_migration_output_bytes; /* Bytes written during slot migration, added to stat_net_output_bytes in 'info'. */
+    long long stat_net_slot_migration_input_bytes;      /* Bytes read during slot migration, added to stat_net_input_bytes in 'info'. */
+    long long stat_net_slot_migration_output_bytes;     /* Bytes written during slot migration, added to stat_net_output_bytes in 'info'. */
     size_t stat_current_cow_peak;                       /* Peak size of copy on write bytes. */
     size_t stat_current_cow_bytes;                      /* Copy on write bytes while child is active. */
     monotime stat_current_cow_updated;                  /* Last update time of stat_current_cow_bytes */
@@ -2962,7 +2962,7 @@ void updateLoadingFileName(char *filename);
 void startSaving(int rdbflags);
 void stopSaving(int success);
 int allPersistenceDisabled(void);
-typedef int(*ChildSnapshotFunc)(int req, rio *rdb, void *privdata);
+typedef int (*ChildSnapshotFunc)(int req, rio *rdb, void *privdata);
 int saveSnapshotToConnectionSockets(connection **conns, int connsnum, int use_pipe, int req, ChildSnapshotFunc snapshot_func, void *privdata);
 
 #define DISK_ERROR_TYPE_AOF 1  /* Don't accept writes: AOF errors. */

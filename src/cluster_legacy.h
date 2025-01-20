@@ -132,9 +132,9 @@ typedef struct {
 } clusterMsgDataPublish;
 
 typedef struct {
-    uint64_t configEpoch;                   /* Config epoch of the specified instance. */
-    char nodename[CLUSTER_NAMELEN];         /* Name of the slots owner. */
-    slotBitmap slots; /* Slots bitmap. */
+    uint64_t configEpoch;           /* Config epoch of the specified instance. */
+    char nodename[CLUSTER_NAMELEN]; /* Name of the slots owner. */
+    slotBitmap slots;               /* Slots bitmap. */
 } clusterMsgDataUpdate;
 
 typedef struct {

@@ -2575,7 +2575,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 
                 /* Was this slot mine and it was in a paused state for slot
                  * migration? If so, mark the move as done. */
-                slotExport * curr_export = clusterGetCurrentSlotExport();
+                slotExport *curr_export = clusterGetCurrentSlotExport();
                 if (server.cluster->slots[j] == myself && curr_export && bitmapTestBit(curr_export->slot_bitmap, j)) {
                     bitmapClearBit(curr_export->slot_bitmap, j);
                     if (isSlotBitmapEmpty(curr_export->slot_bitmap)) {
@@ -4416,7 +4416,7 @@ void clusterPropagatePublish(robj *channel, robj *message, int sharded) {
  * -------------------------------------------------------------------------- */
 
 slotImport *clusterCreateSlotImportJob(clusterNode *source, slotBitmap slots) {
-    slotImport *result = (slotImport *) zcalloc(sizeof(slotImport));
+    slotImport *result = (slotImport *)zcalloc(sizeof(slotImport));
     memcpy(result->slot_bitmap, slots, sizeof(slotBitmap));
     result->source_node = source;
     result->state = SLOT_IMPORT_QUEUED;
@@ -4425,7 +4425,7 @@ slotImport *clusterCreateSlotImportJob(clusterNode *source, slotBitmap slots) {
 }
 
 slotExport *clusterCreateSlotExportJob(client *c, slotBitmap slots) {
-    slotExport *result = (slotExport *) zcalloc(sizeof(slotExport));
+    slotExport *result = (slotExport *)zcalloc(sizeof(slotExport));
     memcpy(result->slot_bitmap, slots, sizeof(slotBitmap));
     result->state = SLOT_EXPORT_QUEUED;
     result->pause_end = -1;
@@ -4451,12 +4451,12 @@ void clusterFreeSlotExportJob(slotExport *slot_export) {
 
 slotImport *clusterGetCurrentSlotImport(void) {
     if (listLength(server.cluster->slot_import_jobs) == 0) return NULL;
-    return (slotImport *) listFirst(server.cluster->slot_import_jobs)->value;
+    return (slotImport *)listFirst(server.cluster->slot_import_jobs)->value;
 }
 
 slotExport *clusterGetCurrentSlotExport(void) {
     if (listLength(server.cluster->slot_export_jobs) == 0) return NULL;
-    return (slotExport *) listFirst(server.cluster->slot_export_jobs)->value;
+    return (slotExport *)listFirst(server.cluster->slot_export_jobs)->value;
 }
 
 void clusterFeedSlotMigration(int dbid, robj **argv, int argc) {
@@ -4477,13 +4477,13 @@ void clusterFeedSlotMigration(int dbid, robj **argv, int argc) {
     getNodeByQuery(server.current_client, cmd, argv, argc, &slot, &error_code);
     if (error_code != CLUSTER_REDIR_NONE || slot == -1) {
         /* A couple cases where this could happen:
-        *    - The replicated command is a command without a slot.
-        *    - The replicated command is written by VM_Replicate module APIs
-        *      and is a cross-slot command, or a slot that is not owned by
-        *      this node.
-        *
-        * In any case, our best solution is to not replicate this to the
-        * target node. */
+         *    - The replicated command is a command without a slot.
+         *    - The replicated command is written by VM_Replicate module APIs
+         *      and is a cross-slot command, or a slot that is not owned by
+         *      this node.
+         *
+         * In any case, our best solution is to not replicate this to the
+         * target node. */
         return;
     }
     if (!bitmapTestBit(curr_export->slot_bitmap, slot)) return;
@@ -4526,10 +4526,10 @@ void clusterProceedWithSlotImport(void) {
     char *err;
     while (clusterGetCurrentSlotImport() != NULL) {
         listNode *curr_node = listFirst(server.cluster->slot_import_jobs);
-        slotImport *curr_import = (slotImport *) curr_node->value;
+        slotImport *curr_import = (slotImport *)curr_node->value;
         if (curr_import->state != SLOT_IMPORT_QUEUED && curr_import->end_time < mstime()) {
             serverLog(LL_WARNING,
-                "Timed out for slot import from source node %.40s", curr_import->source_node->name);
+                      "Timed out for slot import from source node %.40s", curr_import->source_node->name);
             curr_import->state = SLOT_IMPORT_FAILED;
         }
         if (curr_import->state > SLOT_IMPORT_PAUSE_OWNER && curr_import->state != SLOT_IMPORT_FAILED && curr_import->pause_end < mstime()) {
@@ -4542,155 +4542,155 @@ void clusterProceedWithSlotImport(void) {
             serverLog(LL_WARNING, "Client for slot import from source node %.40s has been closed", curr_import->source_node->name);
             curr_import->state = SLOT_IMPORT_FAILED;
         }
-        switch(curr_import->state) {
-            case SLOT_IMPORT_QUEUED:
-                /* Start the migration */
-                serverLog(LL_NOTICE, "Starting slot import from source node %.40s", curr_import->source_node->name);
-                curr_import->end_time = mstime() + CLUSTER_SLOT_IMPORT_TIMEOUT;
-                curr_import->conn = connCreate(server.tls_replication ? connectionTypeTls() : connectionTypeTcp());
-                if (connConnect(curr_import->conn, curr_import->source_node->ip, getNodeDefaultReplicationPort(curr_import->source_node), server.bind_source_addr, clusterImportHandler) == C_ERR) {
-                    serverLog(LL_WARNING,
-                            "Failed to connect to slot import source node %.40s", curr_import->source_node->name);
-                    curr_import->state = SLOT_IMPORT_FAILED;
-                    continue;
-                }
-                curr_import->state = SLOT_IMPORT_CONNECTING;
+        switch (curr_import->state) {
+        case SLOT_IMPORT_QUEUED:
+            /* Start the migration */
+            serverLog(LL_NOTICE, "Starting slot import from source node %.40s", curr_import->source_node->name);
+            curr_import->end_time = mstime() + CLUSTER_SLOT_IMPORT_TIMEOUT;
+            curr_import->conn = connCreate(server.tls_replication ? connectionTypeTls() : connectionTypeTcp());
+            if (connConnect(curr_import->conn, curr_import->source_node->ip, getNodeDefaultReplicationPort(curr_import->source_node), server.bind_source_addr, clusterImportHandler) == C_ERR) {
+                serverLog(LL_WARNING,
+                          "Failed to connect to slot import source node %.40s", curr_import->source_node->name);
+                curr_import->state = SLOT_IMPORT_FAILED;
                 continue;
-            case SLOT_IMPORT_CONNECTING:
-                if (curr_import->conn->state == CONN_STATE_CONNECTING) {
-                    /* Nothing to do, waiting for connection to be established. */
-                    return;
-                } else if (curr_import->conn->state != CONN_STATE_CONNECTED) {
-                    serverLog(LL_WARNING, "Failed during connection to slot import source node %.40s: %s", curr_import->source_node->name, connGetLastError(curr_import->conn));
-                    curr_import->state = SLOT_IMPORT_FAILED;
-                    continue;
-                }
-                serverLog(LL_NOTICE, "Connected to slot import source node %.40s", curr_import->source_node->name);
-                connSetReadHandler(curr_import->conn, NULL);
-                client *c = createClient(curr_import->conn);
-                curr_import->client = c;
-                c->flag.replicated = 1;
-                c->flag.slot_migration_source = 1;
-                c->flag.authenticated = 1;
-                c->user = NULL; /* This client can do everything. */
-                c->querybuf = sdsempty(); /* Similar to primary, we use a dedicated query buf. */
-                initClientReplicationData(c);
+            }
+            curr_import->state = SLOT_IMPORT_CONNECTING;
+            continue;
+        case SLOT_IMPORT_CONNECTING:
+            if (curr_import->conn->state == CONN_STATE_CONNECTING) {
+                /* Nothing to do, waiting for connection to be established. */
+                return;
+            } else if (curr_import->conn->state != CONN_STATE_CONNECTED) {
+                serverLog(LL_WARNING, "Failed during connection to slot import source node %.40s: %s", curr_import->source_node->name, connGetLastError(curr_import->conn));
+                curr_import->state = SLOT_IMPORT_FAILED;
+                continue;
+            }
+            serverLog(LL_NOTICE, "Connected to slot import source node %.40s", curr_import->source_node->name);
+            connSetReadHandler(curr_import->conn, NULL);
+            client *c = createClient(curr_import->conn);
+            curr_import->client = c;
+            c->flag.replicated = 1;
+            c->flag.slot_migration_source = 1;
+            c->flag.authenticated = 1;
+            c->user = NULL;           /* This client can do everything. */
+            c->querybuf = sdsempty(); /* Similar to primary, we use a dedicated query buf. */
+            initClientReplicationData(c);
 
-                curr_import->state = SLOT_IMPORT_SEND_AUTH;
-                continue;
-            case SLOT_IMPORT_SEND_AUTH:
-                if (!server.primary_auth) {
-                    curr_import->state = SLOT_IMPORT_SEND_SYNCSLOTS;
-                    continue;
-                }
-                char *auth_args[3] = {"AUTH", NULL, NULL};
-                size_t auth_lens[3] = {4, 0, 0};
-                int argc = 1;
-                if (server.primary_user) {
-                    auth_args[argc] = server.primary_user;
-                    auth_lens[argc] = strlen(server.primary_user);
-                    argc++;
-                }
-                auth_args[argc] = server.primary_auth;
-                auth_lens[argc] = sdslen(server.primary_auth);
-                argc++;
-                err = sendCommandArgv(curr_import->conn, argc, auth_args, auth_lens);
-                if (err) {
-                    serverLog(LL_WARNING, "Failed to write AUTH to slot migration source: %s", err);
-                    sdsfree(err);
-                    curr_import->state = SLOT_IMPORT_FAILED;
-                    continue;
-                }
-                curr_import->state = SLOT_IMPORT_RECEIVE_AUTH;
-                continue;
-            case SLOT_IMPORT_RECEIVE_AUTH:
-                err = receiveSynchronousResponse(curr_import->conn);
-                if (err == NULL) {
-                    serverLog(LL_WARNING, "Slot migration source did not respond to AUTH command");
-                }
-                if (err[0] == '-') {
-                    serverLog(LL_WARNING, "Unable to AUTH to slot migration source: %s", err);
-                    sdsfree(err);
-                }
-                sdsfree(err);
-                err = NULL;
+            curr_import->state = SLOT_IMPORT_SEND_AUTH;
+            continue;
+        case SLOT_IMPORT_SEND_AUTH:
+            if (!server.primary_auth) {
                 curr_import->state = SLOT_IMPORT_SEND_SYNCSLOTS;
                 continue;
-            case SLOT_IMPORT_SEND_SYNCSLOTS:
-                /* Ensure we have a clean state for the SYNC. */
-                delKeysInSlotBitmap(curr_import->slot_bitmap);
+            }
+            char *auth_args[3] = {"AUTH", NULL, NULL};
+            size_t auth_lens[3] = {4, 0, 0};
+            int argc = 1;
+            if (server.primary_user) {
+                auth_args[argc] = server.primary_user;
+                auth_lens[argc] = strlen(server.primary_user);
+                argc++;
+            }
+            auth_args[argc] = server.primary_auth;
+            auth_lens[argc] = sdslen(server.primary_auth);
+            argc++;
+            err = sendCommandArgv(curr_import->conn, argc, auth_args, auth_lens);
+            if (err) {
+                serverLog(LL_WARNING, "Failed to write AUTH to slot migration source: %s", err);
+                sdsfree(err);
+                curr_import->state = SLOT_IMPORT_FAILED;
+                continue;
+            }
+            curr_import->state = SLOT_IMPORT_RECEIVE_AUTH;
+            continue;
+        case SLOT_IMPORT_RECEIVE_AUTH:
+            err = receiveSynchronousResponse(curr_import->conn);
+            if (err == NULL) {
+                serverLog(LL_WARNING, "Slot migration source did not respond to AUTH command");
+            }
+            if (err[0] == '-') {
+                serverLog(LL_WARNING, "Unable to AUTH to slot migration source: %s", err);
+                sdsfree(err);
+            }
+            sdsfree(err);
+            err = NULL;
+            curr_import->state = SLOT_IMPORT_SEND_SYNCSLOTS;
+            continue;
+        case SLOT_IMPORT_SEND_SYNCSLOTS:
+            /* Ensure we have a clean state for the SYNC. */
+            delKeysInSlotBitmap(curr_import->slot_bitmap);
 
-                serverLog(LL_NOTICE, "Sending CLUSTER SYNCSLOTS START request to source node %.40s", curr_import->source_node->name);
-                char *syncslots_args[4] = {"CLUSTER", "SYNCSLOTS", "START", (char *)curr_import->slot_bitmap};
-                size_t syncslots_lens[4] = {7, 9, 5, sizeof(slotBitmap)};
-                err = sendCommandArgv(curr_import->conn, 4, syncslots_args, syncslots_lens);
-                if (err) {
-                    serverLog(LL_WARNING, "Failed to write SYNCSLOTS START to slot migration source: %s", err);
-                    sdsfree(err);
-                    curr_import->state = SLOT_IMPORT_FAILED;
-                    continue;
-                }
+            serverLog(LL_NOTICE, "Sending CLUSTER SYNCSLOTS START request to source node %.40s", curr_import->source_node->name);
+            char *syncslots_args[4] = {"CLUSTER", "SYNCSLOTS", "START", (char *)curr_import->slot_bitmap};
+            size_t syncslots_lens[4] = {7, 9, 5, sizeof(slotBitmap)};
+            err = sendCommandArgv(curr_import->conn, 4, syncslots_args, syncslots_lens);
+            if (err) {
+                serverLog(LL_WARNING, "Failed to write SYNCSLOTS START to slot migration source: %s", err);
+                sdsfree(err);
+                curr_import->state = SLOT_IMPORT_FAILED;
+                continue;
+            }
 
-                /* Our result will be received in AOF format, so we can pipe it
-                 * straight to readQueryFromClient. */
-                connSetReadHandler(curr_import->client->conn, readQueryFromClient);
-                curr_import->state = SLOT_IMPORT_RECEIVE_SYNCSLOTS;
-                continue;
-            case SLOT_IMPORT_RECEIVE_SYNCSLOTS:
-                /* Nothing to do in this state. Waiting for CLUSTER SYNCSLOTS ENDSNAPSHOT to be processed. */
-                return;
-            case SLOT_IMPORT_PAUSE_OWNER:
-                curr_import->client->flag.replication_force_reply = 1;
-                addReplyArrayLen(curr_import->client, 3);
-                addReplyBulkCBuffer(curr_import->client, "CLUSTER", 7);
-                addReplyBulkCBuffer(curr_import->client, "SYNCSLOTS", 9);
-                addReplyBulkCBuffer(curr_import->client, "PAUSE", 5);
-                curr_import->client->flag.replication_force_reply = 0;
+            /* Our result will be received in AOF format, so we can pipe it
+             * straight to readQueryFromClient. */
+            connSetReadHandler(curr_import->client->conn, readQueryFromClient);
+            curr_import->state = SLOT_IMPORT_RECEIVE_SYNCSLOTS;
+            continue;
+        case SLOT_IMPORT_RECEIVE_SYNCSLOTS:
+            /* Nothing to do in this state. Waiting for CLUSTER SYNCSLOTS ENDSNAPSHOT to be processed. */
+            return;
+        case SLOT_IMPORT_PAUSE_OWNER:
+            curr_import->client->flag.replication_force_reply = 1;
+            addReplyArrayLen(curr_import->client, 3);
+            addReplyBulkCBuffer(curr_import->client, "CLUSTER", 7);
+            addReplyBulkCBuffer(curr_import->client, "SYNCSLOTS", 9);
+            addReplyBulkCBuffer(curr_import->client, "PAUSE", 5);
+            curr_import->client->flag.replication_force_reply = 0;
 
-                serverLog(LL_NOTICE, "SYNCSLOTS from slot migration source %.40s (%s) has been performed. Pausing source node and waiting to continue", curr_import->source_node->name, curr_import->source_node->human_nodename);
-                curr_import->paused_at_offset = -1;
-                curr_import->pause_end = mstime() + CLUSTER_MF_TIMEOUT;
-                curr_import->state = SLOT_IMPORT_WAITING_FOR_OFFSET;
+            serverLog(LL_NOTICE, "SYNCSLOTS from slot migration source %.40s (%s) has been performed. Pausing source node and waiting to continue", curr_import->source_node->name, curr_import->source_node->human_nodename);
+            curr_import->paused_at_offset = -1;
+            curr_import->pause_end = mstime() + CLUSTER_MF_TIMEOUT;
+            curr_import->state = SLOT_IMPORT_WAITING_FOR_OFFSET;
+            continue;
+        case SLOT_IMPORT_WAITING_FOR_OFFSET:
+            return;
+        case SLOT_IMPORT_SYNCING_TO_OFFSET:
+            if (curr_import->client->repl_data->reploff >= curr_import->paused_at_offset) {
+                serverLog(LL_NOTICE, "SYNCSLOTS of slot range has caught up to paused slot owner (%lld), slot migration can start.", curr_import->paused_at_offset);
+                curr_import->state = SLOT_IMPORT_FINISH;
                 continue;
-            case SLOT_IMPORT_WAITING_FOR_OFFSET:
-                return;
-            case SLOT_IMPORT_SYNCING_TO_OFFSET:
-                if (curr_import->client->repl_data->reploff >= curr_import->paused_at_offset) {
-                    serverLog(LL_NOTICE, "SYNCSLOTS of slot range has caught up to paused slot owner (%lld), slot migration can start.", curr_import->paused_at_offset);
-                    curr_import->state = SLOT_IMPORT_FINISH;
-                    continue;
+            }
+            /* Need to wait for the sync to progress further */
+            return;
+        case SLOT_IMPORT_FINISH:
+            serverLog(LL_NOTICE, "Setting myself to owner of migrating slots and broadcasting");
+            for (int i = 0; i < CLUSTER_SLOTS; i++) {
+                if (bitmapTestBit(curr_import->slot_bitmap, i)) {
+                    clusterDelSlot(i);
+                    clusterAddSlot(myself, i);
                 }
-                /* Need to wait for the sync to progress further */
-                return;
-            case SLOT_IMPORT_FINISH:
-                serverLog(LL_NOTICE, "Setting myself to owner of migrating slots and broadcasting");
-                for (int i = 0; i < CLUSTER_SLOTS; i++) {
-                    if (bitmapTestBit(curr_import->slot_bitmap, i)) {
-                        clusterDelSlot(i);
-                        clusterAddSlot(myself, i);
-                    }
-                }
-                clusterUpdateState();
-                clusterSaveConfigOrDie(1);
-                if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
-                    serverLog(LL_NOTICE, "ConfigEpoch updated after importing slots");
-                }
-                clusterFreeSlotImportJob(curr_import);
-                clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
-                listDelNode(server.cluster->slot_import_jobs, curr_node);
-                continue;
-            case SLOT_IMPORT_FAILED:
-                listDelNode(server.cluster->slot_import_jobs, curr_node);
-                delKeysInSlotBitmap(curr_import->slot_bitmap);
-                clusterFreeSlotImportJob(curr_import);
-                continue;
+            }
+            clusterUpdateState();
+            clusterSaveConfigOrDie(1);
+            if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+                serverLog(LL_NOTICE, "ConfigEpoch updated after importing slots");
+            }
+            clusterFreeSlotImportJob(curr_import);
+            clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+            listDelNode(server.cluster->slot_import_jobs, curr_node);
+            continue;
+        case SLOT_IMPORT_FAILED:
+            listDelNode(server.cluster->slot_import_jobs, curr_node);
+            delKeysInSlotBitmap(curr_import->slot_bitmap);
+            clusterFreeSlotImportJob(curr_import);
+            continue;
         }
     }
 }
 
 int childSnapshotForSyncSlot(int req, rio *rdb, void *privdata) {
     UNUSED(req);
-    int retval = rewriteAppendOnlyFileRio(rdb, (unsigned char *) privdata);
+    int retval = rewriteAppendOnlyFileRio(rdb, (unsigned char *)privdata);
     rioWrite(rdb, "*3\r\n", 4);
     rioWriteBulkString(rdb, "CLUSTER", 7);
     rioWriteBulkString(rdb, "SYNCSLOTS", 9);
@@ -4701,67 +4701,67 @@ int childSnapshotForSyncSlot(int req, rio *rdb, void *privdata) {
 void clusterProceedWithSlotExport(void) {
     while (clusterGetCurrentSlotExport() != NULL) {
         listNode *curr_node = listFirst(server.cluster->slot_export_jobs);
-        slotExport *curr_export = (slotExport *) curr_node->value;
+        slotExport *curr_export = (slotExport *)curr_node->value;
         if (curr_export->client == NULL) {
             serverLog(LL_WARNING, "Client for slot export has been closed");
             curr_export->state = SLOT_EXPORT_FAILED;
         }
-        switch(curr_export->state) {
-            case SLOT_EXPORT_QUEUED:
-                if (hasActiveChildProcess()) {
-                    /* We need to wait for the child to die, then we can
-                     * proceed. */
-                    return;
-                }
-                connection ** conns = zmalloc(sizeof(connection*));
-                *conns = curr_export->client->conn;
-                serverLog(LL_NOTICE, "Initiating snapshot to conn with fd %d", curr_export->client->conn->fd);
-                if (saveSnapshotToConnectionSockets(conns, 1, 1, 0, childSnapshotForSyncSlot, curr_export->slot_bitmap) != C_OK) {
-                    serverLog(LL_WARNING, "Failed to start slot export to target");
-                    curr_export->state = SLOT_EXPORT_FAILED;
-                    continue;
-                }
-                curr_export->state = SLOT_EXPORT_SNAPSHOTTING;
-                continue;
-            case SLOT_EXPORT_SNAPSHOTTING:
-                /* During this time, we are waiting for SYNCSLOTS PAUSE to
-                 * start flushing the accumulated backlog. */
+        switch (curr_export->state) {
+        case SLOT_EXPORT_QUEUED:
+            if (hasActiveChildProcess()) {
+                /* We need to wait for the child to die, then we can
+                 * proceed. */
                 return;
-            case SLOT_EXPORT_PAUSE_AND_REPLY:
-                addReplyArrayLen(curr_export->client, 4);
-                addReplyBulkCBuffer(curr_export->client, "CLUSTER", 7);
-                addReplyBulkCBuffer(curr_export->client, "SYNCSLOTS", 9);
-                addReplyBulkCBuffer(curr_export->client, "PAUSEOFFSET", 11);
-                addReplyBulkLongLong(curr_export->client, curr_export->syncslot_offset);
-
-                /* Even though we just added replies, it's possible that, due to
-                 * existing pending data, the client is not in the pending write
-                 * queue. We enqueue it explicitly to work around this. */
-                putClientInPendingWriteQueue(curr_export->client);
-
-                curr_export->pause_end = mstime() + (CLUSTER_MF_TIMEOUT * CLUSTER_MF_PAUSE_MULT);
-                pauseActions(PAUSE_DURING_SLOT_MIGRATION, curr_export->pause_end, PAUSE_ACTIONS_CLIENT_WRITE_SET);
-
-                curr_export->state = SLOT_EXPORT_PAUSED;
+            }
+            connection **conns = zmalloc(sizeof(connection *));
+            *conns = curr_export->client->conn;
+            serverLog(LL_NOTICE, "Initiating snapshot to conn with fd %d", curr_export->client->conn->fd);
+            if (saveSnapshotToConnectionSockets(conns, 1, 1, 0, childSnapshotForSyncSlot, curr_export->slot_bitmap) != C_OK) {
+                serverLog(LL_WARNING, "Failed to start slot export to target");
+                curr_export->state = SLOT_EXPORT_FAILED;
                 continue;
-            case SLOT_EXPORT_PAUSED:
-                /* While paused, we simply want to check if we should unpause. */
-                if (curr_export->pause_end <= mstime()) {
-                    /* Every CLUSTER_MF_TIMEOUT, the source node should
-                     * re-attempt the pause. If we reach this point, it hasn't
-                     * attempted the pause in that time, we can assume it is
-                     * dead and fail the migration.*/
-                    serverLog(LL_WARNING, "During slot export, unpausing self and cancelling export due to timeout.");
-                    unpauseActions(PAUSE_DURING_SLOT_MIGRATION);
-                    curr_export->state = SLOT_EXPORT_FAILED;
-                    continue;
-                }
-                return;
-            case SLOT_EXPORT_FINISH:
-            case SLOT_EXPORT_FAILED:
-                listDelNode(server.cluster->slot_export_jobs, curr_node);
-                clusterFreeSlotExportJob(curr_export);
+            }
+            curr_export->state = SLOT_EXPORT_SNAPSHOTTING;
+            continue;
+        case SLOT_EXPORT_SNAPSHOTTING:
+            /* During this time, we are waiting for SYNCSLOTS PAUSE to
+             * start flushing the accumulated backlog. */
+            return;
+        case SLOT_EXPORT_PAUSE_AND_REPLY:
+            addReplyArrayLen(curr_export->client, 4);
+            addReplyBulkCBuffer(curr_export->client, "CLUSTER", 7);
+            addReplyBulkCBuffer(curr_export->client, "SYNCSLOTS", 9);
+            addReplyBulkCBuffer(curr_export->client, "PAUSEOFFSET", 11);
+            addReplyBulkLongLong(curr_export->client, curr_export->syncslot_offset);
+
+            /* Even though we just added replies, it's possible that, due to
+             * existing pending data, the client is not in the pending write
+             * queue. We enqueue it explicitly to work around this. */
+            putClientInPendingWriteQueue(curr_export->client);
+
+            curr_export->pause_end = mstime() + (CLUSTER_MF_TIMEOUT * CLUSTER_MF_PAUSE_MULT);
+            pauseActions(PAUSE_DURING_SLOT_MIGRATION, curr_export->pause_end, PAUSE_ACTIONS_CLIENT_WRITE_SET);
+
+            curr_export->state = SLOT_EXPORT_PAUSED;
+            continue;
+        case SLOT_EXPORT_PAUSED:
+            /* While paused, we simply want to check if we should unpause. */
+            if (curr_export->pause_end <= mstime()) {
+                /* Every CLUSTER_MF_TIMEOUT, the source node should
+                 * re-attempt the pause. If we reach this point, it hasn't
+                 * attempted the pause in that time, we can assume it is
+                 * dead and fail the migration.*/
+                serverLog(LL_WARNING, "During slot export, unpausing self and cancelling export due to timeout.");
+                unpauseActions(PAUSE_DURING_SLOT_MIGRATION);
+                curr_export->state = SLOT_EXPORT_FAILED;
                 continue;
+            }
+            return;
+        case SLOT_EXPORT_FINISH:
+        case SLOT_EXPORT_FAILED:
+            listDelNode(server.cluster->slot_export_jobs, curr_node);
+            clusterFreeSlotExportJob(curr_export);
+            continue;
         }
     }
 }
@@ -7532,8 +7532,8 @@ int clusterCommandSpecial(client *c) {
         slotBitmap requested_slots;
         memset(requested_slots, 0, sizeof(slotBitmap));
         int i;
-        clusterNode * curr_owner = NULL;
-        for (i = 3; i + 1 < c->argc; i+=2) {
+        clusterNode *curr_owner = NULL;
+        for (i = 3; i + 1 < c->argc; i += 2) {
             int start = getSlotOrReply(c, c->argv[i]);
             if (start < 0) {
                 return 1;
@@ -7571,7 +7571,7 @@ int clusterCommandSpecial(client *c) {
             }
         }
 
-        slotImport * to_enqueue = clusterCreateSlotImportJob(curr_owner, requested_slots);
+        slotImport *to_enqueue = clusterCreateSlotImportJob(curr_owner, requested_slots);
         listAddNodeTail(server.cluster->slot_import_jobs, to_enqueue);
         clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_SLOTMIGRATION);
         addReply(c, shared.ok);
@@ -7583,7 +7583,7 @@ int clusterCommandSpecial(client *c) {
         if (!strcasecmp(c->argv[2]->ptr, "start")) {
             /* CLUSTER SYNCSLOTS START <slot-bitmap> */
             if (c->argc != 4) {
-            addReplyError(c, "CLUSTER SYNCSLOTS START command requires exactly one argument");
+                addReplyError(c, "CLUSTER SYNCSLOTS START command requires exactly one argument");
                 return 1;
             }
             if (sdslen(c->argv[3]->ptr) != sizeof(slotBitmap)) {
