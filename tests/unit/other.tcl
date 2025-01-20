@@ -30,6 +30,10 @@ start_server {tags {"other"}} {
         }
     }
 
+    test {Coverage: ECHO} {
+        assert_equal bang [r ECHO bang]
+    }
+
     test {SAVE - make sure there are all the types as values} {
         # Wait for a background saving in progress to terminate
         waitForBgsave r
@@ -564,7 +568,8 @@ if {$::verbose} {
 set tempFileId [open $tempFileName w]
 set group [dict get [file attributes $tempFileName] -group]
 if {$group != ""} {
-    start_server [list tags {"repl external:skip"} overrides [list unixsocketgroup $group unixsocketperm 744]] {
+    set escaped_group "\"[string map {"\\" "\\\\"} $group]\""
+    start_server [list tags {"repl external:skip"} overrides [list unixsocketgroup $escaped_group unixsocketperm 744]] {
         test {test unixsocket options are set correctly} {
             set socketpath [lindex [r config get unixsocket] 1]
             set attributes [file attributes $socketpath]
