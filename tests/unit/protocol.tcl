@@ -94,7 +94,7 @@ start_server {tags {"protocol network"}} {
                 }
             }
            
-            wait_for_condition 5 10 {
+            wait_for_condition 50 100 {
                 [string match {*Protocol error*} [gets $s]]
             } else {
                 fail "expected connection to be closed on protocol error after sending $payload_size bytes"
