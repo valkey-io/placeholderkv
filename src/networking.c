@@ -2156,11 +2156,11 @@ int postWriteToClient(client *c) {
     }
     if (c->nwritten > 0) {
         c->net_output_bytes += c->nwritten;
-        /* For clients representing replication sources we don't count sending data
+        /* For clients representing primaries we don't count sending data
          * as an interaction, since we always send REPLCONF ACK commands
          * that take some time to just fill the socket output buffer.
          * We just rely on data / pings received for timeout detection. */
-        if (!c->flag.replicated) c->last_interaction = server.unixtime;
+        if (!c->flag.primary) c->last_interaction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;

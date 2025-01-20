@@ -4461,7 +4461,8 @@ slotExport *clusterGetCurrentSlotExport(void) {
 
 void clusterFeedSlotMigration(int dbid, robj **argv, int argc) {
     UNUSED(dbid);
-    int i, slot, error_code;
+    int i, error_code;
+    int slot = -1;
     slotExport *curr_export = clusterGetCurrentSlotExport();
     if (curr_export == NULL || curr_export->state < SLOT_EXPORT_SNAPSHOTTING) {
         return;
@@ -4475,9 +4476,14 @@ void clusterFeedSlotMigration(int dbid, robj **argv, int argc) {
     struct serverCommand *cmd = lookupCommand(argv, argc);
     getNodeByQuery(server.current_client, cmd, argv, argc, &slot, &error_code);
     if (error_code != CLUSTER_REDIR_NONE || slot == -1) {
-        /* This shouldn't happen - but is possible if a module does something
-         * like VM_Replicate a cross-slot command. In that case, we don't have
-         * a clear way to proceed, so it makes sense to give up. */
+        /* A couple cases where this could happen:
+        *    - The replicated command is a command without a slot.
+        *    - The replicated command is written by VM_Replicate module APIs
+        *      and is a cross-slot command, or a slot that is not owned by
+        *      this node.
+        *
+        * In any case, our best solution is to not replicate this to the
+        * target node. */
         return;
     }
     if (!bitmapTestBit(curr_export->slot_bitmap, slot)) return;
@@ -7508,14 +7514,14 @@ int clusterCommandSpecial(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr, "links") && c->argc == 2) {
         /* CLUSTER LINKS */
         addReplyClusterLinksDescription(c);
-    } else if (!strcasecmp(c->argv[1]->ptr, "migrate")) {
-        /* CLUSTER MIGRATE SLOTSRANGE <start> <end> [<start> <end>] */
+    } else if (!strcasecmp(c->argv[1]->ptr, "import")) {
+        /* CLUSTER IMPORT SLOTSRANGE <start> <end> [<start> <end>] */
         if (nodeIsReplica(myself)) {
-            addReplyError(c, "Only primaries can migrate slots");
+            addReplyError(c, "Only primaries can import slots");
             return 1;
         }
         if (c->argc < 5 || strcasecmp(c->argv[2]->ptr, "slotsrange")) {
-            addReplyError(c, "Migrate command requires at least one slot range");
+            addReplyError(c, "CLUSTER IMPORT command requires at least one slot range");
             return 1;
         }
         if (c->argc % 2 == 0) {
@@ -7570,7 +7576,7 @@ int clusterCommandSpecial(client *c) {
         addReply(c, shared.ok);
     } else if (!strcasecmp(c->argv[1]->ptr, "syncslots")) {
         if (c->argc < 3) {
-            addReplyError(c, "SYNCSLOTS command requires either START or END to be provided.");
+            addReplyError(c, "SYNCSLOTS command requires a subcommand to be provided.");
             return 1;
         }
         if (!strcasecmp(c->argv[2]->ptr, "start")) {

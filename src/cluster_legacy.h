@@ -10,7 +10,7 @@
 #define CLUSTER_MF_TIMEOUT 5000              /* Milliseconds to do a manual failover. */
 #define CLUSTER_MF_PAUSE_MULT 2              /* Primary pause manual failover mult. */
 #define CLUSTER_REPLICA_MIGRATION_DELAY 5000 /* Delay for replica migration. */
-#define CLUSTER_SLOT_IMPORT_TIMEOUT 30000    /* Milliseconds to do a slot migration. */
+#define CLUSTER_SLOT_IMPORT_TIMEOUT 30000    /* Milliseconds to do a slot import. */
 
 /* Reasons why a replica is not able to failover. */
 #define CLUSTER_CANT_FAILOVER_NONE 0
@@ -97,9 +97,7 @@ typedef struct clusterNodeFailReport {
 #define CLUSTERMSG_TYPE_MFSTART 8               /* Pause clients for manual failover */
 #define CLUSTERMSG_TYPE_MODULE 9                /* Module cluster API message. */
 #define CLUSTERMSG_TYPE_PUBLISHSHARD 10         /* Pub/Sub Publish shard propagation */
-#define CLUSTERMSG_TYPE_MIGRATE_SLOT_START 11   /* Pause clients for slot migration */
-#define CLUSTERMSG_TYPE_COUNT 12                /* Total number of message types. */
-
+#define CLUSTERMSG_TYPE_COUNT 11                /* Total number of message types. */
 
 #define CLUSTERMSG_LIGHT 0x8000 /* Modifier bit for message types that support light header */
 
@@ -136,7 +134,7 @@ typedef struct {
 typedef struct {
     uint64_t configEpoch;                   /* Config epoch of the specified instance. */
     char nodename[CLUSTER_NAMELEN];         /* Name of the slots owner. */
-    unsigned char slots[CLUSTER_SLOTS / 8]; /* Slots bitmap. */
+    slotBitmap slots; /* Slots bitmap. */
 } clusterMsgDataUpdate;
 
 typedef struct {
@@ -145,10 +143,6 @@ typedef struct {
     uint8_t type;               /* Type from 0 to 255. */
     unsigned char bulk_data[3]; /* 3 bytes just as placeholder. */
 } clusterMsgModule;
-
-typedef struct {
-    slotBitmap slot_bitmap;
-} clusterMsgSlotMigration;
 
 /* The cluster supports optional extension messages that can be sent
  * along with ping/pong/meet messages to give additional info in a
@@ -236,12 +230,6 @@ union clusterMsgData {
     struct {
         clusterMsgModule msg;
     } module;
-
-    /* SLOT_MIGRATION */
-    struct {
-        clusterMsgSlotMigration msg;
-    } slot_migration;
-
 };
 
 #define CLUSTER_PROTO_VER 1 /* Cluster bus protocol version. */
@@ -260,7 +248,7 @@ typedef struct {
     uint64_t offset;              /* Primary replication offset if node is a primary or
                                      processed replication offset if node is a replica. */
     char sender[CLUSTER_NAMELEN]; /* Name of the sender node */
-    unsigned char myslots[CLUSTER_SLOTS / 8];
+    slotBitmap myslots;
     char replicaof[CLUSTER_NAMELEN];
     char myip[NET_IP_STR_LEN]; /* Sender IP, if not all zeroed. */
     uint16_t extensions;       /* Number of extensions sent along with this packet. */
@@ -458,9 +446,6 @@ struct clusterState {
                                    or -1 if still not received. */
     int mf_can_start;            /* If non-zero signal that the manual failover
                                     can start requesting primary vote. */
-    /* Manual failover state for slot migration */
-    slotBitmap mf_slots; /* Slots in migration. */
-    clusterNode *mf_slots_target;
     /* The following fields are used by primaries to take state on elections. */
     uint64_t lastVoteEpoch; /* Epoch of the last vote granted. */
     int todo_before_sleep;  /* Things to do in clusterBeforeSleep(). */

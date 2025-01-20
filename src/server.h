@@ -389,7 +389,6 @@ typedef enum blocking_type {
  * what to do next. */
 typedef enum {
     REPL_STATE_NONE = 0,   /* No active replication */
-    REPL_STATE_ERROR,      /* Error in replication. */
     REPL_STATE_CONNECT,    /* Must connect to primary */
     REPL_STATE_CONNECTING, /* Connecting to primary */
     /* --- Handshake states, must be ordered --- */
@@ -398,7 +397,6 @@ typedef enum {
     REPL_STATE_RECEIVE_AUTH_REPLY,    /* Wait for AUTH reply */
     REPL_STATE_RECEIVE_PORT_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_IP_REPLY,      /* Wait for REPLCONF reply */
-    REPL_STATE_RECEIVE_SLOT_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_CAPA_REPLY,    /* Wait for REPLCONF reply */
     REPL_STATE_RECEIVE_VERSION_REPLY, /* Wait for REPLCONF reply */
     REPL_STATE_SEND_PSYNC,            /* Send PSYNC */
@@ -451,7 +449,6 @@ typedef enum {
 #define REPLICA_REQ_RDB_EXCLUDE_DATA (1 << 0)      /* Exclude data from RDB */
 #define REPLICA_REQ_RDB_EXCLUDE_FUNCTIONS (1 << 1) /* Exclude functions from RDB */
 #define REPLICA_REQ_RDB_CHANNEL (1 << 2)           /* Use dual-channel-replication */
-#define REPLICA_REQ_AOF_FORMAT (1 << 3)            /* Use AOF-based replication format*/
 /* Mask of all bits in the replica requirements bitfield that represent non-standard (filtered) RDB requirements */
 #define REPLICA_REQ_RDB_MASK (REPLICA_REQ_RDB_EXCLUDE_DATA | REPLICA_REQ_RDB_EXCLUDE_FUNCTIONS)
 
@@ -1094,10 +1091,10 @@ typedef struct ClientFlags {
                                             * flag, we won't cache the primary in freeClient. */
     uint64_t fake : 1;                     /* This is a fake client without a real connection. */
     uint64_t import_source : 1;            /* This client is importing data to server and can visit expired key. */
-    uint64_t replicated : 1;       /* This client is a replication source (i.e. primary or slot migration). */
+    uint64_t replicated : 1;               /* This client is a replication source (i.e. primary or slot migration). */
     uint64_t slot_migration_source : 1;    /* This client is a slot migration source. */
     uint64_t slot_migration_target : 1;    /* This client is a slot migration target. */
-    uint64_t reserved : 3;                 /* Reserved for future use */
+    uint64_t reserved : 1;                 /* Reserved for future use */
 } ClientFlags;
 
 typedef struct ClientPubSubData {
@@ -1543,7 +1540,6 @@ typedef struct {
 #define CHILD_TYPE_AOF 2
 #define CHILD_TYPE_LDB 3
 #define CHILD_TYPE_MODULE 4
-#define CHILD_TYPE_SYNCSLOTS 5
 
 typedef enum childInfoType {
     CHILD_INFO_TYPE_CURRENT_INFO,
@@ -1714,8 +1710,8 @@ struct valkeyServer {
     long long stat_net_repl_input_bytes;           /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
     /* Bytes written during replication, added to stat_net_output_bytes in 'info'. */
     long long stat_net_repl_output_bytes;
-    long long stat_net_slot_migration_input_bytes; /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
-    long long stat_net_slot_migration_output_bytes; /* Bytes read during replication, added to stat_net_input_bytes in 'info'. */
+    long long stat_net_slot_migration_input_bytes; /* Bytes read during slot migration, added to stat_net_input_bytes in 'info'. */
+    long long stat_net_slot_migration_output_bytes; /* Bytes written during slot migration, added to stat_net_output_bytes in 'info'. */
     size_t stat_current_cow_peak;                       /* Peak size of copy on write bytes. */
     size_t stat_current_cow_bytes;                      /* Copy on write bytes while child is active. */
     monotime stat_current_cow_updated;                  /* Last update time of stat_current_cow_bytes */
@@ -3690,7 +3686,6 @@ void sdiffCommand(client *c);
 void sdiffstoreCommand(client *c);
 void sscanCommand(client *c);
 void syncCommand(client *c);
-void syncSlotsCommand(client *c);
 void flushdbCommand(client *c);
 void flushallCommand(client *c);
 void sortCommand(client *c);

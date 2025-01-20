@@ -16,7 +16,6 @@ typedef int(kvstoreIteratorPredicate)(int didx, void *privdata);
 #define KVSTORE_FREE_EMPTY_HASHTABLES (1 << 1)
 kvstore *kvstoreCreate(hashtableType *type, int num_hashtables_bits, int flags);
 void kvstoreEmpty(kvstore *kvs, void(callback)(hashtable *));
-void kvstoreEmptyHashtable(kvstore *kvs, int didx, void(callback)(hashtable *));
 void kvstoreRelease(kvstore *kvs);
 unsigned long long kvstoreSize(kvstore *kvs);
 unsigned long kvstoreBuckets(kvstore *kvs);
