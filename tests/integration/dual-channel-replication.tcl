@@ -487,7 +487,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
             }
             wait_for_value_to_propagate_to_replica $primary $replica "key1"
             # Confirm the occurrence of a race condition.
-            wait_for_log_messages -1 {"*<Dual Channel> Psync established after rdb load*"} 0 2000 1
+            wait_for_log_messages -1 {"*Dual channel replication: Psync established after rdb load*"} 0 2000 1
         }
     }
 }
