@@ -77,29 +77,30 @@ start_server {tags {"protocol network"}} {
             } else {
                 set s [socket [srv 0 host] [srv 0 port]]
             }
+            fconfigure $s -blocking 0
             puts -nonewline $s $seq
+            set PROTO_INLINE_MAX_SIZE [expr 1024 * 64]
             set payload [string repeat A 1024]"\n"
-            set test_start [clock seconds]
-            set test_time_limit 30
-            while 1 {
+            set payload_size 0
+            while {$payload_size <= $PROTO_INLINE_MAX_SIZE} {
                 if {[catch {
-                    puts -nonewline $s payload
-                    flush $s
                     incr payload_size [string length $payload]
+                    puts -nonewline $s $payload
+                    flush $s
                 }]} {
-                    set retval [gets $s]
-                    close $s
+                    puts "exception after writing $payload_size bytes"
+                    assert_morethan $payload_size $PROTO_INLINE_MAX_SIZE
                     break
-                } else {
-                    set elapsed [expr {[clock seconds]-$test_start}]
-                    if {$elapsed > $test_time_limit} {
-                        close $s
-                        error "assertion:Valkey did not closed connection after protocol desync"
-                    }
                 }
             }
-            set retval
-        } {*Protocol error*}
+           
+            wait_for_condition 5 10 {
+                [string match {*Protocol error*} [gets $s]]
+            } else {
+                fail "expected connection to be closed on protocol error after sending $payload_size bytes"
+            }
+            close $s
+        }
     }
     unset c
 
