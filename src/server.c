@@ -5676,11 +5676,11 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         if (server.paused_actions & PAUSE_ACTION_CLIENT_ALL) {
             paused_actions = "all";
             paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_ALL, &purpose);
-            paused_purpose = getPausedPurposeString(purpose);
+            paused_purpose = getPausedPurpose(purpose);
         } else if (server.paused_actions & PAUSE_ACTION_CLIENT_WRITE) {
             paused_actions = "write";
             paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_WRITE, &purpose);
-            paused_purpose = getPausedPurposeString(purpose);
+            paused_purpose = getPausedPurpose(purpose);
         }
 
         if (sections++) info = sdscat(info, "\r\n");

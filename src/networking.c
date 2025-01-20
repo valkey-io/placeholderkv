@@ -4520,7 +4520,7 @@ void flushReplicasOutputBuffers(void) {
     }
 }
 
-char *getPausedPurposeString(pause_purpose purpose) {
+char *getPausedPurpose(pause_purpose purpose) {
     switch (purpose) {
     case PAUSE_BY_CLIENT_COMMAND:
         return "client_command";
