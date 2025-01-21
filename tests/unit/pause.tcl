@@ -1,11 +1,11 @@
 start_server {tags {"pause network"}} {
     test "Test check paused info in info clients" {
-        assert_equal [s paused_purpose] "none"
+        assert_equal [s paused_reason] "none"
         assert_equal [s paused_actions] "none"
         assert_equal [s paused_timeout_milliseconds] 0
 
         r client PAUSE 10000 WRITE
-        assert_equal [s paused_purpose] "client_command"
+        assert_equal [s paused_reason] "client_pause"
         assert_equal [s paused_actions] "write"
         after 1000
         set timeout [s paused_timeout_milliseconds]
@@ -16,11 +16,11 @@ start_server {tags {"pause network"}} {
         r client PAUSE 1000 ALL
         r info clients
         set res [r exec]
-        assert_match "*paused_purpose:client_command*" $res
+        assert_match "*paused_reason:client_pause*" $res
         assert_match "*paused_actions:all*" $res
 
         r client unpause
-        assert_equal [s paused_purpose] "none"
+        assert_equal [s paused_reason] "none"
         assert_equal [s paused_actions] "none"
         assert_equal [s paused_timeout_milliseconds] 0
     }
@@ -418,14 +418,14 @@ start_server {tags {"pause network"}} {
 
 start_cluster 1 1 {tags {"external:skip cluster pause network"}} {
     test "Test check paused info during the cluster failover in info clients" {
-        assert_equal [s 0 paused_purpose] "none"
+        assert_equal [s 0 paused_reason] "none"
         assert_equal [s 0 paused_actions] "none"
         assert_equal [s 0 paused_timeout_milliseconds] 0
 
         R 1 cluster failover
         wait_for_log_messages 0 {"*Manual failover requested by replica*"} 0 10 1000
 
-        assert_equal [s 0 paused_purpose] "during_failover"
+        assert_equal [s 0 paused_reason] "failover_in_progress"
         assert_equal [s 0 paused_actions] "write"
         assert_morethan [s 0 paused_timeout_milliseconds] 0
     }

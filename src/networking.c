@@ -4520,18 +4520,18 @@ void flushReplicasOutputBuffers(void) {
     }
 }
 
-char *getPausedPurpose(pause_purpose purpose) {
+char *getPausedReason(pause_purpose purpose) {
     switch (purpose) {
     case PAUSE_BY_CLIENT_COMMAND:
-        return "client_command";
+        return "client_pause";
     case PAUSE_DURING_SHUTDOWN:
-        return "during_shutdown";
+        return "shutdown_in_progress";
     case PAUSE_DURING_FAILOVER:
-        return "during_failover";
+        return "failover_in_progress";
     case NUM_PAUSE_PURPOSES:
         return "none";
     default:
-        return "Unknown pause purpose";
+        return "Unknown pause reason";
     }
 }
 

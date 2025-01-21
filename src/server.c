@@ -5670,17 +5670,17 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         totalNumberOfStatefulKeys(&blocking_keys, &blocking_keys_on_nokey, &watched_keys);
 
         pause_purpose purpose;
-        char *paused_purpose = "none";
+        char *paused_reason = "none";
         char *paused_actions = "none";
         long long paused_timeout = 0;
         if (server.paused_actions & PAUSE_ACTION_CLIENT_ALL) {
             paused_actions = "all";
             paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_ALL, &purpose);
-            paused_purpose = getPausedPurpose(purpose);
+            paused_reason = getPausedReason(purpose);
         } else if (server.paused_actions & PAUSE_ACTION_CLIENT_WRITE) {
             paused_actions = "write";
             paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_WRITE, &purpose);
-            paused_purpose = getPausedPurpose(purpose);
+            paused_reason = getPausedReason(purpose);
         }
 
         if (sections++) info = sdscat(info, "\r\n");
@@ -5700,7 +5700,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "total_watched_keys:%lu\r\n", watched_keys,
                 "total_blocking_keys:%lu\r\n", blocking_keys,
                 "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey,
-                "paused_purpose:%s\r\n", paused_purpose,
+                "paused_reason:%s\r\n", paused_reason,
                 "paused_actions:%s\r\n", paused_actions,
                 "paused_timeout_milliseconds:%lld\r\n", paused_timeout));
     }
