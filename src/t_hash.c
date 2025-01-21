@@ -121,7 +121,7 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value) {
         if (field_is_sds5) field_size += 2;
         size_t alloc_size = sizeof(void *) + field_size;
         hashTypeEntryPtrValue *entry = zmalloc(alloc_size);
-        entry->value = sdsdup(value);
+        entry->value = value;
         if (field_is_sds5) {
             /* We can't use SDS_TYPE_5 to encode extra information in the unused
              * allocation size, so convert to SDS_TYPE_8. */
