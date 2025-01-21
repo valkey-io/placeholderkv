@@ -77,7 +77,6 @@ start_server {tags {"protocol network"}} {
             } else {
                 set s [socket [srv 0 host] [srv 0 port]]
             }
-            fconfigure $s -blocking 0
             puts -nonewline $s $seq
             # PROTO_INLINE_MAX_SIZE is hardcoded in Valkey code to 64K. doing the same here 
             # since we would like to validate it is enforced. 
@@ -94,12 +93,7 @@ start_server {tags {"protocol network"}} {
                     break
                 }
             }
-           
-            wait_for_condition 50 100 {
-                [string match {*Protocol error*} [gets $s]]
-            } else {
-                fail "expected connection to be closed on protocol error after sending $payload_size bytes"
-            }
+            assert_match {*Protocol error*} [gets $s]]
             close $s
         }
     }
