@@ -220,9 +220,9 @@ static hashTypeEntry *hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value)
     }
 }
 
-/* Returns allocation size of hashTypeEntry and data owned by hashTypeEntry,
- * even if not embedded in the same allocation. */
-size_t hashTypeEntryAllocSize(hashTypeEntry *entry) {
+/* Returns memory usage of a hashTypeEntry, including all allocations owned by
+ * the hashTypeEntry. */
+size_t hashTypeEntryMemUsage(hashTypeEntry *entry) {
     switch (entryGetEncoding(entry)) {
     case ENTRY_ENC_EMB_VALUE:
         return zmalloc_usable_size(sdsAllocPtr(entry));

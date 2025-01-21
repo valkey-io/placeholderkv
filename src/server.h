@@ -3237,7 +3237,7 @@ typedef void hashTypeEntry;
 hashTypeEntry *hashTypeCreateEntry(sds field, sds value);
 sds hashTypeEntryGetField(const hashTypeEntry *entry);
 sds hashTypeEntryGetValue(const hashTypeEntry *entry);
-size_t hashTypeEntryAllocSize(hashTypeEntry *entry);
+size_t hashTypeEntryMemUsage(hashTypeEntry *entry);
 hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds));
 void dismissHashTypeEntry(hashTypeEntry *entry);
 void freeHashTypeEntry(hashTypeEntry *entry);
