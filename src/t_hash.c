@@ -40,10 +40,10 @@
  *
  * ENTRY_ENC_EMB_VALUE, used when it fits in a cache line:
  *
- *     +--------------+-------------------------+
- *     | field        | value    | value        |
- *     | hdr "foo" \0 | hdr_size | hdr "bar" \0 |
- *     +------^-------+-------------------------+
+ *     +--------------+----------------+--------------+
+ *     | field        | 1 byte         | value        |
+ *     | hdr "foo" \0 | value-hdr-size | hdr "bar" \0 |
+ *     +------^-------+----------------+--------------+
  *            |
  *            |
  *          entry pointer = field sds
@@ -95,10 +95,10 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value) {
     if (canUseEmbeddedValueEntry(field, value)) {
         /* Embed field and value, including one byte value-hdr-size.
          *
-         *     +--------------+-------------------------+
-         *     | field        | value    | value        |
-         *     | hdr "foo" \0 | hdr_size | hdr "bar" \0 |
-         *     +--------------+-------------------------+
+         *     +--------------+----------------+--------------+
+         *     | field        | 1 byte         | value        |
+         *     | hdr "foo" \0 | value-hdr-size | hdr "bar" \0 |
+         *     +--------------+----------------+--------------+
          */
         size_t value_size = sdscopytobuffer(NULL, 0, value, NULL);
         size_t min_size = field_size + 1 + value_size;
