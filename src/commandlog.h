@@ -48,6 +48,5 @@ typedef struct commandlogEntry {
 
 /* Exported API */
 void commandlogInit(void);
-void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long value, int type);
 
 #endif /* __COMMANDLOG_H__ */

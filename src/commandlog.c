@@ -21,24 +21,25 @@
  */
 
 #include "commandlog.h"
+#include "script.h"
 
 /* Create a new commandlog entry.
  * Incrementing the ref count of all the objects retained is up to
  * this function. */
-commandlogEntry *commandlogCreateEntry(client *c, robj **argv, int argc, long long value, int type) {
+static commandlogEntry *commandlogCreateEntry(client *c, robj **argv, int argc, long long value, int type) {
     commandlogEntry *ce = zmalloc(sizeof(*ce));
-    int j, slargc = argc;
+    int j, ceargc = argc;
 
-    if (slargc > COMMANDLOG_ENTRY_MAX_ARGC) slargc = COMMANDLOG_ENTRY_MAX_ARGC;
-    ce->argc = slargc;
-    ce->argv = zmalloc(sizeof(robj *) * slargc);
-    for (j = 0; j < slargc; j++) {
+    if (ceargc > COMMANDLOG_ENTRY_MAX_ARGC) ceargc = COMMANDLOG_ENTRY_MAX_ARGC;
+    ce->argc = ceargc;
+    ce->argv = zmalloc(sizeof(robj *) * ceargc);
+    for (j = 0; j < ceargc; j++) {
         /* Logging too many arguments is a useless memory waste, so we stop
          * at COMMANDLOG_ENTRY_MAX_ARGC, but use the last argument to specify
          * how many remaining arguments there were in the original command. */
-        if (slargc != argc && j == slargc - 1) {
+        if (ceargc != argc && j == ceargc - 1) {
             ce->argv[j] =
-                createObject(OBJ_STRING, sdscatprintf(sdsempty(), "... (%d more arguments)", argc - slargc + 1));
+                createObject(OBJ_STRING, sdscatprintf(sdsempty(), "... (%d more arguments)", argc - ceargc + 1));
         } else {
             /* Trim too long strings as well... */
             if (argv[j]->type == OBJ_STRING && sdsEncodedObject(argv[j]) &&
@@ -73,7 +74,7 @@ commandlogEntry *commandlogCreateEntry(client *c, robj **argv, int argc, long lo
  * function matches the one of the 'free' method of adlist.c.
  *
  * This function will take care to release all the retained object. */
-void commandlogFreeEntry(void *ceptr) {
+static void commandlogFreeEntry(void *ceptr) {
     commandlogEntry *ce = ceptr;
     int j;
 
@@ -97,7 +98,7 @@ void commandlogInit(void) {
 /* Push a new entry into the command log.
  * This function will make sure to trim the command log accordingly to the
  * configured max length. */
-void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long value, int type) {
+static void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long value, int type) {
     if (server.commandlog[type].threshold < 0 || server.commandlog[type].max_len == 0) return; /* The corresponding commandlog disabled */
     if (value >= server.commandlog[type].threshold)
         listAddNodeHead(server.commandlog[type].entries, commandlogCreateEntry(c, argv, argc, value, type));
@@ -107,12 +108,12 @@ void commandlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long val
 }
 
 /* Remove all the entries from the current command log of the specified type. */
-void commandlogReset(int type) {
+static void commandlogReset(int type) {
     while (listLength(server.commandlog[type].entries) > 0) listDelNode(server.commandlog[type].entries, listLast(server.commandlog[type].entries));
 }
 
 /* Reply command logs to client. */
-void commandlogGetReply(client *c, int type, long count) {
+static void commandlogGetReply(client *c, int type, long count) {
     listIter li;
     listNode *ln;
     commandlogEntry *ce;
@@ -136,6 +137,28 @@ void commandlogGetReply(client *c, int type, long count) {
         addReplyBulkCBuffer(c, ce->peerid, sdslen(ce->peerid));
         addReplyBulkCBuffer(c, ce->cname, sdslen(ce->cname));
     }
+}
+
+/* Log the last command a client executed into the commandlog. */
+void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
+    /* Some commands may contain sensitive data that should not be available in the commandlog.
+     */
+    if (cmd->flags & CMD_SKIP_COMMANDLOG) return;
+
+    /* If command argument vector was rewritten, use the original
+     * arguments. */
+    robj **argv = c->original_argv ? c->original_argv : c->argv;
+    int argc = c->original_argv ? c->original_argc : c->argc;
+
+    /* If a script is currently running, the client passed in is a
+     * fake client. Or the client passed in is the original client
+     * if this is a EVAL or alike, doesn't matter. In this case,
+     * use the original client to get the client information. */
+    c = scriptIsRunning() ? scriptGetCaller() : c;
+
+    commandlogPushEntryIfNeeded(c, argv, argc, c->duration, COMMANDLOG_TYPE_SLOW);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_input_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REQUEST);
+    commandlogPushEntryIfNeeded(c, argv, argc, c->net_output_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REPLY);
 }
 
 /* The SLOWLOG command. Implements all the subcommands needed to handle the
@@ -182,7 +205,7 @@ void slowlogCommand(client *c) {
     }
 }
 
-int commandlogGetTypeOrReply(client *c, robj *o) {
+static int commandlogGetTypeOrReply(client *c, robj *o) {
     if (!strcasecmp(o->ptr, "slow")) return COMMANDLOG_TYPE_SLOW;
     if (!strcasecmp(o->ptr, "large-request")) return COMMANDLOG_TYPE_LARGE_REQUEST;
     if (!strcasecmp(o->ptr, "large-reply")) return COMMANDLOG_TYPE_LARGE_REPLY;

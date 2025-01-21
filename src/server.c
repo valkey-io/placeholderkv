@@ -3476,28 +3476,6 @@ void preventCommandReplication(client *c) {
     c->flag.prevent_repl_prop = 1;
 }
 
-/* Log the last command a client executed into the commandlog. */
-void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd) {
-    /* Some commands may contain sensitive data that should not be available in the commandlog.
-     */
-    if (cmd->flags & CMD_SKIP_COMMANDLOG) return;
-
-    /* If command argument vector was rewritten, use the original
-     * arguments. */
-    robj **argv = c->original_argv ? c->original_argv : c->argv;
-    int argc = c->original_argv ? c->original_argc : c->argc;
-
-    /* If a script is currently running, the client passed in is a
-     * fake client. Or the client passed in is the original client
-     * if this is a EVAL or alike, doesn't matter. In this case,
-     * use the original client to get the client information. */
-    c = scriptIsRunning() ? scriptGetCaller() : c;
-
-    commandlogPushEntryIfNeeded(c, argv, argc, c->duration, COMMANDLOG_TYPE_SLOW);
-    commandlogPushEntryIfNeeded(c, argv, argc, c->net_input_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REQUEST);
-    commandlogPushEntryIfNeeded(c, argv, argc, c->net_output_bytes_curr_cmd, COMMANDLOG_TYPE_LARGE_REPLY);
-}
-
 /* This function is called in order to update the total command histogram duration.
  * The latency unit is nano-seconds.
  * If needed it will allocate the histogram memory and trim the duration to the upper/lower tracking limits*/
