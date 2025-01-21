@@ -182,7 +182,21 @@ static void *hashTypeEntryAllocPtr(hashTypeEntry *entry) {
 static hashTypeEntry *hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value) {
     switch (entryGetEncoding(entry)) {
     case ENTRY_ENC_EMB_VALUE: {
-        /* TODO: Reuse existing allocation if possible. */
+        /* Reuse the allocation if the new value fits and leaves no more than
+         * 25% unused space after replacing the value. */
+        unsigned char *alloc_ptr = sdsAllocPtr(entry);
+        size_t field_size = ((unsigned char *)entry - alloc_ptr) + sdslen(entry) + 1;
+        size_t value_size = sdscopytobuffer(NULL, 0, value, NULL);
+        size_t required_size = field_size + 1 + value_size;
+        size_t alloc_size;
+        if (required_size <= CACHE_LINE_SIZE &&
+            required_size <= (alloc_size = zmalloc_usable_size(alloc_ptr)) &&
+            required_size >= alloc_size * 3 / 4) {
+            /* It fits in the allocation and leaves max 25% unused space. */
+            sdscopytobuffer(alloc_ptr + field_size + 1, alloc_size - (field_size + 1), value, alloc_ptr + field_size);
+            sdsfree(value);
+            return entry;
+        }
         hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value);
         freeHashTypeEntry(entry);
         return new_entry;
