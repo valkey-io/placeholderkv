@@ -4761,7 +4761,7 @@ void clusterProceedWithSlotExport(void) {
             addReplyBulkCBuffer(curr_export->client, "PAUSEOFFSET", 11);
             curr_export->streamed_repl_offset += 18; /* '$11\r\nPAUSEOFFSET\r\n' */
 
-            /* We add the length of the offset reply to the offest itself. */
+            /* We add the length of the offset reply to the offset itself. */
             uint32_t offset_len = digits10(curr_export->streamed_repl_offset + curr_export->client->repl_data->repldbsize);
             uint32_t offset_len_len = digits10(offset_len);
             curr_export->streamed_repl_offset += 1 + offset_len_len + 2 + offset_len + 2;
@@ -4779,10 +4779,8 @@ void clusterProceedWithSlotExport(void) {
                     curr_export->streamed_repl_offset++;
                 }
             }
-            serverLog(LL_NOTICE, "At time of pause, slot migration AOF size: %lu, "
-                                 "slot migration streaming offset: %llu, total "
-                                 "offset: %llu",
-                      curr_export->client->repl_data->repldbsize,
+            serverLog(LL_NOTICE, "At time of pause slot migration streaming offset: %llu, total "
+                                 "offset (with AOF snapshot): %llu",
                       curr_export->streamed_repl_offset,
                       curr_export->streamed_repl_offset + curr_export->client->repl_data->repldbsize);
             addReplyBulkLongLong(curr_export->client, curr_export->streamed_repl_offset + curr_export->client->repl_data->repldbsize);
