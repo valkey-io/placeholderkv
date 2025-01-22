@@ -774,7 +774,7 @@ proc start_multiple_servers {num options code} {
     uplevel 1 $code
 }
 
-proc restart_server {level wait_ready rotate_logs {reconnect 1} {shutdown sigterm}} {
+proc restart_server {level wait_ready rotate_logs {reconnect 1} {shutdown sigterm} {config_override {}}} {
     set srv [lindex $::servers end+$level]
     if {$shutdown ne {sigterm}} {
         catch {[dict get $srv "client"] shutdown $shutdown}
@@ -802,6 +802,15 @@ proc restart_server {level wait_ready rotate_logs {reconnect 1} {shutdown sigter
     }
 
     set config_file [dict get $srv "config_file"]
+
+    # Apply config updates if provided
+    if {[llength $config_override] > 0} {
+        set fd [open $config_file "a"]
+        foreach {key value} $config_override {
+            puts $fd "$key $value"
+        }
+        close $fd
+    }
 
     set pid [spawn_server $config_file $stdout $stderr {}]
 

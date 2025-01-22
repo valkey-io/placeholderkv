@@ -320,9 +320,6 @@ int intsetValidateIntegrity(const unsigned char *p, size_t size, int deep) {
     uint32_t count = intrev32ifbe(is->length);
     if (sizeof(*is) + count * record_size != size) return 0;
 
-    /* check that the set is not empty. */
-    if (count == 0) return 0;
-
     if (!deep) return 1;
 
     /* check that there are no dup or out of order records. */

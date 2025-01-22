@@ -1168,6 +1168,111 @@ foreach type {single multiple single_multiple} {
     }
 }
 
+start_server {
+    tags {"set external:skip"}
+    overrides {
+        "set-max-intset-entries" 1
+        "allow-empty-set" "yes"
+    }
+} {
+    proc save_load_rdb {{config_override {}}} {
+        r save
+        restart_server 0 true false true now $config_override
+        wait_done_loading r
+    }
+    proc create_emptyset {key members} {
+        r del $key
+        foreach member $members { r sadd $key $member }
+        foreach member $members { r srem $key $member }
+    }
+    proc verify_emptyset {key} {
+        assert_equal 0 [r scard $key]
+        assert_equal 1 [r exists $key]
+    }
+
+    test {EMTPYSET save and reload empty listset from RDB} {
+        r flushdb
+        create_emptyset listset {a}
+        verify_emptyset listset
+        assert_equal listpack [r object encoding listset]
+        save_load_rdb
+        verify_emptyset listset
+    }
+
+    test {EMTPYSET save and reload empty intset from RDB} {
+        r flushdb
+        create_emptyset intset {1}
+        verify_emptyset intset
+        assert_equal intset [r object encoding intset]
+        save_load_rdb
+        verify_emptyset intset
+    }
+
+    test {EMTPYSET save and reload empty hashset from RDB} {
+        r flushdb
+        create_emptyset hashset {1 2}
+        verify_emptyset hashset
+        assert_equal hashtable [r object encoding hashset]
+        save_load_rdb
+        verify_emptyset hashset
+    }
+
+    test {EMTPYSET smove to make empty set} {
+        r flushdb
+        assert_equal 1 [r sadd myset a]
+        assert_equal 1 [r sadd myset2 b]
+        assert_equal 1 [r smove myset myset2 a]
+        assert_equal 2 [r scard myset2]
+        verify_emptyset myset
+        save_load_rdb
+        verify_emptyset myset
+    }
+
+    test {EMTPYSET spop to make empty set} {
+        r flushdb
+        assert_equal 1 [r sadd myset a]
+        assert_equal a [r spop myset]
+        verify_emptyset myset
+        save_load_rdb
+        verify_emptyset myset
+    }
+
+    test {EMTPYSET sunion with empty set} {
+        r flushdb
+        create_emptyset myset {a}
+        verify_emptyset myset
+        assert_equal 1 [r sadd myset2 b]
+        assert_equal b [r sunion myset myset2]
+        save_load_rdb
+        verify_emptyset myset
+    }
+
+    test {EMTPYSET skip loading empty sets when allow-empty-set is no} {
+        r flushdb
+        create_emptyset intset {1}
+        verify_emptyset intset
+        create_emptyset listset {a}
+        verify_emptyset listset
+        create_emptyset hashset {1 2}
+        verify_emptyset hashset
+        set config_override {
+            "allow-empty-set" "no"
+        }
+        save_load_rdb $config_override
+        wait_for_log_messages 0 {"*rdbLoadObject skipping empty key: intset*"} 0 1000 50
+        wait_for_log_messages 0 {"*rdbLoadObject skipping empty key: listset*"} 0 1000 50
+        wait_for_log_messages 0 {"*rdbLoadObject skipping empty key: hashset*"} 0 1000 50
+        wait_for_log_messages 0 {"*Done loading RDB, keys loaded: 0, keys expired: 0, empty keys skipped: 3.*"} 0 1000 50
+
+        assert_equal 0 [r exists intset]
+        assert_equal 0 [r scard intset]
+        assert_equal 0 [r exists listset]
+        assert_equal 0 [r scard listset]
+        assert_equal 0 [r exists hashset]
+        assert_equal 0 [r scard hashset]
+    }
+}
+
 run_solo {set-large-memory} {
 start_server [list overrides [list save ""] ] {
 

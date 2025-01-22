@@ -624,8 +624,10 @@ void sremCommand(client *c) {
         if (setTypeRemove(set, c->argv[j]->ptr)) {
             deleted++;
             if (setTypeSize(set) == 0) {
-                dbDelete(c->db, c->argv[1]);
-                keyremoved = 1;
+                if (!server.allow_empty_set) {
+                    dbDelete(c->db, c->argv[1]);
+                    keyremoved = 1;
+                }
                 break;
             }
         }
@@ -668,8 +670,8 @@ void smoveCommand(client *c) {
     }
     notifyKeyspaceEvent(NOTIFY_SET, "srem", c->argv[1], c->db->id);
 
-    /* Remove the src set from the database when empty */
-    if (setTypeSize(srcset) == 0) {
+    /* Remove the src set from the database when empty and allow-empty-set is disabled */
+    if (!server.allow_empty_set && setTypeSize(srcset) == 0) {
         dbDelete(c->db, c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
     }
@@ -971,8 +973,8 @@ void spopCommand(client *c) {
     addReplyBulk(c, ele);
     decrRefCount(ele);
 
-    /* Delete the set if it's empty */
-    if (setTypeSize(set) == 0) {
+    /* Delete the set if it's empty and allow-empty-set is disabled */
+    if (!server.allow_empty_set && setTypeSize(set) == 0) {
         dbDelete(c->db, c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
     }

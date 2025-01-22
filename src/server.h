@@ -1783,6 +1783,10 @@ struct valkeyServer {
                                                  invocation of the event loop. */
     unsigned int max_new_conns_per_cycle;     /* The maximum number of tcp connections that will be accepted during each
                                                  invocation of the event loop. */
+    int allow_empty_set;                      /* Flag to control whether empty set is allowed in the database
+                                                 1 empty sets are preserved in database even after all elements are removed
+                                                 0 by default, key for the set is deleted when it becomes empty */
+
     /* AOF persistence */
     int aof_enabled;                    /* AOF configuration */
     int aof_state;                      /* AOF_(ON|OFF|WAIT_REWRITE) */
