@@ -4695,7 +4695,7 @@ void clusterProceedWithSlotImport(void) {
             clusterUpdateState();
             clusterSaveConfigOrDie(1);
             if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
-                serverLog(LL_NOTICE, "Epoch bumped after importing slots. New epoch %llu", server.cluster->currentEpoch);
+                serverLog(LL_NOTICE, "Epoch bumped after importing slots. New epoch %llu", (unsigned long long) server.cluster->currentEpoch);
             }
             clusterFreeSlotImportJob(curr_import);
             clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
@@ -4779,8 +4779,10 @@ void clusterProceedWithSlotExport(void) {
                     curr_export->streamed_repl_offset++;
                 }
             }
-            serverLog(LL_NOTICE, "At time of pause slot migration streaming offset: %llu, total "
+            serverLog(LL_NOTICE, "At time of pause slot migration AOF snapshot size: %llu, "
+                                 "slot migration streaming offset: %llu, total "
                                  "offset (with AOF snapshot): %llu",
+                      (unsigned long long) curr_export->client->repl_data->repldbsize,
                       curr_export->streamed_repl_offset,
                       curr_export->streamed_repl_offset + curr_export->client->repl_data->repldbsize);
             addReplyBulkLongLong(curr_export->client, curr_export->streamed_repl_offset + curr_export->client->repl_data->repldbsize);
