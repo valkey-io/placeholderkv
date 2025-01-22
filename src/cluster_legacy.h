@@ -403,8 +403,8 @@ typedef enum slotExportState {
 typedef struct slotExport {
     slotBitmap slot_bitmap;
     slotExportState state;
-    client *client; /* Client for replication */
-    unsigned long long syncslot_offset;
+    client *client;                          /* Client for replication */
+    unsigned long long streamed_repl_offset; /* Offset for just the streamed part of the syncslots command.*/
     mstime_t pause_end;
 } slotExport;
 

@@ -1700,6 +1700,7 @@ void rdbPipeWriteHandler(struct connection *conn) {
     } else {
         replica->repl_data->repldboff += nwritten;
         server.stat_net_repl_output_bytes += nwritten;
+        replica->repl_data->repldbsize += nwritten;
         if (replica->repl_data->repldboff < server.rdb_pipe_bufflen) {
             replica->repl_data->repl_last_partial_write = server.unixtime;
             return; /* more data to write.. */
@@ -1774,6 +1775,7 @@ void rdbPipeReadHandler(struct aeEventLoop *eventLoop, int fd, void *clientData,
                  * of 'rdb_pipe_buff' sent rather than the offset of entire RDB. */
                 replica->repl_data->repldboff = nwritten;
                 server.stat_net_repl_output_bytes += nwritten;
+                replica->repl_data->repldbsize += nwritten;
             }
             /* If we were unable to write all the data to one of the replicas,
              * setup write handler (and disable pipe read handler, below) */
