@@ -4695,7 +4695,7 @@ void clusterProceedWithSlotImport(void) {
             clusterUpdateState();
             clusterSaveConfigOrDie(1);
             if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
-                serverLog(LL_NOTICE, "Epoch bumped after importing slots. New epoch %ld", server.cluster->currentEpoch);
+                serverLog(LL_NOTICE, "Epoch bumped after importing slots. New epoch %llu", server.cluster->currentEpoch);
             }
             clusterFreeSlotImportJob(curr_import);
             clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
