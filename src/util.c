@@ -50,6 +50,7 @@
 #include "util.h"
 #include "sha256.h"
 #include "config.h"
+#include "zmalloc.h"
 
 #include "valkey_strtod.h"
 

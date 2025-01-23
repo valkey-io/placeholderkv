@@ -319,7 +319,7 @@ proc spawn_server {executable config_file stdout stderr args} {
     }
 
     # Tell the test server about this new instance.
-    send_data_packet $::test_server_fd server-spawned $pid
+    send_data_packet $::test_server_fd server-spawned "$pid - $::curfile"
     return $pid
 }
 

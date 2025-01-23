@@ -37,6 +37,7 @@
 #include "intset.h" /* Compact integer set structure */
 #include "bio.h"
 #include "zmalloc.h"
+#include "module.h"
 
 #include <math.h>
 #include <fcntl.h>
@@ -64,6 +65,7 @@ char *rdbFileBeingLoaded = NULL; /* used for rdb checking on read error */
 extern int rdbCheckMode;
 void rdbCheckError(const char *fmt, ...);
 void rdbCheckSetError(const char *fmt, ...);
+int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx);
 
 #ifdef __GNUC__
 void rdbReportError(int corruption_error, int linenum, char *reason, ...) __attribute__((format(printf, 3, 4)));
@@ -708,7 +710,7 @@ int rdbSaveObjectType(rio *rdb, robj *o) {
     case OBJ_HASH:
         if (o->encoding == OBJ_ENCODING_LISTPACK)
             return rdbSaveType(rdb, RDB_TYPE_HASH_LISTPACK);
-        else if (o->encoding == OBJ_ENCODING_HT)
+        else if (o->encoding == OBJ_ENCODING_HASHTABLE)
             return rdbSaveType(rdb, RDB_TYPE_HASH);
         else
             serverPanic("Unknown hash encoding");
@@ -948,32 +950,33 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
 
             if ((n = rdbSaveRawString(rdb, o->ptr, l)) == -1) return -1;
             nwritten += n;
-        } else if (o->encoding == OBJ_ENCODING_HT) {
-            dictIterator *di = dictGetIterator(o->ptr);
-            dictEntry *de;
+        } else if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+            hashtable *ht = o->ptr;
 
-            if ((n = rdbSaveLen(rdb, dictSize((dict *)o->ptr))) == -1) {
-                dictReleaseIterator(di);
+            if ((n = rdbSaveLen(rdb, hashtableSize(ht))) == -1) {
                 return -1;
             }
             nwritten += n;
 
-            while ((de = dictNext(di)) != NULL) {
-                sds field = dictGetKey(de);
-                sds value = dictGetVal(de);
+            hashtableIterator iter;
+            hashtableInitIterator(&iter, ht);
+            void *next;
+            while (hashtableNext(&iter, &next)) {
+                sds field = hashTypeEntryGetField(next);
+                sds value = hashTypeEntryGetValue(next);
 
                 if ((n = rdbSaveRawString(rdb, (unsigned char *)field, sdslen(field))) == -1) {
-                    dictReleaseIterator(di);
+                    hashtableResetIterator(&iter);
                     return -1;
                 }
                 nwritten += n;
                 if ((n = rdbSaveRawString(rdb, (unsigned char *)value, sdslen(value))) == -1) {
-                    dictReleaseIterator(di);
+                    hashtableResetIterator(&iter);
                     return -1;
                 }
                 nwritten += n;
             }
-            dictReleaseIterator(di);
+            hashtableResetIterator(&iter);
         } else {
             serverPanic("Unknown hash encoding");
         }
@@ -1097,7 +1100,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
          * to call the right module during loading. */
         int retval = rdbSaveLen(rdb, mt->id);
         if (retval == -1) return -1;
-        moduleInitIOContext(io, mt, rdb, key, dbid);
+        moduleInitIOContext(&io, mt, rdb, key, dbid);
         io.bytes += retval;
 
         /* Then write the module-specific representation + EOF marker. */
@@ -1241,7 +1244,7 @@ ssize_t rdbSaveSingleModuleAux(rio *rdb, int when, moduleType *mt) {
     /* Save a module-specific aux value. */
     ValkeyModuleIO io;
     int retval = 0;
-    moduleInitIOContext(io, mt, rdb, NULL, -1);
+    moduleInitIOContext(&io, mt, rdb, NULL, -1);
 
     /* We save the AUX field header in a temporary buffer so we can support aux_save2 API.
      * If aux_save2 is used the buffer will be flushed at the first time the module will perform
@@ -2003,7 +2006,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
         o = createZsetObject();
         zs = o->ptr;
 
-        if (zsetlen > DICT_HT_INITIAL_SIZE && dictTryExpand(zs->dict, zsetlen) != DICT_OK) {
+        if (!hashtableTryExpand(zs->ht, zsetlen)) {
             rdbReportCorruptRDB("OOM in dictTryExpand %llu", (unsigned long long)zsetlen);
             decrRefCount(o);
             return NULL;
@@ -2046,7 +2049,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             totelelen += sdslen(sdsele);
 
             znode = zslInsert(zs->zsl, score, sdsele);
-            if (dictAdd(zs->dict, sdsele, &znode->score) != DICT_OK) {
+            if (!hashtableAdd(zs->ht, znode)) {
                 rdbReportCorruptRDB("Duplicate zset fields detected");
                 decrRefCount(o);
                 /* no need to free 'sdsele', will be released by zslFree together with 'o' */
@@ -2061,7 +2064,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
         }
     } else if (rdbtype == RDB_TYPE_HASH) {
         uint64_t len;
-        int ret;
         sds field, value;
         dict *dupSearchDict = NULL;
 
@@ -2073,10 +2075,10 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
 
         /* Too many entries? Use a hash table right from the start. */
         if (len > server.hash_max_listpack_entries)
-            hashTypeConvert(o, OBJ_ENCODING_HT);
+            hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
         else if (deep_integrity_validation) {
             /* In this mode, we need to guarantee that the server won't crash
-             * later when the ziplist is converted to a dict.
+             * later when the ziplist is converted to a hashtable.
              * Create a set (dict with no values) to for a dup search.
              * We can dismiss it as soon as we convert the ziplist to a hash. */
             dupSearchDict = dictCreate(&hashDictType);
@@ -2115,13 +2117,13 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             /* Convert to hash table if size threshold is exceeded */
             if (sdslen(field) > server.hash_max_listpack_value || sdslen(value) > server.hash_max_listpack_value ||
                 !lpSafeToAdd(o->ptr, sdslen(field) + sdslen(value))) {
-                hashTypeConvert(o, OBJ_ENCODING_HT);
-                ret = dictAdd((dict *)o->ptr, field, value);
-                if (ret == DICT_ERR) {
+                hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
+                hashTypeEntry *entry = hashTypeCreateEntry(field, value);
+                sdsfree(field);
+                if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                     rdbReportCorruptRDB("Duplicate hash fields detected");
                     if (dupSearchDict) dictRelease(dupSearchDict);
-                    sdsfree(value);
-                    sdsfree(field);
+                    freeHashTypeEntry(entry);
                     decrRefCount(o);
                     return NULL;
                 }
@@ -2143,16 +2145,16 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             dupSearchDict = NULL;
         }
 
-        if (o->encoding == OBJ_ENCODING_HT && len > DICT_HT_INITIAL_SIZE) {
-            if (dictTryExpand(o->ptr, len) != DICT_OK) {
-                rdbReportCorruptRDB("OOM in dictTryExpand %llu", (unsigned long long)len);
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+            if (!hashtableTryExpand(o->ptr, len)) {
+                rdbReportCorruptRDB("OOM in hashtableTryExpand %llu", (unsigned long long)len);
                 decrRefCount(o);
                 return NULL;
             }
         }
 
         /* Load remaining fields and values into the hash table */
-        while (o->encoding == OBJ_ENCODING_HT && len > 0) {
+        while (o->encoding == OBJ_ENCODING_HASHTABLE && len > 0) {
             len--;
             /* Load encoded strings */
             if ((field = rdbGenericLoadStringObject(rdb, RDB_LOAD_SDS, NULL)) == NULL) {
@@ -2166,11 +2168,11 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
 
             /* Add pair to hash table */
-            ret = dictAdd((dict *)o->ptr, field, value);
-            if (ret == DICT_ERR) {
+            hashTypeEntry *entry = hashTypeCreateEntry(field, value);
+            sdsfree(field);
+            if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                 rdbReportCorruptRDB("Duplicate hash fields detected");
-                sdsfree(value);
-                sdsfree(field);
+                freeHashTypeEntry(entry);
                 decrRefCount(o);
                 return NULL;
             }
@@ -2315,7 +2317,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                 o->encoding = OBJ_ENCODING_LISTPACK;
 
                 if (hashTypeLength(o) > server.hash_max_listpack_entries || maxlen > server.hash_max_listpack_value) {
-                    hashTypeConvert(o, OBJ_ENCODING_HT);
+                    hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
                 }
             }
             break;
@@ -2443,7 +2445,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
 
             if (hashTypeLength(o) > server.hash_max_listpack_entries)
-                hashTypeConvert(o, OBJ_ENCODING_HT);
+                hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             else
                 o->ptr = lpShrinkToFit(o->ptr);
             break;
@@ -2464,7 +2466,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                 goto emptykey;
             }
 
-            if (hashTypeLength(o) > server.hash_max_listpack_entries) hashTypeConvert(o, OBJ_ENCODING_HT);
+            if (hashTypeLength(o) > server.hash_max_listpack_entries) hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
             break;
         default:
             /* totally unreachable */
@@ -2794,7 +2796,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
         ValkeyModuleIO io;
         robj keyobj;
         initStaticStringObject(keyobj, key);
-        moduleInitIOContext(io, mt, rdb, &keyobj, dbid);
+        moduleInitIOContext(&io, mt, rdb, &keyobj, dbid);
         /* Call the rdb_load method of the module providing the 10 bit
          * encoding version in the lower 10 bits of the module ID. */
         void *ptr = mt->rdb_load(&io, moduleid & 1023);
@@ -2991,7 +2993,19 @@ done:
 int rdbLoadRio(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
     functionsLibCtx *functions_lib_ctx = functionsLibCtxGetCurrent();
     rdbLoadingCtx loading_ctx = {.dbarray = server.db, .functions_lib_ctx = functions_lib_ctx};
-    int retval = rdbLoadRioWithLoadingCtx(rdb, rdbflags, rsi, &loading_ctx);
+    int retval = rdbLoadRioWithLoadingCtxScopedRdb(rdb, rdbflags, rsi, &loading_ctx);
+    return retval;
+}
+
+/* Wrapper for rdbLoadRioWithLoadingCtx that manages a scoped RDB context.
+ * This method wraps the rdbLoadRioWithLoadingCtx function, providing temporary
+ * RDB context management. It sets a new current loading RDB, calls the wrapped
+ * function, and then restores the previous loading RDB context. */
+int rdbLoadRioWithLoadingCtxScopedRdb(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadingCtx *rdb_loading_ctx) {
+    rio *prev_rio = server.loading_rio;
+    server.loading_rio = rdb;
+    int retval = rdbLoadRioWithLoadingCtx(rdb, rdbflags, rsi, rdb_loading_ctx);
+    server.loading_rio = prev_rio;
     return retval;
 }
 
@@ -3208,7 +3222,7 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
                 }
 
                 ValkeyModuleIO io;
-                moduleInitIOContext(io, mt, rdb, NULL, -1);
+                moduleInitIOContext(&io, mt, rdb, NULL, -1);
                 /* Call the rdb_load method of the module providing the 10 bit
                  * encoding version in the lower 10 bits of the module ID. */
                 int rc = mt->aux_load(&io, moduleid & 1023, when);
@@ -3559,9 +3573,9 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
     listRewind(server.replicas, &li);
     while ((ln = listNext(&li))) {
         client *replica = ln->value;
-        if (replica->repl_state == REPLICA_STATE_WAIT_BGSAVE_START) {
+        if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_START) {
             /* Check replica has the exact requirements */
-            if (replica->replica_req != req) continue;
+            if (replica->repl_data->replica_req != req) continue;
 
             conns[connsnum++] = replica->conn;
             if (dual_channel) {
@@ -3632,8 +3646,8 @@ int rdbSaveToReplicasSockets(int req, rdbSaveInfo *rsi) {
             listRewind(server.replicas, &li);
             while ((ln = listNext(&li))) {
                 client *replica = ln->value;
-                if (replica->repl_state == REPLICA_STATE_WAIT_BGSAVE_END) {
-                    replica->repl_state = REPLICA_STATE_WAIT_BGSAVE_START;
+                if (replica->repl_data->repl_state == REPLICA_STATE_WAIT_BGSAVE_END) {
+                    replica->repl_data->repl_state = REPLICA_STATE_WAIT_BGSAVE_START;
                 }
             }
             if (!dual_channel) {

@@ -33,6 +33,7 @@
 #include "script.h"
 #include "functions.h"
 #include "io_threads.h"
+#include "module.h"
 
 #include <signal.h>
 #include <ctype.h>
@@ -124,7 +125,7 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
          * Don't do it if we have a saving child, as this will trigger
          * a copy on write madness. */
         if (server.current_client && server.current_client->flag.no_touch &&
-            server.current_client->cmd->proc != touchCommand)
+            server.executing_client->cmd->proc != touchCommand)
             flags |= LOOKUP_NOTOUCH;
         if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)) {
             /* Shared objects can't be stored in the database. */
@@ -978,55 +979,34 @@ void keysScanCallback(void *privdata, void *entry) {
 
 /* This callback is used by scanGenericCommand in order to collect elements
  * returned by the dictionary iterator into a list. */
-void dictScanCallback(void *privdata, const dictEntry *de) {
+void hashtableScanCallback(void *privdata, void *entry) {
     scanData *data = (scanData *)privdata;
-    list *keys = data->keys;
-    robj *o = data->o;
     sds val = NULL;
     sds key = NULL;
+
+    robj *o = data->o;
+    list *keys = data->keys;
     data->sampled++;
 
     /* This callback is only used for scanning elements within a key (hash
      * fields, set elements, etc.) so o must be set here. */
     serverAssert(o != NULL);
 
-    /* Filter element if it does not match the pattern. */
-    sds keysds = dictGetKey(de);
-    if (data->pattern) {
-        if (!stringmatchlen(data->pattern, sdslen(data->pattern), keysds, sdslen(keysds), 0)) {
-            return;
-        }
-    }
-
-    if (o->type == OBJ_HASH) {
-        key = keysds;
-        if (!data->only_keys) {
-            val = dictGetVal(de);
-        }
+    /* get key, value */
+    if (o->type == OBJ_SET) {
+        key = (sds)entry;
     } else if (o->type == OBJ_ZSET) {
-        key = sdsdup(keysds);
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = node->ele;
+        /* zset data is copied after filtering by key */
+    } else if (o->type == OBJ_HASH) {
+        key = hashTypeEntryGetField(entry);
         if (!data->only_keys) {
-            char buf[MAX_LONG_DOUBLE_CHARS];
-            int len = ld2string(buf, sizeof(buf), *(double *)dictGetVal(de), LD_STR_AUTO);
-            val = sdsnewlen(buf, len);
+            val = hashTypeEntryGetValue(entry);
         }
     } else {
-        serverPanic("Type not handled in dict SCAN callback.");
+        serverPanic("Type not handled in hashtable SCAN callback.");
     }
-
-    listAddNodeTail(keys, key);
-    if (val) listAddNodeTail(keys, val);
-}
-
-void hashtableScanCallback(void *privdata, void *entry) {
-    scanData *data = (scanData *)privdata;
-    robj *o = data->o;
-    list *keys = data->keys;
-    data->sampled++;
-
-    /* currently only implemented for SET scan */
-    serverAssert(o && o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HASHTABLE);
-    sds key = (sds)entry; /* Specific for OBJ_SET */
 
     /* Filter element if it does not match the pattern. */
     if (data->pattern) {
@@ -1035,7 +1015,21 @@ void hashtableScanCallback(void *privdata, void *entry) {
         }
     }
 
+    /* zset data must be copied. Do this after filtering to avoid unneeded
+     * allocations. */
+    if (o->type == OBJ_ZSET) {
+        /* zset data is copied */
+        zskiplistNode *node = (zskiplistNode *)entry;
+        key = sdsdup(node->ele);
+        if (!data->only_keys) {
+            char buf[MAX_LONG_DOUBLE_CHARS];
+            int len = ld2string(buf, sizeof(buf), node->score, LD_STR_AUTO);
+            val = sdsnewlen(buf, len);
+        }
+    }
+
     listAddNodeTail(keys, key);
+    if (val) listAddNodeTail(keys, val);
 }
 
 /* Try to parse a SCAN cursor stored at object 'o':
@@ -1170,20 +1164,19 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
      * cursor to zero to signal the end of the iteration. */
 
     /* Handle the case of kvstore, dict or hashtable. */
-    dict *dict_table = NULL;
-    hashtable *hashtable_table = NULL;
+    hashtable *ht = NULL;
     int shallow_copied_list_items = 0;
     if (o == NULL) {
         shallow_copied_list_items = 1;
     } else if (o->type == OBJ_SET && o->encoding == OBJ_ENCODING_HASHTABLE) {
-        hashtable_table = o->ptr;
+        ht = o->ptr;
         shallow_copied_list_items = 1;
-    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HT) {
-        dict_table = o->ptr;
+    } else if (o->type == OBJ_HASH && o->encoding == OBJ_ENCODING_HASHTABLE) {
+        ht = o->ptr;
         shallow_copied_list_items = 1;
     } else if (o->type == OBJ_ZSET && o->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = o->ptr;
-        dict_table = zs->dict;
+        ht = zs->ht;
         /* scanning ZSET allocates temporary strings even though it's a dict */
         shallow_copied_list_items = 0;
     }
@@ -1197,7 +1190,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
     }
 
     /* For main hash table scan or scannable data structure. */
-    if (!o || dict_table || hashtable_table) {
+    if (!o || ht) {
         /* We set the max number of iterations to ten times the specified
          * COUNT, so if the hash table is in a pathological state (very
          * sparsely populated) we avoid to block too much time at the cost
@@ -1237,10 +1230,8 @@ void scanGenericCommand(client *c, robj *o, unsigned long long cursor) {
              * If cursor is empty, we should try exploring next non-empty slot. */
             if (o == NULL) {
                 cursor = kvstoreScan(c->db->keys, cursor, onlydidx, keysScanCallback, NULL, &data);
-            } else if (dict_table) {
-                cursor = dictScan(dict_table, cursor, dictScanCallback, &data);
             } else {
-                cursor = hashtableScan(hashtable_table, cursor, hashtableScanCallback, &data);
+                cursor = hashtableScan(ht, cursor, hashtableScanCallback, &data);
             }
         } while (cursor && maxiterations-- && data.sampled < count);
     } else if (o->type == OBJ_SET) {
@@ -1859,7 +1850,8 @@ void deleteExpiredKeyFromOverwriteAndPropagate(client *c, robj *keyobj) {
     robj *aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;
     rewriteClientCommandVector(c, 2, aux, keyobj);
     signalModifiedKey(c, c->db, keyobj);
-    notifyKeyspaceEvent(NOTIFY_GENERIC, "del", keyobj, c->db->id);
+    notifyKeyspaceEvent(NOTIFY_EXPIRED, "expired", keyobj, c->db->id);
+    server.stat_expiredkeys++;
 }
 
 /* Propagate an implicit key deletion into replicas and the AOF file.
