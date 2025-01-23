@@ -1112,10 +1112,11 @@ static void clientsCron(int clients_this_cycle) {
 
 /* A periodic timer that performs client maintenance.
  * This cron task follows the following rules:
- *  - All clients need to be checked (at least) once per second
  *  - To manage latency, we don't check more than MAX_CLIENTS_PER_CLOCK_TICK at a time
  *  - The minimum rate will be defined by server.hz
+ *  - The maxmum rate will be defined by CONFIG_MAX_HZ
  *  - At least CLIENTS_CRON_MIN_ITERATIONS will be performed each cycle
+ *  - All clients need to be checked (at least) once per second (if possible given other constraints)
  */
 #define CLIENTS_CRON_MIN_ITERATIONS 5
 long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
