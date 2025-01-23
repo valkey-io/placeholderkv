@@ -1119,7 +1119,7 @@ static void clientsCron(int clients_this_cycle) {
  *  - All clients need to be checked (at least) once per second (if possible given other constraints)
  */
 #define CLIENTS_CRON_MIN_ITERATIONS 5
-long long clientsTimerProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+long long clientsTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
