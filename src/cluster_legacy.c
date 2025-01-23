@@ -1233,7 +1233,7 @@ void clusterInitLast(void) {
 
 /* Called when a cluster node receives SHUTDOWN. */
 void clusterHandleServerShutdown(void) {
-    if (server.auto_failover_on_shutdown) {
+    if (nodeIsPrimary(myself) && server.auto_failover_on_shutdown) {
         /* Find the first best replica, that is, the replica with the largest offset. */
         client *best_replica = NULL;
         listIter replicas_iter;
@@ -1241,8 +1241,12 @@ void clusterHandleServerShutdown(void) {
         listRewind(server.replicas, &replicas_iter);
         while ((replicas_list_node = listNext(&replicas_iter)) != NULL) {
             client *replica = listNodeValue(replicas_list_node);
-            /* This is done only when the replica offset is caught up, to avoid data loss */
-            if (replica->repl_state == REPLICA_STATE_ONLINE && replica->repl_ack_off == server.primary_repl_offset) {
+            /* This is done only when the replica offset is caught up, to avoid data loss.
+             * And 0x800ff is 8.0.255, we only support new versions for this feature. */
+            if (replica->repl_data->repl_state == REPLICA_STATE_ONLINE &&
+                // replica->repl_data->replica_version > 0x800ff &&
+                replica->name && sdslen(replica->name->ptr) == CLUSTER_NAMELEN &&
+                replica->repl_data->repl_ack_off == server.primary_repl_offset) {
                 best_replica = replica;
                 break;
             }
@@ -1250,8 +1254,9 @@ void clusterHandleServerShutdown(void) {
 
         if (best_replica) {
             /* Send a CLUSTER FAILOVER FORCE to the best replica. */
-            const char *buf = "*3\r\n$7\r\nCLUSTER\r\n$8\r\nFAILOVER\r\n$5\r\nFORCE\r\n";
-            if (connWrite(best_replica->conn, buf, strlen(buf)) == (int)strlen(buf)) {
+            char buf[128];
+            size_t buflen = snprintf(buf, sizeof(buf), "*5\r\n$7\r\nCLUSTER\r\n$8\r\nFAILOVER\r\n$5\r\nFORCE\r\n$9\r\nreplicaid\r\n$%d\r\n%s\r\n", CLUSTER_NAMELEN, (char *)best_replica->name->ptr);
+            if (connWrite(best_replica->conn, buf, buflen) == (int)strlen(buf)) {
                 serverLog(LL_NOTICE, "Sending CLUSTER FAILOVER FORCE to replica %s succeeded.",
                           replicationGetReplicaName(best_replica));
             } else {
@@ -7027,32 +7032,46 @@ int clusterCommandSpecial(client *c) {
         } else {
             addReplyLongLong(c, clusterNodeFailureReportsCount(n));
         }
-    } else if (!strcasecmp(c->argv[1]->ptr, "failover") && (c->argc == 2 || c->argc == 3)) {
-        /* CLUSTER FAILOVER [FORCE|TAKEOVER] */
+    } else if (!strcasecmp(c->argv[1]->ptr, "failover") && (c->argc >= 2)) {
+        /* CLUSTER FAILOVER [FORCE|TAKEOVER] [replicaid <node id>] */
         int force = 0, takeover = 0;
+        robj *replicaid = NULL;
 
-        if (c->argc == 3) {
-            if (!strcasecmp(c->argv[2]->ptr, "force")) {
+        for (int j = 2; j < c->argc; j++) {
+            int moreargs = (c->argc - 1) - j;
+            if (!strcasecmp(c->argv[j]->ptr, "force")) {
                 force = 1;
-            } else if (!strcasecmp(c->argv[2]->ptr, "takeover")) {
+            } else if (!strcasecmp(c->argv[j]->ptr, "takeover")) {
                 takeover = 1;
                 force = 1; /* Takeover also implies force. */
+            } else if (!strcasecmp(c->argv[j]->ptr, "replicaid") && moreargs) {
+                j++;
+                replicaid = c->argv[j];
             } else {
                 addReplyErrorObject(c, shared.syntaxerr);
                 return 1;
             }
         }
 
+        /* Check if it should be executed by myself. */
+        if (replicaid != NULL) {
+            clusterNode *n = clusterLookupNode(replicaid->ptr, sdslen(replicaid->ptr));
+            if (n != myself) {
+                /* Ignore this command, including the sanity check and the process. */
+                addReply(c, shared.ok);
+                return 1;
+            }
+        }
+
         /* Check preconditions. */
         if (clusterNodeIsPrimary(myself)) {
-            addReplyError(c, "You should send CLUSTER FAILOVER to a replica");
+            if (replicaid == NULL) addReplyError(c, "You should send CLUSTER FAILOVER to a replica");
             return 1;
         } else if (myself->replicaof == NULL) {
-            addReplyError(c, "I'm a replica but my master is unknown to me");
+            if (replicaid == NULL) addReplyError(c, "I'm a replica but my master is unknown to me");
             return 1;
         } else if (!force && (nodeFailed(myself->replicaof) || myself->replicaof->link == NULL)) {
-            addReplyError(c, "Master is down or failed, "
-                             "please use CLUSTER FAILOVER FORCE");
+            if (replicaid == NULL) addReplyError(c, "Master is down or failed, please use CLUSTER FAILOVER FORCE");
             return 1;
         }
         resetManualFailover();
