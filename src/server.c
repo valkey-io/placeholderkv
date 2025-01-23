@@ -1052,7 +1052,7 @@ void getExpensiveClientsInfo(size_t *in_usage, size_t *out_usage) {
  * clients blocked in some blocking command with a non-zero timeout.
  *
  * The function makes some effort to process all the clients every second, even
- * if this cannot be strictly guaranteed, since clientsTimerProc() may be called with
+ * if this cannot be strictly guaranteed, since clientsTimeProc() may be called with
  * an actual frequency lower than the intended rate in case of latency events like slow
  * commands.
  *
