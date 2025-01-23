@@ -43,6 +43,7 @@
 #include "io_threads.h"
 #include "sds.h"
 #include "module.h"
+#include "scripting_engine.h"
 
 #include <time.h>
 #include <signal.h>
@@ -556,14 +557,16 @@ hashtableType setHashtableType = {
     .keyCompare = hashtableSdsKeyCompare,
     .entryDestructor = dictSdsDestructor};
 
+const void *zsetHashtableGetKey(const void *element) {
+    const zskiplistNode *node = element;
+    return node->ele;
+}
+
 /* Sorted sets hash (note: a skiplist is used in addition to the hash table) */
-dictType zsetDictType = {
-    dictSdsHash,       /* hash function */
-    NULL,              /* key dup */
-    dictSdsKeyCompare, /* key compare */
-    NULL,              /* Note: SDS string shared & freed by skiplist */
-    NULL,              /* val destructor */
-    NULL,              /* allow to expand */
+hashtableType zsetHashtableType = {
+    .hashFunction = dictSdsHash,
+    .entryGetKey = zsetHashtableGetKey,
+    .keyCompare = hashtableSdsKeyCompare,
 };
 
 uint64_t hashtableSdsHash(const void *key) {
@@ -621,6 +624,24 @@ hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
                                    .hashFunction = dictCStrCaseHash,
                                    .keyCompare = hashtableStringKeyCaseCompare,
                                    .instant_rehashing = 1};
+
+/* Hash type hash table (note that small hashes are represented with listpacks) */
+const void *hashHashtableTypeGetKey(const void *entry) {
+    const hashTypeEntry *hash_entry = entry;
+    return (const void *)hashTypeEntryGetField(hash_entry);
+}
+
+void hashHashtableTypeDestructor(void *entry) {
+    hashTypeEntry *hash_entry = entry;
+    freeHashTypeEntry(hash_entry);
+}
+
+hashtableType hashHashtableType = {
+    .hashFunction = dictSdsHash,
+    .entryGetKey = hashHashtableTypeGetKey,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = hashHashtableTypeDestructor,
+};
 
 /* Hash type hash table (note that small hashes are represented with listpacks) */
 dictType hashDictType = {
@@ -2875,12 +2896,15 @@ void initServer(void) {
         server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
     }
 
+    if (scriptingEngineManagerInit() == C_ERR) {
+        serverPanic("Scripting engine manager initialization failed, check the server logs.");
+    }
+
     /* Initialize the LUA scripting engine. */
     scriptingInit(1);
     /* Initialize the functions engine based off of LUA initialization. */
     if (functionsInit() == C_ERR) {
         serverPanic("Functions initialization failed, check the server logs.");
-        exit(1);
     }
     slowlogInit();
     latencyMonitorInit();
@@ -4027,21 +4051,20 @@ int processCommand(client *c) {
 
     uint64_t cmd_flags = getCommandFlags(c);
 
-    int is_read_command =
-        (cmd_flags & CMD_READONLY) || (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_READONLY));
-    int is_write_command =
-        (cmd_flags & CMD_WRITE) || (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
-    int is_denyoom_command =
-        (cmd_flags & CMD_DENYOOM) || (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_DENYOOM));
-    int is_denystale_command =
-        !(cmd_flags & CMD_STALE) || (c->cmd->proc == execCommand && (c->mstate.cmd_inv_flags & CMD_STALE));
-    int is_denyloading_command =
-        !(cmd_flags & CMD_LOADING) || (c->cmd->proc == execCommand && (c->mstate.cmd_inv_flags & CMD_LOADING));
-    int is_may_replicate_command =
-        (cmd_flags & (CMD_WRITE | CMD_MAY_REPLICATE)) ||
-        (c->cmd->proc == execCommand && (c->mstate.cmd_flags & (CMD_WRITE | CMD_MAY_REPLICATE)));
-    int is_deny_async_loading_command = (cmd_flags & CMD_NO_ASYNC_LOADING) ||
-                                        (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_NO_ASYNC_LOADING));
+    int is_exec = (c->mstate && c->cmd->proc == execCommand);
+    int ms_flags = is_exec ? c->mstate->cmd_flags : 0;
+    int ms_inv_flags = is_exec ? c->mstate->cmd_inv_flags : 0;
+    int combined_flags = cmd_flags | ms_flags;
+    int combined_inv_flags = (~cmd_flags | ms_inv_flags);
+
+    int is_read_command = (combined_flags & CMD_READONLY);
+    int is_write_command = (combined_flags & CMD_WRITE);
+    int is_denyoom_command = (combined_flags & CMD_DENYOOM);
+    int is_denystale_command = (combined_inv_flags & CMD_STALE);
+    int is_denyloading_command = (combined_inv_flags & CMD_LOADING);
+    int is_may_replicate_command = (combined_flags & (CMD_WRITE | CMD_MAY_REPLICATE));
+    int is_deny_async_loading_command = (combined_flags & CMD_NO_ASYNC_LOADING);
+
     const int obey_client = mustObeyClient(c);
 
     if (authRequired(c)) {
@@ -4414,7 +4437,7 @@ int isReadyToShutdown(void) {
     listRewind(server.replicas, &li);
     while ((ln = listNext(&li)) != NULL) {
         client *replica = listNodeValue(ln);
-        if (replica->repl_ack_off != server.primary_repl_offset) return 0;
+        if (replica->repl_data->repl_ack_off != server.primary_repl_offset) return 0;
     }
     return 1;
 }
@@ -4460,12 +4483,12 @@ int finishShutdown(void) {
     while ((replicas_list_node = listNext(&replicas_iter)) != NULL) {
         client *replica = listNodeValue(replicas_list_node);
         num_replicas++;
-        if (replica->repl_ack_off != server.primary_repl_offset) {
+        if (replica->repl_data->repl_ack_off != server.primary_repl_offset) {
             num_lagging_replicas++;
-            long lag = replica->repl_state == REPLICA_STATE_ONLINE ? time(NULL) - replica->repl_ack_time : 0;
+            long lag = replica->repl_data->repl_state == REPLICA_STATE_ONLINE ? time(NULL) - replica->repl_data->repl_ack_time : 0;
             serverLog(LL_NOTICE, "Lagging replica %s reported offset %lld behind master, lag=%ld, state=%s.",
-                      replicationGetReplicaName(replica), server.primary_repl_offset - replica->repl_ack_off, lag,
-                      replstateToString(replica->repl_state));
+                      replicationGetReplicaName(replica), server.primary_repl_offset - replica->repl_data->repl_ack_off, lag,
+                      replstateToString(replica->repl_data->repl_state));
         }
     }
     if (num_replicas > 0) {
@@ -5649,6 +5672,17 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         unsigned long blocking_keys, blocking_keys_on_nokey, watched_keys;
         getExpansiveClientsInfo(&maxin, &maxout);
         totalNumberOfStatefulKeys(&blocking_keys, &blocking_keys_on_nokey, &watched_keys);
+
+        char *paused_actions = "none";
+        long long paused_timeout = 0;
+        if (server.paused_actions & PAUSE_ACTION_CLIENT_ALL) {
+            paused_actions = "all";
+            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_ALL);
+        } else if (server.paused_actions & PAUSE_ACTION_CLIENT_WRITE) {
+            paused_actions = "write";
+            paused_timeout = getPausedActionTimeout(PAUSE_ACTION_CLIENT_WRITE);
+        }
+
         if (sections++) info = sdscat(info, "\r\n");
         info = sdscatprintf(
             info,
@@ -5665,7 +5699,9 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "clients_in_timeout_table:%llu\r\n", (unsigned long long)raxSize(server.clients_timeout_table),
                 "total_watched_keys:%lu\r\n", watched_keys,
                 "total_blocking_keys:%lu\r\n", blocking_keys,
-                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey));
+                "total_blocking_keys_on_nokey:%lu\r\n", blocking_keys_on_nokey,
+                "paused_actions:%s\r\n", paused_actions,
+                "paused_timeout_milliseconds:%lld\r\n", paused_timeout));
     }
 
     /* Memory */
@@ -5946,11 +5982,11 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             long long replica_read_repl_offset = 1;
 
             if (server.primary) {
-                replica_repl_offset = server.primary->reploff;
-                replica_read_repl_offset = server.primary->read_reploff;
+                replica_repl_offset = server.primary->repl_data->reploff;
+                replica_read_repl_offset = server.primary->repl_data->read_reploff;
             } else if (server.cached_primary) {
-                replica_repl_offset = server.cached_primary->reploff;
-                replica_read_repl_offset = server.cached_primary->read_reploff;
+                replica_repl_offset = server.cached_primary->repl_data->reploff;
+                replica_read_repl_offset = server.cached_primary->repl_data->read_reploff;
             }
 
             info = sdscatprintf(
@@ -6009,7 +6045,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             listRewind(server.replicas, &li);
             while ((ln = listNext(&li))) {
                 client *replica = listNodeValue(ln);
-                char ip[NET_IP_STR_LEN], *replica_ip = replica->replica_addr;
+                char ip[NET_IP_STR_LEN], *replica_ip = replica->repl_data->replica_addr;
                 int port;
                 long lag = 0;
 
@@ -6017,18 +6053,18 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                     if (connAddrPeerName(replica->conn, ip, sizeof(ip), &port) == -1) continue;
                     replica_ip = ip;
                 }
-                const char *state = replstateToString(replica->repl_state);
+                const char *state = replstateToString(replica->repl_data->repl_state);
                 if (state[0] == '\0') continue;
-                if (replica->repl_state == REPLICA_STATE_ONLINE) lag = time(NULL) - replica->repl_ack_time;
+                if (replica->repl_data->repl_state == REPLICA_STATE_ONLINE) lag = time(NULL) - replica->repl_data->repl_ack_time;
 
                 info = sdscatprintf(info,
                                     "slave%d:ip=%s,port=%d,state=%s,"
                                     "offset=%lld,lag=%ld,type=%s\r\n",
-                                    replica_id, replica_ip, replica->replica_listening_port, state,
-                                    replica->repl_ack_off, lag,
-                                    replica->flag.repl_rdb_channel                     ? "rdb-channel"
-                                    : replica->repl_state == REPLICA_STATE_BG_RDB_LOAD ? "main-channel"
-                                                                                       : "replica");
+                                    replica_id, replica_ip, replica->repl_data->replica_listening_port, state,
+                                    replica->repl_data->repl_ack_off, lag,
+                                    replica->flag.repl_rdb_channel                                ? "rdb-channel"
+                                    : replica->repl_data->repl_state == REPLICA_STATE_BG_RDB_LOAD ? "main-channel"
+                                                                                                  : "replica");
                 replica_id++;
             }
         }
@@ -6194,6 +6230,8 @@ void monitorCommand(client *c) {
 
     /* ignore MONITOR if already replica or in monitor mode */
     if (c->flag.replica) return;
+
+    initClientReplicationData(c);
 
     c->flag.replica = 1;
     c->flag.monitor = 1;
@@ -6675,7 +6713,7 @@ void serverOutOfMemoryHandler(size_t allocation_size) {
 /* Callback for sdstemplate on proc-title-template. See valkey.conf for
  * supported variables.
  */
-static sds serverProcTitleGetVariable(const sds varname, void *arg) {
+static sds serverProcTitleGetVariable(const_sds varname, void *arg) {
     if (!strcmp(varname, "title")) {
         return sdsnew(arg);
     } else if (!strcmp(varname, "listen-addr")) {
