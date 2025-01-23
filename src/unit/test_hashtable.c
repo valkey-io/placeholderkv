@@ -547,7 +547,7 @@ int test_iterator(int argc, char **argv, int flags) {
     size_t num_returned = 0;
     hashtableIterator iter;
     void *next;
-    hashtableInitIterator(&iter, ht);
+    hashtableInitIterator(&iter, ht, 0);
     while (hashtableNext(&iter, &next)) {
         uint8_t *entry = next;
         num_returned++;
@@ -592,7 +592,7 @@ int test_safe_iterator(int argc, char **argv, int flags) {
     size_t num_returned = 0;
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, ht);
+    hashtableInitIterator(&iter, ht, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         uint8_t *entry = next;
         size_t index = entry - entry_counts;
@@ -657,7 +657,7 @@ int test_compact_bucket_chain(int argc, char **argv, int flags) {
     size_t num_chained_buckets = hashtableChainedBuckets(ht, 0);
     size_t num_returned = 0;
     hashtableIterator iter;
-    hashtableInitSafeIterator(&iter, ht);
+    hashtableInitIterator(&iter, ht, HASHTABLE_ITER_SAFE);
     void *entry;
     while (hashtableNext(&iter, &entry)) {
         /* As long as the iterator is still returning entries from the same
