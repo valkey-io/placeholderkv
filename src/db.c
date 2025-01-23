@@ -114,9 +114,11 @@ robj *lookupKey(serverDb *db, robj *key, int flags) {
         int expire_flags = 0;
         if (flags & LOOKUP_WRITE && !is_ro_replica) expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE) expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        if (expireIfNeededWithDictIndex(db, key, val, expire_flags, dict_index) != KEY_VALID) {
-            /* The key is no longer valid. */
-            val = NULL;
+        if (unlikely(dbSize(db)>0)) { // This condition check found to improve branch prediction
+            if (expireIfNeededWithDictIndex(db, key, val, expire_flags, dict_index) != KEY_VALID) {
+                /* The key is no longer valid. */
+                val = NULL;
+            }
         }
     }
 
