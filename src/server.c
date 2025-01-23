@@ -2785,7 +2785,7 @@ void initServer(void) {
     }
     /* A separate timer for client maintenance.  Runs at a variable speed depending
      * on the client count. */
-    if (aeCreateTimeEvent(server.el, 1, clientsTimerProc, NULL, NULL) == AE_ERR) {
+    if (aeCreateTimeEvent(server.el, 1, clientsTimeProc, NULL, NULL) == AE_ERR) {
         serverPanic("Can't create event clientsTimerProc timer.");
         exit(1);
     }
