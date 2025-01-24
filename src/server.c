@@ -1122,10 +1122,10 @@ long long clientsTimeProc(struct aeEventLoop *eventLoop, long long id, void *cli
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
-    
+
     const int MIN_CLIENTS_PER_CYCLE = 5;
     const int MAX_CLIENTS_PER_CYCLE = 200;
-    
+
     monotime start_time;
     elapsedStart(&start_time);
 
