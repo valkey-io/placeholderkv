@@ -2891,6 +2891,7 @@ ssize_t syncRead(int fd, char *ptr, ssize_t size, long long timeout);
 ssize_t syncReadLine(int fd, char *ptr, ssize_t size, long long timeout);
 
 /* Replication */
+int prepareReplicasToWrite(void);
 void replicationFeedReplicas(int dictid, robj **argv, int argc);
 void replicationFeedStreamFromPrimaryStream(char *buf, size_t buflen);
 void resetReplicationBuffer(void);

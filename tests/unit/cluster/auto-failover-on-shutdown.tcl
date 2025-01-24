@@ -54,7 +54,6 @@ proc test_main {how shutdown_timeout} {
         }
 
         # Make sure that the expected logs are printed.
-        verify_log_message 0 "*Sending CLUSTER FAILOVER FORCE to replica*" 0
         verify_log_message -6 "*Forced failover primary request accepted*" 0
 
         resume_process $replica1_pid

@@ -3704,7 +3704,7 @@ void syncWithPrimary(connection *conn) {
     if (server.repl_state == REPL_STATE_RECEIVE_SETNAME_REPLY) {
         err = receiveSynchronousResponse(conn);
         if (err == NULL) goto no_response_error;
-        /* Ignore the error if any. 8.1 introduced this logic and we don't care if it failed. */
+        /* Ignore the error if any, we don't care if it failed, it is best effort. */
         if (err[0] == '-') {
             serverLog(LL_NOTICE, "(Non critical) Primary does not understand CLIENT SETNAME: %s", err);
         }

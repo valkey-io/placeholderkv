@@ -1253,15 +1253,23 @@ void clusterHandleServerShutdown(void) {
         }
 
         if (best_replica) {
-            /* Send a CLUSTER FAILOVER FORCE to the best replica. */
+            /* Send the CLUSTER FAILOVER FORCE REPLICAID node-id to all replicas since
+             * it is a shared replication buffer, but only the replica with the matching
+             * node-id will execute it. The caller will call flushReplicasOutputBuffers,
+             * so in here it is a best effort. */
             char buf[128];
-            size_t buflen = snprintf(buf, sizeof(buf), "*5\r\n$7\r\nCLUSTER\r\n$8\r\nFAILOVER\r\n$5\r\nFORCE\r\n$9\r\nreplicaid\r\n$%d\r\n%s\r\n", CLUSTER_NAMELEN, (char *)best_replica->name->ptr);
-            if (connWrite(best_replica->conn, buf, buflen) == (int)strlen(buf)) {
-                serverLog(LL_NOTICE, "Sending CLUSTER FAILOVER FORCE to replica %s succeeded.",
-                          replicationGetReplicaName(best_replica));
-            } else {
-                serverLog(LL_WARNING, "Failed to send CLUSTER FAILOVER FORCE to replica: %s", strerror(errno));
-            }
+            size_t buflen = snprintf(buf, sizeof(buf),
+                                     "*5\r\n$7\r\nCLUSTER\r\n"
+                                     "$8\r\nFAILOVER\r\n"
+                                     "$5\r\nFORCE\r\n"
+                                     "$9\r\nREPLICAID\r\n"
+                                     "$%d\r\n%s\r\n",
+                                     CLUSTER_NAMELEN,
+                                     (char *)best_replica->name->ptr);
+            /* Must install write handler for all replicas first before feeding
+             * replication stream. */
+            prepareReplicasToWrite();
+            feedReplicationBuffer(buf, buflen);
         } else {
             serverLog(LL_NOTICE, "Unable to find a replica to perform an auto failover on shutdown.");
         }
@@ -7033,7 +7041,9 @@ int clusterCommandSpecial(client *c) {
             addReplyLongLong(c, clusterNodeFailureReportsCount(n));
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "failover") && (c->argc >= 2)) {
-        /* CLUSTER FAILOVER [FORCE|TAKEOVER] [replicaid <node id>] */
+        /* CLUSTER FAILOVER [FORCE|TAKEOVER] [REPLICAID <NODE ID>]
+         * REPLICAID is currently available only for internal so we won't
+         * put it into the JSON file. */
         int force = 0, takeover = 0;
         robj *replicaid = NULL;
 
@@ -7044,7 +7054,8 @@ int clusterCommandSpecial(client *c) {
             } else if (!strcasecmp(c->argv[j]->ptr, "takeover")) {
                 takeover = 1;
                 force = 1; /* Takeover also implies force. */
-            } else if (!strcasecmp(c->argv[j]->ptr, "replicaid") && moreargs) {
+            } else if (c == server.primary && !strcasecmp(c->argv[j]->ptr, "replicaid") && moreargs) {
+                /* This option is currently available only for primary. */
                 j++;
                 replicaid = c->argv[j];
             } else {
@@ -7054,13 +7065,11 @@ int clusterCommandSpecial(client *c) {
         }
 
         /* Check if it should be executed by myself. */
-        if (replicaid != NULL) {
-            clusterNode *n = clusterLookupNode(replicaid->ptr, sdslen(replicaid->ptr));
-            if (n != myself) {
-                /* Ignore this command, including the sanity check and the process. */
-                addReply(c, shared.ok);
-                return 1;
-            }
+        if (replicaid != NULL && memcmp(replicaid->ptr, myself->name, CLUSTER_NAMELEN) != 0) {
+            /* Ignore this command, including the sanity check and the process. */
+            serverLog(LL_NOTICE, "return ok");
+            addReply(c, shared.ok);
+            return 1;
         }
 
         /* Check preconditions. */
