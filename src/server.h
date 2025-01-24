@@ -117,7 +117,6 @@ struct hdr_histogram;
 #define CONFIG_DEFAULT_HZ 10 /* Time interrupt calls/sec. */
 #define CONFIG_MIN_HZ 1
 #define CONFIG_MAX_HZ 500
-#define MAX_CLIENTS_PER_CLOCK_TICK 200 /* HZ is adapted based on that. */
 #define CRON_DBS_PER_CALL 16
 #define CRON_DICTS_PER_DB 16
 #define NET_MAX_WRITES_PER_EVENT (1024 * 64)
