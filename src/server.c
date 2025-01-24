@@ -1118,23 +1118,28 @@ static void clientsCron(int clients_this_cycle) {
  *  - At least CLIENTS_CRON_MIN_ITERATIONS will be performed each cycle
  *  - All clients need to be checked (at least) once per second (if possible given other constraints)
  */
-#define CLIENTS_CRON_MIN_ITERATIONS 5
 long long clientsTimeProc(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
     UNUSED(id);
     UNUSED(clientData);
+    
+    const int MIN_CLIENTS_PER_CYCLE = 5;
+    const int MAX_CLIENTS_PER_CYCLE = 200;
+    
+    monotonic start_time;
+    elapsedStart(&start_time);
 
     int numclients = listLength(server.clients);
     int clients_this_cycle = numclients / server.hz; /* Initial computation based on standard hz */
     int delay_ms;
 
-    if (clients_this_cycle < CLIENTS_CRON_MIN_ITERATIONS) {
-        clients_this_cycle = min(numclients, CLIENTS_CRON_MIN_ITERATIONS);
+    if (clients_this_cycle < MIN_CLIENTS_PER_CYCLE) {
+        clients_this_cycle = min(numclients, MIN_CLIENTS_PER_CYCLE);
     }
 
-    if (clients_this_cycle > MAX_CLIENTS_PER_CLOCK_TICK) {
-        clients_this_cycle = MAX_CLIENTS_PER_CLOCK_TICK;
-        float required_hz = (float)numclients / MAX_CLIENTS_PER_CLOCK_TICK;
+    if (clients_this_cycle > MAX_CLIENTS_PER_CYCLE) {
+        clients_this_cycle = MAX_CLIENTS_PER_CYCLE;
+        float required_hz = (float)numclients / MAX_CLIENTS_PER_CYCLE;
         if (required_hz > CONFIG_MAX_HZ) required_hz = CONFIG_MAX_HZ;
         delay_ms = 1000.0 / required_hz;
     } else {
@@ -1143,6 +1148,8 @@ long long clientsTimeProc(struct aeEventLoop *eventLoop, long long id, void *cli
 
     clientsCron(clients_this_cycle);
 
+    server.clients_hz = 1000 / delay_ms;
+    server.el_cron_duration += elapsedUs(start_time);
     return delay_ms;
 }
 
