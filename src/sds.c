@@ -112,10 +112,6 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
     sh = trymalloc ? s_trymalloc_usable(hdrlen + initlen + 1, &bufsize)
                    : s_malloc_usable(hdrlen + initlen + 1, &bufsize);
     if (sh == NULL) return NULL;
-    if (init == SDS_NOINIT)
-        init = NULL;
-    else if (!init)
-        memset(sh, 0, hdrlen + initlen + 1);
 
     adjustTypeIfNeeded(&type, &hdrlen, bufsize);
     return sdswrite(sh, bufsize, type, init, initlen);
@@ -171,6 +167,10 @@ sds sdswrite(char *buf, size_t bufsize, char type, const char *init, size_t init
         break;
     }
     }
+    if (init == SDS_NOINIT)
+        init = NULL;
+    else if (!init)
+        memset(s, 0, initlen);
     if (initlen && init) memcpy(s, init, initlen);
     s[initlen] = '\0';
     return s;
