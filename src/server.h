@@ -1682,6 +1682,7 @@ struct valkeyServer {
     char **exec_argv;         /* Executable argv vector (copy). */
     mode_t umask;             /* The umask value of the process on startup */
     int hz;                   /* serverCron() calls frequency in hertz */
+    int clients_hz;           /* clientsTimeProc() frequency in hertz */
     int in_fork_child;        /* indication that this is a fork child */
     serverDb *db;
     dict *commands;      /* Command table */
