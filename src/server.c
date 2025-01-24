@@ -1575,7 +1575,7 @@ long long serverCron(struct aeEventLoop *eventLoop, long long id, void *clientDa
 
     server.cronloops++;
 
-    server.el_cron_duration = getMonotonicUs() - cron_start;
+    server.el_cron_duration += elapsedUs(cron_start);
 
     return 1000 / server.hz;
 }
@@ -5558,6 +5558,7 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                 "uptime_in_days:%I\r\n", (int64_t)(uptime / (3600 * 24)),
                 "hz:%i\r\n", server.hz,
                 "configured_hz:%i\r\n", server.hz,
+                "clients_hz:%i\r\n", server.clients_hz,
                 "lru_clock:%u\r\n", server.lruclock,
                 "executable:%s\r\n", server.executable ? server.executable : "",
                 "config_file:%s\r\n", server.configfile ? server.configfile : "",
