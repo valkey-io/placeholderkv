@@ -43,7 +43,7 @@ struct hashTypeEntry {
 /* takes ownership of value, does not take ownership of field */
 hashTypeEntry *hashTypeCreateEntry(sds field, sds value) {
     size_t field_len = sdslen(field);
-    size_t field_sds_type = sdsReqType(field_len);
+    char field_sds_type = sdsReqType(field_len);
     size_t field_size = sdsReqSize(field_len, field_sds_type);
     size_t total_size = sizeof(hashTypeEntry) + field_size;
     hashTypeEntry *entry = zmalloc(total_size);

@@ -94,9 +94,9 @@ robj *createObjectWithKeyAndExpire(int type, void *ptr, const sds key, long long
 
     /* Copy embedded key. */
     if (o->hasembkey) {
-        *data = sdsHdrSize(key_sds_type);
-        sdswrite(data + 1, key_sds_size, key_sds_type, key, key_sds_len);
-        data += 1 + key_sds_size;
+        *data++ = sdsHdrSize(key_sds_type);
+        size_t remaining_space = bufsize - (data - (char *)(void *)o);
+        sdswrite(data, remaining_space, key_sds_type, key, key_sds_len);
     }
 
     return o;
@@ -190,15 +190,13 @@ static robj *createEmbeddedStringObjectWithKeyAndExpire(const char *val_ptr,
 
     /* Copy embedded key. */
     if (o->hasembkey) {
-        *data = sdsHdrSize(key_sds_type);
-        sdswrite(data + 1, key_sds_size, key_sds_type, key, key_sds_len);
-        data += 1 + key_sds_size;
+        *data++ = sdsHdrSize(key_sds_type);
+        sdswrite(data, key_sds_size, key_sds_type, key, key_sds_len);
+        data += key_sds_size;
     }
 
     /* Copy embedded value (EMBSTR). */
-    size_t sz = bufsize - (data - (char *)(void *)o);
-    size_t remaining_space = bufsize - min_size + sdsReqSize(val_len, SDS_TYPE_8);
-    assert(sz == remaining_space);
+    size_t remaining_space = bufsize - (data - (char *)(void *)o);
     o->ptr = sdswrite(data, remaining_space, SDS_TYPE_8, val_ptr, val_len);
 
     return o;
