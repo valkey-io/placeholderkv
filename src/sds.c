@@ -113,7 +113,6 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
                    : s_malloc_usable(hdrlen + initlen + 1, &bufsize);
     if (sh == NULL) return NULL;
 
-    adjustTypeIfNeeded(&type, &hdrlen, bufsize);
     return sdswrite(sh, bufsize, type, init, initlen);
 }
 
@@ -123,8 +122,9 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
  * buffer size. You can use a larger `bufsize` than required, but usable size
  * can't be greater than `sdsTypeMaxSize(type)`. */
 sds sdswrite(char *buf, size_t bufsize, char type, const char *init, size_t initlen) {
-    assert(bufsize >= sdsReqSize(initlen, type));
     int hdrlen = sdsHdrSize(type);
+    adjustTypeIfNeeded(&type, &hdrlen, bufsize);
+    assert(bufsize >= sdsReqSize(initlen, type));
     size_t usable = bufsize - hdrlen - 1;
     sds s = buf + hdrlen;
     unsigned char *fp = ((unsigned char *)s) - 1; /* flags pointer. */
