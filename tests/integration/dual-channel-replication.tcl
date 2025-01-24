@@ -871,6 +871,7 @@ start_server {tags {"dual-channel-replication external:skip"}} {
                 fail "Primary did not free repl buf block after sync failure"
             }
             wait_and_resume_process 0
+            $replica debug pause-after-fork 0
             set res [wait_for_log_messages -1 {"*Unable to partial resync with replica * for lack of backlog*"} $loglines 20000 1]
             set loglines [lindex $res 0]
         }
