@@ -3152,7 +3152,7 @@ struct serverCommand *lookupCommandBySds(sds s);
 struct serverCommand *lookupCommandByCStringLogic(hashtable *commands, const char *s);
 struct serverCommand *lookupCommandByCString(const char *s);
 struct serverCommand *lookupCommandOrOriginal(robj **argv, int argc);
-int commandCheckExistence(client *c, sds *err);
+int commandCheckExistence(client *c, robj **argv, int argc, sds *err);
 int commandCheckArity(struct serverCommand *cmd, int argc, sds *err);
 void startCommandExecution(void);
 int incrCommandStatsOnError(struct serverCommand *cmd, int flags);

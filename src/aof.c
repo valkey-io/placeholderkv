@@ -1532,10 +1532,11 @@ int loadSingleAppendOnlyFile(char *filename) {
         }
 
         /* Command lookup */
+        sds err = NULL;
         cmd = lookupCommand(argv, argc);
-        if (!cmd) {
-            serverLog(LL_WARNING, "Unknown command '%s' reading the append only file %s", (char *)argv[0]->ptr,
-                      filename);
+        if ((!cmd && !commandCheckExistence(NULL, argv, argc, &err)) || (cmd && !commandCheckArity(cmd, argc, &err))) {
+            serverLog(LL_WARNING, "Error reading the append only file %s, error: %s", filename, err);
+            sdsfree(err);
             freeClientArgv(fakeClient);
             ret = AOF_FAILED;
             goto cleanup;

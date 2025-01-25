@@ -6371,7 +6371,7 @@ ValkeyModuleCallReply *VM_Call(ValkeyModuleCtx *ctx, const char *cmdname, const 
      */
     c->cmd = c->lastcmd = c->realcmd = lookupCommand(c->argv, c->argc);
     sds err;
-    if (!commandCheckExistence(c, error_as_call_replies ? &err : NULL)) {
+    if (!commandCheckExistence(c, c->argv, c->argc, error_as_call_replies ? &err : NULL)) {
         errno = ENOENT;
         if (error_as_call_replies) reply = callReplyCreateError(err, ctx);
         goto cleanup;
