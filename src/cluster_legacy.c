@@ -2456,6 +2456,10 @@ int nodeUpdateAddressIfNeeded(clusterNode *node, clusterLink *link, clusterMsg *
     if (node->tcp_port == tcp_port && node->cport == cport && node->tls_port == tls_port && strcmp(ip, node->ip) == 0)
         return 0;
 
+    /* We should not update the node address if we were not able to get a valid
+     * IP address. */
+    if (ip[0] == '\0' || strcmp(ip,"?") == 0) return 0;
+
     /* IP / port is different, update it. */
     memcpy(node->ip, ip, sizeof(ip));
     node->tcp_port = tcp_port;
