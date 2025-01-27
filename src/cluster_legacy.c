@@ -2954,6 +2954,10 @@ void clusterProcessPingExtensions(clusterMsg *hdr, clusterLink *link) {
             if (n && n != myself && !(nodeIsReplica(myself) && myself->replicaof == n)) {
                 sds id = sdsnewlen(forgotten_node_ext->name, CLUSTER_NAMELEN);
                 dictEntry *de = dictAddOrFind(server.cluster->nodes_black_list, id);
+                if (dictGetKey(de) != id) {
+                    /* The dict did not take ownership of the id string, so we need to free it. */
+                    sdsfree(id);
+                }
                 uint64_t expire = server.unixtime + ntohu64(forgotten_node_ext->ttl);
                 dictSetUnsignedIntegerVal(de, expire);
                 clusterDelNode(n);
@@ -3317,8 +3321,8 @@ int clusterProcessPacket(clusterLink *link) {
                         /* Unable to retrieve the node's IP address from the connection. Without a
                          * valid IP, the node becomes unusable in the cluster. This failure might be
                          * due to the connection being closed. */
-                        serverLog(LL_NOTICE, "Closing link even though we received a MEET packet on it, "
-                                             "because the connection has an error");
+                        serverLog(LL_NOTICE, "Closing cluster link due to failure to retrieve IP from the connection, "
+                                             "possibly caused by a closed connection.");
                         freeClusterLink(link);
                         return 0;
                     }
@@ -3341,14 +3345,14 @@ int clusterProcessPacket(clusterLink *link) {
                     clusterAddNode(node);
                     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
                 } else {
-                    /* A second MEET packet was received on an existing link during the handshake process.
-                     * This happens when the other node detects no inbound link, and re-sends a MEET packet
-                     * before this node can respond with a PING. This MEET is a no-op.
+                    /* A second MEET packet was received on an existing link during the handshake
+                     * process. This happens when the other node detects no inbound link, and
+                     * re-sends a MEET packet before this node can respond with a PING.
+                     * This MEET is a no-op.
                      *
-                     * Note: Nodes in HANDSHAKE state are not fully "known" (random names), so the sender
-                     * remains unidentified at this point. The MEET packet might be re-sent if the inbound
-                     * connection is still unestablished by the next cron cycle.
-                     */
+                     * Note: Nodes in HANDSHAKE state are not fully "known" (random names), so the
+                     * sender remains unidentified at this point. The MEET packet might be re-sent
+                     * if the inbound connection is still unestablished by the next cron cycle. */
                     debugServerAssert(link->inbound && nodeInHandshake(link->node));
                 }
 
@@ -3357,16 +3361,19 @@ int clusterProcessPacket(clusterLink *link) {
                  * of the message type. */
                 clusterProcessGossipSection(hdr, link);
             } else if (sender->link && nodeExceedsHandshakeTimeout(sender, now)) {
-                /* The MEET packet is from a known node, after the handshake timeout, so the sender thinks that I do not
-                 * know it.
-                 * Free my outbound link to that node, triggering a reconnect and a PING over the new link.
-                 * Once that node receives our PING, it should recognize the new connection as an inbound link from me.
-                 * We should only free the outbound link if the node is known for more time than the handshake timeout,
-                 * since during this time, the other side might still be trying to complete the handshake. */
+                /* The MEET packet is from a known node, after the handshake timeout, so the sender
+                 * thinks that I do not know it.
+                 * Free my outbound link to that node, triggering a reconnect and a PING over the
+                 * new link.
+                 * Once that node receives our PING, it should recognize the new connection as an
+                 * inbound link from me. We should only free the outbound link if the node is known
+                 * for more time than the handshake timeout, since during this time, the other side
+                 * might still be trying to complete the handshake. */
 
                 /* We should always receive a MEET packet on an inbound link. */
                 serverAssert(link != sender->link);
-                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s (%s) after receiving a MEET packet from this known node",
+                serverLog(LL_NOTICE, "Freeing outbound link to node %.40s (%s) after receiving a MEET packet "
+                                     "from this known node",
                           sender->name, sender->human_nodename);
                 freeClusterLink(sender->link);
             }
@@ -6407,7 +6414,7 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
 
     kvstoreHashtableIterator *kvs_di = NULL;
     void *next;
-    kvs_di = kvstoreGetHashtableSafeIterator(server.db->keys, hashslot);
+    kvs_di = kvstoreGetHashtableIterator(server.db->keys, hashslot, HASHTABLE_ITER_SAFE);
     while (kvstoreHashtableIteratorNext(kvs_di, &next)) {
         robj *valkey = next;
         enterExecutionUnit(1, 0);

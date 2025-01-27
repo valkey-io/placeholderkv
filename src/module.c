@@ -53,7 +53,7 @@
 
 #include "server.h"
 #include "cluster.h"
-#include "slowlog.h"
+#include "commandlog.h"
 #include "rdb.h"
 #include "monotonic.h"
 #include "script.h"
@@ -1221,7 +1221,8 @@ int64_t commandFlagsFromString(char *s) {
         else if (!strcasecmp(t,"blocking")) flags |= CMD_BLOCKING;
         else if (!strcasecmp(t,"allow-stale")) flags |= CMD_STALE;
         else if (!strcasecmp(t,"no-monitor")) flags |= CMD_SKIP_MONITOR;
-        else if (!strcasecmp(t,"no-slowlog")) flags |= CMD_SKIP_SLOWLOG;
+        else if (!strcasecmp(t,"no-slowlog")) flags |= CMD_SKIP_COMMANDLOG;
+        else if (!strcasecmp(t,"no-commandlog")) flags |= CMD_SKIP_COMMANDLOG;
         else if (!strcasecmp(t,"fast")) flags |= CMD_FAST;
         else if (!strcasecmp(t,"no-auth")) flags |= CMD_NO_AUTH;
         else if (!strcasecmp(t,"may-replicate")) flags |= CMD_MAY_REPLICATE;
@@ -1296,7 +1297,8 @@ ValkeyModuleCommand *moduleCreateCommandProxy(struct ValkeyModule *module,
  *                      this means.
  * * **"no-monitor"**: Don't propagate the command on monitor. Use this if
  *                     the command has sensitive data among the arguments.
- * * **"no-slowlog"**: Don't log this command in the slowlog. Use this if
+ * * **"no-slowlog"**: Deprecated, please use "no-commandlog".
+ * * **"no-commandlog"**: Don't log this command in the commandlog. Use this if
  *                     the command has sensitive data among the arguments.
  * * **"fast"**:      The command time complexity is not greater
  *                    than O(log(N)) where N is the size of the collection or
@@ -12164,7 +12166,7 @@ int moduleFreeCommand(struct ValkeyModule *module, struct serverCommand *cmd) {
     if (cmd->subcommands_ht) {
         hashtableIterator iter;
         void *next;
-        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        hashtableInitIterator(&iter, cmd->subcommands_ht, HASHTABLE_ITER_SAFE);
         while (hashtableNext(&iter, &next)) {
             struct serverCommand *sub = next;
             if (moduleFreeCommand(module, sub) != C_OK) continue;
@@ -12187,7 +12189,7 @@ void moduleUnregisterCommands(struct ValkeyModule *module) {
     /* Unregister all the commands registered by this module. */
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, server.commands);
+    hashtableInitIterator(&iter, server.commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         if (moduleFreeCommand(module, cmd) != C_OK) continue;
