@@ -1012,12 +1012,12 @@ int startAppendOnly(void) {
  * is likely to fail. However apparently in modern systems this is no longer
  * true, and in general it looks just more resilient to retry the write. If
  * there is an actual error condition we'll get it at the next try.
- * We also check for aof-max-size limit here returning "no space" on exceed. */
+ * We also check for aof-max-size limit here returning custom error on exceed. */
 ssize_t aofWrite(int fd, const char *buf, size_t len, off_t aof_current_size, unsigned long long aof_max_size) {
     ssize_t nwritten = 0, totwritten = 0, nonewritten = -1;
 
     if (aof_max_size && (unsigned long long)aof_current_size >= aof_max_size) {
-        errno = ENOSPC;
+        errno = EFBIG;
         return nonewritten;
     }
 
@@ -1158,7 +1158,7 @@ void flushAppendOnlyFile(int force) {
         /* Log the AOF write error and record the error code. */
         if (nwritten == -1) {
             if (can_log) {
-                serverLog(LL_WARNING, "Error writing to the AOF file: %s", strerror(errno));
+                serverLog(LL_WARNING, "Error writing to the AOF file: %s", getAofWriteErrStr(errno));
             }
             server.aof_last_write_errno = errno;
         } else {
