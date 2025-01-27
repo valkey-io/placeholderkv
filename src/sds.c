@@ -113,18 +113,18 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
                    : s_malloc_usable(hdrlen + initlen + 1, &bufsize);
     if (sh == NULL) return NULL;
 
+    adjustTypeIfNeeded(&type, &hdrlen, bufsize);
     return sdswrite(sh, bufsize, type, init, initlen);
 }
 
 /* Writes an sds with type `type` into a buffer `buf` of size `bufsize`. Returns
- * an sds handle to the string within the buffer. Use `sdsReqType(len)` to
+ * an sds handle to the string within the buffer. Use `sdsReqType(length)` to
  * compute the type and `sdsReqSize(length, type)` to compute the required
  * buffer size. You can use a larger `bufsize` than required, but usable size
  * can't be greater than `sdsTypeMaxSize(type)`. */
 sds sdswrite(char *buf, size_t bufsize, char type, const char *init, size_t initlen) {
-    int hdrlen = sdsHdrSize(type);
-    adjustTypeIfNeeded(&type, &hdrlen, bufsize);
     assert(bufsize >= sdsReqSize(initlen, type));
+    int hdrlen = sdsHdrSize(type);
     size_t usable = bufsize - hdrlen - 1;
     sds s = buf + hdrlen;
     unsigned char *fp = ((unsigned char *)s) - 1; /* flags pointer. */
@@ -429,7 +429,7 @@ size_t sdsAllocSize(const_sds s) {
     if (type == SDS_TYPE_5) {
         return s_malloc_usable_size(sdsAllocPtr(s));
     } else {
-        return sdsMemUsage(s);
+        return sdsHdrSize(type) + sdsalloc(s) + 1;
     }
 }
 

@@ -247,13 +247,6 @@ sds sdsResize(sds s, size_t size, int would_regrow);
 size_t sdsAllocSize(const_sds s);
 void *sdsAllocPtr(const_sds s);
 
-/* Returns the size of the sds representation in memory. Typically, this is the
- * same as the allocation size, except for sds type 5 and for sds strings
- * embedded in other objects. */
-static inline size_t sdsMemUsage(const_sds s) {
-    return sdsHdrSize(sdsType(s)) + sdsalloc(s) + 1;
-}
-
 /* Returns the minimum required size to store an sds string of the given length
  * and type. */
 static inline size_t sdsReqSize(size_t len, char type) {
