@@ -5550,6 +5550,30 @@ void clusterCloseAllSlots(void) {
     memset(server.cluster->importing_slots_from, 0, sizeof(server.cluster->importing_slots_from));
 }
 
+static void clusterDetermineClusterSize(int *reachable_primaries) {
+    /* Compute the cluster size, that is the number of primary nodes
+     * serving at least a single slot.
+     *
+     * At the same time count the number of reachable primaries having
+     * at least one slot. */
+    {
+        dictIterator *di;
+        dictEntry *de;
+
+        server.cluster->size = 0;
+        di = dictGetSafeIterator(server.cluster->nodes);
+        while ((de = dictNext(di)) != NULL) {
+            clusterNode *node = dictGetVal(de);
+
+            if (clusterNodeIsVotingPrimary(node)) {
+                server.cluster->size++;
+                if ((node->flags & (CLUSTER_NODE_FAIL | CLUSTER_NODE_PFAIL)) == 0) reachable_primaries++;
+            }
+        }
+        dictReleaseIterator(di);
+    }
+}
+
 /* -----------------------------------------------------------------------------
  * Cluster state evaluation function
  * -------------------------------------------------------------------------- */
@@ -5613,28 +5637,7 @@ void clusterUpdateState(void) {
             }
         }
     }
-
-    /* Compute the cluster size, that is the number of primary nodes
-     * serving at least a single slot.
-     *
-     * At the same time count the number of reachable primaries having
-     * at least one slot. */
-    {
-        dictIterator *di;
-        dictEntry *de;
-
-        server.cluster->size = 0;
-        di = dictGetSafeIterator(server.cluster->nodes);
-        while ((de = dictNext(di)) != NULL) {
-            clusterNode *node = dictGetVal(de);
-
-            if (clusterNodeIsVotingPrimary(node)) {
-                server.cluster->size++;
-                if ((node->flags & (CLUSTER_NODE_FAIL | CLUSTER_NODE_PFAIL)) == 0) reachable_primaries++;
-            }
-        }
-        dictReleaseIterator(di);
-    }
+    clusterDetermineClusterSize(&reachable_primaries);
 
     /* If we are in a minority partition, change the cluster state
      * to FAIL. */
