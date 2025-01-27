@@ -393,6 +393,57 @@ int aePoll(aeEventLoop *eventLoop, struct timeval *tvp) {
     return ret;
 }
 
+static void processSingleFileEvent(
+        aeEventLoop *eventLoop, aeFiredEvent *firedEvent) {
+    int mask = firedEvent->mask;
+    int fd = firedEvent->fd;
+    aeFileEvent *fe = &eventLoop->events[fd];
+    int fired = 0; /* Number of events fired for current fd. */
+
+    /* Normally we execute the readable event first, and the writable
+        * event later. This is useful as sometimes we may be able
+        * to serve the reply of a query immediately after processing the
+        * query.
+        *
+        * However if AE_BARRIER is set in the mask, our application is
+        * asking us to do the reverse: never fire the writable event
+        * after the readable. In such a case, we invert the calls.
+        * This is useful when, for instance, we want to do things
+        * in the beforeSleep() hook, like fsyncing a file to disk,
+        * before replying to a client. */
+    int invert = fe->mask & AE_BARRIER;
+
+    /* Note the "fe->mask & mask & ..." code: maybe an already
+        * processed event removed an element that fired and we still
+        * didn't processed, so we check if the event is still valid.
+        *
+        * Fire the readable event if the call sequence is not
+        * inverted. */
+    if (!invert && fe->mask & mask & AE_READABLE) {
+        fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+        fired++;
+        fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
+    }
+
+    /* Fire the writable event. */
+    if (fe->mask & mask & AE_WRITABLE) {
+        if (!fired || fe->wfileProc != fe->rfileProc) {
+            fe->wfileProc(eventLoop, fd, fe->clientData, mask);
+            fired++;
+        }
+    }
+
+    /* If we have to invert the call, fire the readable event now
+        * after the writable one. */
+    if (invert) {
+        fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
+        if ((fe->mask & mask & AE_READABLE) && (!fired || fe->wfileProc != fe->rfileProc)) {
+            fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+            fired++;
+        }
+    }
+}
+
 /* Process every pending file event, then every pending time event
  * (that may be registered by file event callbacks just processed).
  * Without special flags the function sleeps until some file event
@@ -458,53 +509,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags) {
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP) eventLoop->aftersleep(eventLoop, numevents);
 
         for (j = 0; j < numevents; j++) {
-            int fd = eventLoop->fired[j].fd;
-            aeFileEvent *fe = &eventLoop->events[fd];
-            int mask = eventLoop->fired[j].mask;
-            int fired = 0; /* Number of events fired for current fd. */
-
-            /* Normally we execute the readable event first, and the writable
-             * event later. This is useful as sometimes we may be able
-             * to serve the reply of a query immediately after processing the
-             * query.
-             *
-             * However if AE_BARRIER is set in the mask, our application is
-             * asking us to do the reverse: never fire the writable event
-             * after the readable. In such a case, we invert the calls.
-             * This is useful when, for instance, we want to do things
-             * in the beforeSleep() hook, like fsyncing a file to disk,
-             * before replying to a client. */
-            int invert = fe->mask & AE_BARRIER;
-
-            /* Note the "fe->mask & mask & ..." code: maybe an already
-             * processed event removed an element that fired and we still
-             * didn't processed, so we check if the event is still valid.
-             *
-             * Fire the readable event if the call sequence is not
-             * inverted. */
-            if (!invert && fe->mask & mask & AE_READABLE) {
-                fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                fired++;
-                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-            }
-
-            /* Fire the writable event. */
-            if (fe->mask & mask & AE_WRITABLE) {
-                if (!fired || fe->wfileProc != fe->rfileProc) {
-                    fe->wfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired++;
-                }
-            }
-
-            /* If we have to invert the call, fire the readable event now
-             * after the writable one. */
-            if (invert) {
-                fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
-                if ((fe->mask & mask & AE_READABLE) && (!fired || fe->wfileProc != fe->rfileProc)) {
-                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
-                    fired++;
-                }
-            }
+            processSingleFileEvent(eventLoop ,&eventLoop->fired[j]);
 
             processed++;
         }
