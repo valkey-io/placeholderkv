@@ -236,6 +236,8 @@ start_server {tags {"tracking network logreqres:skip"}} {
     }
 
     test {RESP3 Client gets tracking-redir-broken push message after cached key changed when rediretion client is terminated} {
+        # make sure r is working resp 3
+        r HELLO 3
         r CLIENT TRACKING on REDIRECT $redir_id
         $rd_sg SET key1 1
         r GET key1
@@ -247,16 +249,17 @@ start_server {tags {"tracking network logreqres:skip"}} {
         for {set i 0} {$i <= $MAX_TRIES && $res < 0} {incr i} {
             set res [lsearch -exact [r PING] "tracking-redir-broken"]
         }
-        assert {$res >= 0}
-        # Consume PING reply
-        assert_equal PONG [r read]
-
         # Reinstantiating after QUIT
         set rd_redirection [valkey_deferring_client]
         $rd_redirection CLIENT ID
         set redir_id [$rd_redirection read]
         $rd_redirection SUBSCRIBE __redis__:invalidate
         $rd_redirection read ; # Consume the SUBSCRIBE reply
+
+        assert {$res >= 0}
+        # Consume PING reply
+        assert_equal PONG [r read]
+
     }
 
     test {Different clients can redirect to the same connection} {
