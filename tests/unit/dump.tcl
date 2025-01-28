@@ -127,20 +127,18 @@ start_server {tags {"dump"}} {
     test {RESTORE key with future RDB version, strict version check} {
         #              str len    RDB 222 CRC64 checksum
         #               |   |      |       |
-        set bar_dump "\x00\x03bar\xde\x00\x0fYUza\xd3\xec\xe0"
-       assert_error {ERR DUMP payload version or checksum are wrong} {r restore foo 0 $bar_dump replace}
+        set bar_dump "\x00\x03\x62\x61\x72\xde\x00\x0fYUza\xd3\xec\xe0"
+        assert_error {ERR DUMP payload version or checksum are wrong} {r restore foo 0 $bar_dump replace}
     }
 
     test {RESTORE key with future RDB version, relaxed version check} {
         #              str len    RDB 222 CRC64 checksum
         #               |   |      |       |
-        set bar_dump "\x00\x03bar\xde\x00\x0fYUza\xd3\xec\xe0"
-        r config set rdb-version-check relaxed
-        catch {r restore foo 0 $bar_dump replace} e
+        r config set rdb-version-check relaxed 
+        r restore foo 0 "\x00\x03\x62\x61\x72\xde\x00\x0fYUza\xd3\xec\xe0" replace
         r config set rdb-version-check strict
         assert_equal {bar} [r get foo]
-        set e
-    } {OK}
+    }
 
     test {DUMP of non existing key returns nil} {
         r dump nonexisting_key
