@@ -989,7 +989,7 @@ getNodeByQuery(client *c, struct serverCommand *cmd, robj **argv, int argc, int 
     clusterNode *n = NULL;
     robj *firstkey = NULL;
     int multiple_keys = 0;
-    int multi_slot = false;
+    int multi_slot = 0;
     multiState *ms, _ms;
     multiCmd mc;
     int i, slot = 0, migrating_slot = 0, importing_slot = 0, missing_keys = 0, existing_keys = 0;
@@ -1099,7 +1099,7 @@ getNodeByQuery(client *c, struct serverCommand *cmd, robj **argv, int argc, int 
                         if (error_code) *error_code = CLUSTER_REDIR_CROSS_SLOT;
                         return NULL;
                     } else {
-                        multi_slot = true;
+                        multi_slot = 1;
                     }
                 }
                 if (importing_slot && !multiple_keys && !equalStringObjects(firstkey, thiskey)) {
