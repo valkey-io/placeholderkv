@@ -244,11 +244,7 @@ start_server {tags {"tracking network logreqres:skip"}} {
         $rd_redirection QUIT
         assert_equal OK [$rd_redirection read]
         $rd_sg SET key1 2
-        set MAX_TRIES 100
-        set res -1
-        for {set i 0} {$i <= $MAX_TRIES && $res < 0} {incr i} {
-            set res [lsearch -exact [r PING] "tracking-redir-broken"]
-        }
+
         # Reinstantiating after QUIT
         set rd_redirection [valkey_deferring_client]
         $rd_redirection CLIENT ID
@@ -256,10 +252,14 @@ start_server {tags {"tracking network logreqres:skip"}} {
         $rd_redirection SUBSCRIBE __redis__:invalidate
         $rd_redirection read ; # Consume the SUBSCRIBE reply
 
-        assert {$res >= 0}
-        # Consume PING reply
+        # Wait to read the tracking-redir-broken
+        wait_for_condition 1000 50 {
+            [lsearch -exact [r PING] "tracking-redir-broken"]
+        } else {
+            fail "Failed to get redirect broken indication"
+        }
+         # Consume PING reply
         assert_equal PONG [r read]
-
     }
 
     test {Different clients can redirect to the same connection} {
