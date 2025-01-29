@@ -59,11 +59,12 @@ typedef struct evalScript {
     listNode *node; /* list node in scripts_lru_list list. */
 } evalScript;
 
-static void dictLuaScriptDestructor(void *val) {
+static void dictScriptDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
     evalScript *es = (evalScript *)val;
+    scriptingEngineCallFreeFunction(es->engine, VMSE_EVAL, es->script);
     decrRefCount(es->body);
-    zfree(val);
+    zfree(es);
 }
 
 static uint64_t dictStrCaseHash(const void *key) {
@@ -72,12 +73,12 @@ static uint64_t dictStrCaseHash(const void *key) {
 
 /* evalCtx.scripts sha (as sds string) -> scripts (as evalScript) cache. */
 dictType shaScriptObjectDictType = {
-    dictStrCaseHash,         /* hash function */
-    NULL,                    /* key dup */
-    dictSdsKeyCaseCompare,   /* key compare */
-    dictSdsDestructor,       /* key destructor */
-    dictLuaScriptDestructor, /* val destructor */
-    NULL                     /* allow to expand */
+    dictStrCaseHash,       /* hash function */
+    NULL,                  /* key dup */
+    dictSdsKeyCaseCompare, /* key compare */
+    dictSdsDestructor,     /* key destructor */
+    dictScriptDestructor,  /* val destructor */
+    NULL                   /* allow to expand */
 };
 
 /* Eval context */
@@ -133,13 +134,6 @@ void sha1hex(char *digest, char *script, size_t len) {
 
 /* Free lua_scripts dict and close lua interpreter. */
 void freeEvalScriptsSync(dict *scripts, list *scripts_lru_list, list *engine_callbacks) {
-    dictIterator *iter = dictGetIterator(scripts);
-    dictEntry *entry = NULL;
-    while ((entry = dictNext(iter)) != NULL) {
-        evalScript *es = dictGetVal(entry);
-        scriptingEngineCallFreeFunction(es->engine, VMSE_EVAL, es->script);
-    }
-    dictReleaseIterator(iter);
     dictRelease(scripts);
 
     listRelease(scripts_lru_list);
@@ -315,10 +309,6 @@ static void evalDeleteScript(client *c, sds sha) {
     dictEntry *de = dictUnlink(evalCtx.scripts, sha);
     serverAssertWithInfo(c, NULL, de);
     evalScript *es = dictGetVal(de);
-
-    /* Delete the script from the engine. */
-    scriptingEngineCallFreeFunction(es->engine, VMSE_EVAL, es->script);
-
     evalCtx.scripts_mem -= sdsAllocSize(sha) + getStringObjectSdsUsedMemory(es->body);
     dictFreeUnlinkedEntry(evalCtx.scripts, de);
 }
