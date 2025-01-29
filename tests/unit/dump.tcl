@@ -125,16 +125,16 @@ start_server {tags {"dump"}} {
     } {} {needs:repl}
 
     test {RESTORE key with future RDB version, strict version check} {
-        #              str len    RDB 222 CRC64 checksum
-        #               |   |      |       |
+        #              str len  "bar"      RDB 222 CRC64 checksum
+        #               |   |     |         |       |
         set bar_dump "\x00\x03\x62\x61\x72\xde\x00\x0fYUza\xd3\xec\xe0"
         assert_error {ERR DUMP payload version or checksum are wrong} {r restore foo 0 $bar_dump replace}
     }
 
     test {RESTORE key with future RDB version, relaxed version check} {
-        #              str len    RDB 222 CRC64 checksum
-        #               |   |      |       |
         r config set rdb-version-check relaxed 
+        #               |type|len|           |  RDB  |      CRC64        |
+        #               |str | 3 |   "bar"   |  222  |     checksum      |
         r restore foo 0 "\x00\x03\x62\x61\x72\xde\x00\x0fYUza\xd3\xec\xe0" replace
         r config set rdb-version-check strict
         assert_equal {bar} [r get foo]
