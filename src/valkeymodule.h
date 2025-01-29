@@ -1231,6 +1231,8 @@ VALKEYMODULE_API int (*ValkeyModule_StringToStreamID)(const ValkeyModuleString *
 VALKEYMODULE_API void (*ValkeyModule_AutoMemory)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_Replicate)(ValkeyModuleCtx *ctx, const char *cmdname, const char *fmt, ...)
     VALKEYMODULE_ATTR;
+VALKEYMODULE_API int (*ValkeyModule_ReplicateWithoutValidation)(ValkeyModuleCtx *ctx, const char *cmdname, const char *fmt, ...)
+    VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_ReplicateVerbatim)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API const char *(*ValkeyModule_CallReplyStringPtr)(ValkeyModuleCallReply *reply,
                                                                 size_t *len)VALKEYMODULE_ATTR;
@@ -1898,6 +1900,7 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(StringPtrLen);
     VALKEYMODULE_GET_API(AutoMemory);
     VALKEYMODULE_GET_API(Replicate);
+    VALKEYMODULE_GET_API(ReplicateWithoutValidation);
     VALKEYMODULE_GET_API(ReplicateVerbatim);
     VALKEYMODULE_GET_API(DeleteKey);
     VALKEYMODULE_GET_API(UnlinkKey);

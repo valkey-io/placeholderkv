@@ -676,7 +676,6 @@ tags "modules" {
     }
 }
 
-
 tags "modules aof" {
     foreach aofload_type {debug_cmd startup} {
     test "Modules RM_Replicate replicates MULTI/EXEC correctly: AOF-load type $aofload_type" {
