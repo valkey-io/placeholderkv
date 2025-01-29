@@ -847,7 +847,7 @@ typedef struct ValkeyModuleScriptingEngineCallableLazyEvalReset {
 
     /*
      * Callback function used for resetting the EVAL context implemented by an
-     * an engine. This callback will be called by a background thread when it's
+     * engine. This callback will be called by a background thread when it's
      * ready for resetting the context.
      *
      * - `context`: a generic pointer to a context object, stored in the

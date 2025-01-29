@@ -430,6 +430,15 @@ callHelloLangFunction(ValkeyModuleCtx *module_ctx,
     ValkeyModule_ReplyWithLongLong(module_ctx, result);
 }
 
+static ValkeyModuleScriptingEngineCallableLazyEvalReset *helloResetEvalEnv(ValkeyModuleCtx *module_ctx,
+                                                                           ValkeyModuleScriptingEngineCtx *engine_ctx,
+                                                                           int async) {
+    VALKEYMODULE_NOT_USED(module_ctx);
+    VALKEYMODULE_NOT_USED(engine_ctx);
+    VALKEYMODULE_NOT_USED(async);
+    return NULL;
+}
+
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
                         ValkeyModuleString **argv,
                         int argc) {
@@ -449,7 +458,7 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
         .free_function = engineFreeFunction,
         .call_function = callHelloLangFunction,
         .get_function_memory_overhead = engineFunctionMemoryOverhead,
-	.reset_eval_env = NULL,
+	    .reset_eval_env = helloResetEvalEnv,
         .get_memory_info = engineGetMemoryInfo,
     };
 

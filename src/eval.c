@@ -142,8 +142,10 @@ void freeEvalScripts(dict *scripts, list *scripts_lru_list, list *engine_callbac
         listNode *node = NULL;
         while ((node = listNext(iter)) != NULL) {
             callableLazyEvalReset *callback = listNodeValue(node);
-            callback->engineLazyEvalResetCallback(callback->context);
-            zfree(callback);
+            if (callback != NULL) {
+                callback->engineLazyEvalResetCallback(callback->context);
+                zfree(callback);
+            }
         }
         listReleaseIterator(iter);
         listRelease(engine_callbacks);
