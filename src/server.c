@@ -31,7 +31,7 @@
 #include "monotonic.h"
 #include "cluster.h"
 #include "cluster_slot_stats.h"
-#include "slowlog.h"
+#include "commandlog.h"
 #include "bio.h"
 #include "latency.h"
 #include "mt19937-64.h"
@@ -580,6 +580,15 @@ const void *hashtableObjectGetKey(const void *entry) {
     return objectGetKey(entry);
 }
 
+/* Prefetch the value if it's not embedded. */
+void hashtableObjectPrefetchValue(const void *entry) {
+    const robj *obj = entry;
+    if (obj->encoding != OBJ_ENCODING_EMBSTR &&
+        obj->encoding != OBJ_ENCODING_INT) {
+        valkey_prefetch(obj->ptr);
+    }
+}
+
 int hashtableObjKeyCompare(const void *key1, const void *key2) {
     const robj *o1 = key1, *o2 = key2;
     return hashtableSdsKeyCompare(o1->ptr, o2->ptr);
@@ -592,6 +601,7 @@ void hashtableObjectDestructor(void *val) {
 
 /* Kvstore->keys, keys are sds strings, vals are Objects. */
 hashtableType kvstoreKeysHashtableType = {
+    .entryPrefetchValue = hashtableObjectPrefetchValue,
     .entryGetKey = hashtableObjectGetKey,
     .hashFunction = hashtableSdsHash,
     .keyCompare = hashtableSdsKeyCompare,
@@ -605,6 +615,7 @@ hashtableType kvstoreKeysHashtableType = {
 
 /* Kvstore->expires */
 hashtableType kvstoreExpiresHashtableType = {
+    .entryPrefetchValue = hashtableObjectPrefetchValue,
     .entryGetKey = hashtableObjectGetKey,
     .hashFunction = hashtableSdsHash,
     .keyCompare = hashtableSdsKeyCompare,
@@ -2929,7 +2940,7 @@ void initServer(void) {
     /* Initialize the EVAL scripting component. */
     evalInit();
 
-    slowlogInit();
+    commandlogInit();
     latencyMonitorInit();
     initSharedQueryBuf();
 
@@ -3228,7 +3239,7 @@ void populateCommandTable(void) {
 void resetCommandTableStats(hashtable *commands) {
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *c = next;
         c->microseconds = 0;
@@ -3499,25 +3510,6 @@ void preventCommandReplication(client *c) {
     c->flag.prevent_repl_prop = 1;
 }
 
-/* Log the last command a client executed into the slowlog. */
-void slowlogPushCurrentCommand(client *c, struct serverCommand *cmd, ustime_t duration) {
-    /* Some commands may contain sensitive data that should not be available in the slowlog. */
-    if (cmd->flags & CMD_SKIP_SLOWLOG) return;
-
-    /* If command argument vector was rewritten, use the original
-     * arguments. */
-    robj **argv = c->original_argv ? c->original_argv : c->argv;
-    int argc = c->original_argv ? c->original_argc : c->argc;
-
-    /* If a script is currently running, the client passed in is a
-     * fake client. Or the client passed in is the original client
-     * if this is a EVAL or alike, doesn't matter. In this case,
-     * use the original client to get the client information. */
-    c = scriptIsRunning() ? scriptGetCaller() : c;
-
-    slowlogPushEntryIfNeeded(c, argv, argc, duration);
-}
-
 /* This function is called in order to update the total command histogram duration.
  * The latency unit is nano-seconds.
  * If needed it will allocate the histogram memory and trim the duration to the upper/lower tracking limits*/
@@ -3671,7 +3663,7 @@ void call(client *c, int flags) {
     server.executing_client = c;
 
     /* When call() is issued during loading the AOF we don't want commands called
-     * from module, exec or LUA to go into the slowlog or to populate statistics. */
+     * from module, exec or LUA to go into the commandlog or to populate statistics. */
     int update_command_stats = !isAOFLoadingContext();
 
     /* We want to be aware of a client which is making a first time attempt to execute this command
@@ -3768,9 +3760,9 @@ void call(client *c, int flags) {
         if (server.execution_nesting == 0) durationAddSample(EL_DURATION_TYPE_CMD, duration);
     }
 
-    /* Log the command into the Slow log if needed.
-     * If the client is blocked we will handle slowlog when it is unblocked. */
-    if (update_command_stats && !c->flag.blocked) slowlogPushCurrentCommand(c, real_cmd, c->duration);
+    /* Log the command into the commandlog if needed.
+     * If the client is blocked we will handle commandlog when it is unblocked. */
+    if (update_command_stats && !c->flag.blocked) commandlogPushCurrentCommand(c, real_cmd);
 
     /* Send the command to clients in MONITOR mode if applicable,
      * since some administrative commands are considered too dangerous to be shown.
@@ -4737,7 +4729,7 @@ void addReplyFlagsForCommand(client *c, struct serverCommand *cmd) {
                                   {CMD_LOADING, "loading"},
                                   {CMD_STALE, "stale"},
                                   {CMD_SKIP_MONITOR, "skip_monitor"},
-                                  {CMD_SKIP_SLOWLOG, "skip_slowlog"},
+                                  {CMD_SKIP_COMMANDLOG, "skip_commandlog"},
                                   {CMD_ASKING, "asking"},
                                   {CMD_FAST, "fast"},
                                   {CMD_NO_AUTH, "no_auth"},
@@ -5011,7 +5003,7 @@ void addReplyCommandSubCommands(client *c,
 
     void *next;
     hashtableIterator iter;
-    hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+    hashtableInitIterator(&iter, cmd->subcommands_ht, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *sub = next;
         if (use_map) addReplyBulkCBuffer(c, sub->fullname, sdslen(sub->fullname));
@@ -5173,7 +5165,7 @@ void commandCommand(client *c) {
     hashtableIterator iter;
     void *next;
     addReplyArrayLen(c, hashtableSize(server.commands));
-    hashtableInitIterator(&iter, server.commands);
+    hashtableInitIterator(&iter, server.commands, 0);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         addReplyCommandInfo(c, cmd);
@@ -5232,7 +5224,7 @@ int shouldFilterFromCommandList(struct serverCommand *cmd, commandListFilter *fi
 void commandListWithFilter(client *c, hashtable *commands, commandListFilter filter, int *numcmds) {
     hashtableIterator iter;
     void *next;
-    hashtableInitIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, 0);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         if (!shouldFilterFromCommandList(cmd, &filter)) {
@@ -5251,7 +5243,7 @@ void commandListWithFilter(client *c, hashtable *commands, commandListFilter fil
 void commandListWithoutFilter(client *c, hashtable *commands, int *numcmds) {
     hashtableIterator iter;
     void *next;
-    hashtableInitIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, 0);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
@@ -5313,7 +5305,7 @@ void commandInfoCommand(client *c) {
         hashtableIterator iter;
         void *next;
         addReplyArrayLen(c, hashtableSize(server.commands));
-        hashtableInitIterator(&iter, server.commands);
+        hashtableInitIterator(&iter, server.commands, 0);
         while (hashtableNext(&iter, &next)) {
             struct serverCommand *cmd = next;
             addReplyCommandInfo(c, cmd);
@@ -5335,7 +5327,7 @@ void commandDocsCommand(client *c) {
         hashtableIterator iter;
         void *next;
         addReplyMapLen(c, hashtableSize(server.commands));
-        hashtableInitIterator(&iter, server.commands);
+        hashtableInitIterator(&iter, server.commands, 0);
         while (hashtableNext(&iter, &next)) {
             struct serverCommand *cmd = next;
             addReplyBulkCBuffer(c, cmd->fullname, sdslen(cmd->fullname));
@@ -5464,7 +5456,7 @@ const char *getSafeInfoString(const char *s, size_t len, char **tmp) {
 sds genValkeyInfoStringCommandStats(sds info, hashtable *commands) {
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *c = next;
         char *tmpsafe;
@@ -5501,7 +5493,7 @@ sds genValkeyInfoStringACLStats(sds info) {
 sds genValkeyInfoStringLatencyStats(sds info, hashtable *commands) {
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, commands);
+    hashtableInitIterator(&iter, commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *c = next;
         char *tmpsafe;

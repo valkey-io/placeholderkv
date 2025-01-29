@@ -1891,7 +1891,7 @@ int rewriteSortedSetObject(rio *r, robj *key, robj *o) {
     } else if (o->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = o->ptr;
         hashtableIterator iter;
-        hashtableInitIterator(&iter, zs->ht);
+        hashtableInitIterator(&iter, zs->ht, 0);
         void *next;
         while (hashtableNext(&iter, &next)) {
             zskiplistNode *node = next;
@@ -2217,7 +2217,7 @@ int rewriteAppendOnlyFileRio(rio *aof) {
         if (rioWrite(aof, selectcmd, sizeof(selectcmd) - 1) == 0) goto werr;
         if (rioWriteBulkLongLong(aof, j) == 0) goto werr;
 
-        kvs_it = kvstoreIteratorInit(db->keys);
+        kvs_it = kvstoreIteratorInit(db->keys, HASHTABLE_ITER_SAFE | HASHTABLE_ITER_PREFETCH_VALUES);
         /* Iterate this DB writing every entry */
         void *next;
         while (kvstoreIteratorNext(kvs_it, &next)) {
