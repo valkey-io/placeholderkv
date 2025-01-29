@@ -51,18 +51,18 @@
 
 void evalGenericCommandWithDebugging(client *c, int evalsha);
 
-typedef struct scriptHolder {
+typedef struct evalScript {
     compiledFunction *script;
     scriptingEngine *engine;
     robj *body;
     uint64_t flags;
     listNode *node; /* list node in scripts_lru_list list. */
-} scriptHolder;
+} evalScript;
 
 static void dictLuaScriptDestructor(void *val) {
     if (val == NULL) return; /* Lazy freeing will set value to NULL. */
-    scriptHolder *sh = (scriptHolder *)val;
-    decrRefCount(sh->body);
+    evalScript *es = (evalScript *)val;
+    decrRefCount(es->body);
     zfree(val);
 }
 
@@ -136,8 +136,8 @@ void freeEvalScriptsSync(dict *scripts, list *scripts_lru_list, list *engine_cal
     dictIterator *iter = dictGetIterator(scripts);
     dictEntry *entry = NULL;
     while ((entry = dictNext(iter)) != NULL) {
-        scriptHolder *sh = dictGetVal(entry);
-        scriptingEngineCallFreeFunction(sh->engine, VMSE_EVAL, sh->script);
+        evalScript *es = dictGetVal(entry);
+        scriptingEngineCallFreeFunction(es->engine, VMSE_EVAL, es->script);
     }
     dictReleaseIterator(iter);
     dictRelease(scripts);
@@ -299,8 +299,8 @@ uint64_t evalGetCommandFlags(client *c, uint64_t cmd_flags) {
         if (evalsha) return cmd_flags;
         if (evalExtractShebangFlags(c->argv[1]->ptr, NULL, &script_flags, NULL, NULL) == C_ERR) return cmd_flags;
     } else {
-        scriptHolder *sh = dictGetVal(c->cur_script);
-        script_flags = sh->flags;
+        evalScript *es = dictGetVal(c->cur_script);
+        script_flags = es->flags;
     }
     if (script_flags & SCRIPT_FLAG_EVAL_COMPAT_MODE) return cmd_flags;
     return scriptFlagsToCmdFlags(cmd_flags, script_flags);
@@ -314,12 +314,12 @@ static void evalDeleteScript(client *c, sds sha) {
     /* Delete the script from server. */
     dictEntry *de = dictUnlink(evalCtx.scripts, sha);
     serverAssertWithInfo(c, NULL, de);
-    scriptHolder *sh = dictGetVal(de);
+    evalScript *es = dictGetVal(de);
 
     /* Delete the script from the engine. */
-    scriptingEngineCallFreeFunction(sh->engine, VMSE_EVAL, sh->script);
+    scriptingEngineCallFreeFunction(es->engine, VMSE_EVAL, es->script);
 
-    evalCtx.scripts_mem -= sdsAllocSize(sha) + getStringObjectSdsUsedMemory(sh->body);
+    evalCtx.scripts_mem -= sdsAllocSize(sha) + getStringObjectSdsUsedMemory(es->body);
     dictFreeUnlinkedEntry(evalCtx.scripts, de);
 }
 
@@ -365,10 +365,10 @@ static int evalRegisterNewScript(client *c, robj *body, char **sha) {
          * SCRIPT LOAD, prevent it from being evicted later. */
         dictEntry *entry = dictFind(evalCtx.scripts, *sha);
         if (entry != NULL) {
-            scriptHolder *sh = dictGetVal(entry);
-            if (sh->node) {
-                listDelNode(evalCtx.scripts_lru_list, sh->node);
-                sh->node = NULL;
+            evalScript *es = dictGetVal(entry);
+            if (es->node) {
+                listDelNode(evalCtx.scripts_lru_list, es->node);
+                es->node = NULL;
             }
 
             return C_OK;
@@ -436,17 +436,17 @@ static int evalRegisterNewScript(client *c, robj *body, char **sha) {
     /* We also save a SHA1 -> Original script map in a dictionary
      * so that we can replicate / write in the AOF all the
      * EVALSHA commands as EVAL using the original script. */
-    scriptHolder *sh = zcalloc(sizeof(scriptHolder));
-    sh->script = functions[0];
-    sh->engine = engine;
-    sh->flags = script_flags;
+    evalScript *es = zcalloc(sizeof(evalScript));
+    es->script = functions[0];
+    es->engine = engine;
+    es->flags = script_flags;
     sds _sha = sdsnew(*sha);
     if (!is_script_load) {
         /* Script eviction only applies to EVAL, not SCRIPT LOAD. */
-        sh->node = scriptsLRUAdd(c, _sha);
+        es->node = scriptsLRUAdd(c, _sha);
     }
-    sh->body = body;
-    int retval = dictAdd(evalCtx.scripts, _sha, sh);
+    es->body = body;
+    int retval = dictAdd(evalCtx.scripts, _sha, es);
     serverAssertWithInfo(c ? c : scriptingEngineGetClient(engine), NULL, retval == DICT_OK);
     evalCtx.scripts_mem += sdsAllocSize(_sha) + getStringObjectSdsUsedMemory(body);
     incrRefCount(body);
@@ -495,20 +495,20 @@ static void evalGenericCommand(client *c, int evalsha) {
         serverAssert(entry != NULL);
     }
 
-    scriptHolder *sh = dictGetVal(entry);
+    evalScript *es = dictGetVal(entry);
     int ro = c->cmd->proc == evalRoCommand || c->cmd->proc == evalShaRoCommand;
 
     scriptRunCtx rctx;
-    if (scriptPrepareForRun(&rctx, scriptingEngineGetClient(sh->engine), c, sha, sh->flags, ro) != C_OK) {
+    if (scriptPrepareForRun(&rctx, scriptingEngineGetClient(es->engine), c, sha, es->flags, ro) != C_OK) {
         return;
     }
     rctx.flags |= SCRIPT_EVAL_MODE; /* mark the current run as EVAL (as opposed to FCALL) so we'll
                                       get appropriate error messages and logs */
 
-    scriptingEngineCallFunction(sh->engine,
+    scriptingEngineCallFunction(es->engine,
                                 &rctx,
                                 c,
-                                sh->script,
+                                es->script,
                                 VMSE_EVAL,
                                 c->argv + 3,
                                 numkeys,
@@ -516,11 +516,11 @@ static void evalGenericCommand(client *c, int evalsha) {
                                 c->argc - 3 - numkeys);
     scriptResetRun(&rctx);
 
-    if (sh->node) {
+    if (es->node) {
         /* Quick removal and re-insertion after the script is called to
          * maintain the LRU list. */
-        listUnlinkNode(evalCtx.scripts_lru_list, sh->node);
-        listLinkNodeTail(evalCtx.scripts_lru_list, sh->node);
+        listUnlinkNode(evalCtx.scripts_lru_list, es->node);
+        listLinkNodeTail(evalCtx.scripts_lru_list, es->node);
     }
 }
 
@@ -639,11 +639,11 @@ void scriptCommand(client *c) {
         }
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr, "show")) {
         dictEntry *de;
-        scriptHolder *sh;
+        evalScript *es;
 
         if (sdslen(c->argv[2]->ptr) == 40 && (de = dictFind(evalCtx.scripts, c->argv[2]->ptr))) {
-            sh = dictGetVal(de);
-            addReplyBulk(c, sh->body);
+            es = dictGetVal(de);
+            addReplyBulk(c, es->body);
         } else {
             addReplyErrorObject(c, shared.noscripterr);
         }
@@ -671,7 +671,7 @@ dict *evalScriptsDict(void) {
 unsigned long evalScriptsMemory(void) {
     return evalCtx.scripts_mem +
            dictMemUsage(evalCtx.scripts) +
-           dictSize(evalCtx.scripts) * sizeof(scriptHolder) +
+           dictSize(evalCtx.scripts) * sizeof(evalScript) +
            listLength(evalCtx.scripts_lru_list) * sizeof(listNode);
 }
 
@@ -692,22 +692,22 @@ void evalGenericCommandWithDebugging(client *c, int evalsha) {
  * when it returns a non-null value, the old pointer was already released
  * and should NOT be accessed. */
 void *evalActiveDefragScript(void *ptr) {
-    scriptHolder *script_holder = ptr;
+    evalScript *es = ptr;
     void *ret = NULL;
 
-    compiledFunction *func = script_holder->script;
+    compiledFunction *func = es->script;
     if ((func = activeDefragAlloc(func))) {
-        script_holder->script = func;
+        es->script = func;
     }
 
     /* try to defrag script struct */
-    if ((ret = activeDefragAlloc(script_holder))) {
-        script_holder = ret;
+    if ((ret = activeDefragAlloc(es))) {
+        es = ret;
     }
 
     /* try to defrag actual script object */
-    robj *ob = activeDefragStringOb(script_holder->body);
-    if (ob) script_holder->body = ob;
+    robj *ob = activeDefragStringOb(es->body);
+    if (ob) es->body = ob;
 
     return ret;
 }
