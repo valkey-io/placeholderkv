@@ -63,7 +63,6 @@
 #include "valkeymodule.h"
 #include "module.h"
 #include "io_threads.h"
-#include "module.h"
 #include "scripting_engine.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
