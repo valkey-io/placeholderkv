@@ -273,7 +273,7 @@ int evalExtractShebangFlags(sds body,
     } else {
         // When no shebang is declared, assume the engine is LUA.
         if (out_engine) {
-            *out_engine = zstrdup("dup");
+            *out_engine = zstrdup("lua");
         }
     }
     if (out_shebang_len) *out_shebang_len = shebang_len;
