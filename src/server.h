@@ -3489,7 +3489,7 @@ int redis_check_rdb_main(int argc, char **argv, FILE *fp);
 int redis_check_aof_main(int argc, char **argv);
 
 /* Scripting */
-void freeEvalScriptsSync(dict *scripts, list *scripts_lru_list, list *engine_callbacks);
+void freeEvalScripts(dict *scripts, list *scripts_lru_list, list *engine_callbacks);
 void freeEvalScriptsAsync(dict *scripts, list *scripts_lru_list, list *engine_callbacks);
 void freeFunctionsAsync(functionsLibCtx *lib_ctx);
 void sha1hex(char *digest, char *script, size_t len);

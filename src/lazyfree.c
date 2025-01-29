@@ -56,7 +56,7 @@ void lazyFreeEvalScripts(void *args[]) {
     list *scripts_lru_list = args[1];
     list *engine_callbacks = args[2];
     long long len = dictSize(scripts);
-    freeEvalScriptsSync(scripts, scripts_lru_list, engine_callbacks);
+    freeEvalScripts(scripts, scripts_lru_list, engine_callbacks);
     atomic_fetch_sub_explicit(&lazyfree_objects, len, memory_order_relaxed);
     atomic_fetch_add_explicit(&lazyfreed_objects, len, memory_order_relaxed);
 }
@@ -231,7 +231,7 @@ void freeEvalScriptsAsync(dict *scripts, list *scripts_lru_list, list *engine_ca
         atomic_fetch_add_explicit(&lazyfree_objects, dictSize(scripts), memory_order_relaxed);
         bioCreateLazyFreeJob(lazyFreeEvalScripts, 3, scripts, scripts_lru_list, engine_callbacks);
     } else {
-        freeEvalScriptsSync(scripts, scripts_lru_list, engine_callbacks);
+        freeEvalScripts(scripts, scripts_lru_list, engine_callbacks);
     }
 }
 

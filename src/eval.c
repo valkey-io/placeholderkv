@@ -133,7 +133,7 @@ void sha1hex(char *digest, char *script, size_t len) {
 }
 
 /* Free lua_scripts dict and close lua interpreter. */
-void freeEvalScriptsSync(dict *scripts, list *scripts_lru_list, list *engine_callbacks) {
+void freeEvalScripts(dict *scripts, list *scripts_lru_list, list *engine_callbacks) {
     dictRelease(scripts);
 
     listRelease(scripts_lru_list);
@@ -169,7 +169,7 @@ void evalRelease(int async) {
         freeEvalScriptsAsync(evalCtx.scripts, evalCtx.scripts_lru_list, engine_callbacks);
 
     } else {
-        freeEvalScriptsSync(evalCtx.scripts, evalCtx.scripts_lru_list, NULL);
+        freeEvalScripts(evalCtx.scripts, evalCtx.scripts_lru_list, NULL);
         scriptingEngineManagerForEachEngine(resetEngineEvalEnvCallback, NULL);
     }
 }
