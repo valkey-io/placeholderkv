@@ -1,3 +1,8 @@
+/*
+ * Copyright Valkey Contributors.
+ * All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 #include "engine_lua.h"
 #include "function_lua.h"
 #include "script_lua.h"

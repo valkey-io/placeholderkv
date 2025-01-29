@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2009-2012, Redis Ltd.
+ * All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
 #include "debug_lua.h"
 #include "script_lua.h"
 
