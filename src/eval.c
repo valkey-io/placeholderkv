@@ -83,7 +83,7 @@ dictType shaScriptObjectDictType = {
 
 /* Eval context */
 struct evalCtx {
-    dict *scripts;                  /* A dictionary of SHA1 -> scripts */
+    dict *scripts;                  /* A dictionary of SHA1 -> evalScript */
     list *scripts_lru_list;         /* A list of SHA1, first in first out LRU eviction. */
     unsigned long long scripts_mem; /* Cached scripts' memory + oh */
 } evalCtx;
@@ -271,8 +271,7 @@ int evalExtractShebangFlags(sds body,
     } else {
         // When no shebang is declared, assume the engine is LUA.
         if (out_engine) {
-            *out_engine = zcalloc(4);
-            valkey_strlcpy(*out_engine, "lua", 4);
+            *out_engine = zstrdup("dup");
         }
     }
     if (out_shebang_len) *out_shebang_len = shebang_len;
