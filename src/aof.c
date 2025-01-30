@@ -1532,10 +1532,11 @@ int loadSingleAppendOnlyFile(char *filename) {
         }
 
         /* Command lookup */
-        cmd = lookupCommand(argv, argc);
-        if (!cmd) {
-            serverLog(LL_WARNING, "Unknown command '%s' reading the append only file %s", (char *)argv[0]->ptr,
-                      filename);
+        sds err = NULL;
+        fakeClient->cmd = fakeClient->lastcmd = cmd = lookupCommand(argv, argc);
+        if ((!cmd && !commandCheckExistence(fakeClient, &err)) || (cmd && !commandCheckArity(cmd, argc, &err))) {
+            serverLog(LL_WARNING, "Error reading the append only file %s, error: %s", filename, err);
+            sdsfree(err);
             freeClientArgv(fakeClient);
             ret = AOF_FAILED;
             goto cleanup;
@@ -1544,7 +1545,6 @@ int loadSingleAppendOnlyFile(char *filename) {
         if (cmd->proc == multiCommand) valid_before_multi = valid_up_to;
 
         /* Run the command in the context of a fake client */
-        fakeClient->cmd = fakeClient->lastcmd = cmd;
         if (fakeClient->flag.multi && fakeClient->cmd->proc != execCommand) {
             /* Note: we don't have to attempt calling evalGetCommandFlags,
              * since this is AOF, the checks in processCommand are not made
@@ -1891,7 +1891,7 @@ int rewriteSortedSetObject(rio *r, robj *key, robj *o) {
     } else if (o->encoding == OBJ_ENCODING_SKIPLIST) {
         zset *zs = o->ptr;
         hashtableIterator iter;
-        hashtableInitIterator(&iter, zs->ht);
+        hashtableInitIterator(&iter, zs->ht, 0);
         void *next;
         while (hashtableNext(&iter, &next)) {
             zskiplistNode *node = next;
@@ -1922,7 +1922,7 @@ int rewriteSortedSetObject(rio *r, robj *key, robj *o) {
 /* Write either the key or the value of the currently selected item of a hash.
  * The 'hi' argument passes a valid hash iterator.
  * The 'what' filed specifies if to write a key or a value and can be
- * either OBJ_HASH_KEY or OBJ_HASH_VALUE.
+ * either OBJ_HASH_FIELD or OBJ_HASH_VALUE.
  *
  * The function returns 0 on error, non-zero on success. */
 static int rioWriteHashIteratorCursor(rio *r, hashTypeIterator *hi, int what) {
@@ -1936,7 +1936,7 @@ static int rioWriteHashIteratorCursor(rio *r, hashTypeIterator *hi, int what) {
             return rioWriteBulkString(r, (char *)vstr, vlen);
         else
             return rioWriteBulkLongLong(r, vll);
-    } else if (hi->encoding == OBJ_ENCODING_HT) {
+    } else if (hi->encoding == OBJ_ENCODING_HASHTABLE) {
         sds value = hashTypeCurrentFromHashTable(hi, what);
         return rioWriteBulkString(r, value, sdslen(value));
     }
@@ -1963,7 +1963,7 @@ int rewriteHashObject(rio *r, robj *key, robj *o) {
             }
         }
 
-        if (!rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_KEY) || !rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_VALUE)) {
+        if (!rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_FIELD) || !rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_VALUE)) {
             hashTypeResetIterator(&hi);
             return 0;
         }
@@ -2217,7 +2217,7 @@ int rewriteAppendOnlyFileRio(rio *aof) {
         if (rioWrite(aof, selectcmd, sizeof(selectcmd) - 1) == 0) goto werr;
         if (rioWriteBulkLongLong(aof, j) == 0) goto werr;
 
-        kvs_it = kvstoreIteratorInit(db->keys);
+        kvs_it = kvstoreIteratorInit(db->keys, HASHTABLE_ITER_SAFE | HASHTABLE_ITER_PREFETCH_VALUES);
         /* Iterate this DB writing every entry */
         void *next;
         while (kvstoreIteratorNext(kvs_it, &next)) {

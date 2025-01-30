@@ -53,7 +53,7 @@
 
 #include "server.h"
 #include "cluster.h"
-#include "slowlog.h"
+#include "commandlog.h"
 #include "rdb.h"
 #include "monotonic.h"
 #include "script.h"
@@ -62,8 +62,8 @@
 #include "crc16_slottable.h"
 #include "valkeymodule.h"
 #include "io_threads.h"
-#include "functions.h"
 #include "module.h"
+#include "scripting_engine.h"
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -1221,7 +1221,8 @@ int64_t commandFlagsFromString(char *s) {
         else if (!strcasecmp(t,"blocking")) flags |= CMD_BLOCKING;
         else if (!strcasecmp(t,"allow-stale")) flags |= CMD_STALE;
         else if (!strcasecmp(t,"no-monitor")) flags |= CMD_SKIP_MONITOR;
-        else if (!strcasecmp(t,"no-slowlog")) flags |= CMD_SKIP_SLOWLOG;
+        else if (!strcasecmp(t,"no-slowlog")) flags |= CMD_SKIP_COMMANDLOG;
+        else if (!strcasecmp(t,"no-commandlog")) flags |= CMD_SKIP_COMMANDLOG;
         else if (!strcasecmp(t,"fast")) flags |= CMD_FAST;
         else if (!strcasecmp(t,"no-auth")) flags |= CMD_NO_AUTH;
         else if (!strcasecmp(t,"may-replicate")) flags |= CMD_MAY_REPLICATE;
@@ -1296,7 +1297,8 @@ ValkeyModuleCommand *moduleCreateCommandProxy(struct ValkeyModule *module,
  *                      this means.
  * * **"no-monitor"**: Don't propagate the command on monitor. Use this if
  *                     the command has sensitive data among the arguments.
- * * **"no-slowlog"**: Don't log this command in the slowlog. Use this if
+ * * **"no-slowlog"**: Deprecated, please use "no-commandlog".
+ * * **"no-commandlog"**: Don't log this command in the commandlog. Use this if
  *                     the command has sensitive data among the arguments.
  * * **"fast"**:      The command time complexity is not greater
  *                    than O(log(N)) where N is the size of the collection or
@@ -11090,25 +11092,6 @@ typedef struct {
     ValkeyModuleScanKeyCB fn;
 } ScanKeyCBData;
 
-static void moduleScanKeyDictCallback(void *privdata, const dictEntry *de) {
-    ScanKeyCBData *data = privdata;
-    sds key = dictGetKey(de);
-    robj *o = data->key->value;
-    robj *field = createStringObject(key, sdslen(key));
-    robj *value = NULL;
-
-    if (o->type == OBJ_HASH) {
-        sds val = dictGetVal(de);
-        value = createStringObject(val, sdslen(val));
-    } else {
-        serverPanic("unexpected object type");
-    }
-
-    data->fn(data->key, field, value, data->user_data);
-    decrRefCount(field);
-    if (value) decrRefCount(value);
-}
-
 static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
     ScanKeyCBData *data = privdata;
     robj *o = data->key->value;
@@ -11122,6 +11105,10 @@ static void moduleScanKeyHashtableCallback(void *privdata, void *entry) {
         zskiplistNode *node = (zskiplistNode *)entry;
         key = node->ele;
         value = createStringObjectFromLongDouble(node->score, 0);
+    } else if (o->type == OBJ_HASH) {
+        key = hashTypeEntryGetField(entry);
+        sds val = hashTypeEntryGetValue(entry);
+        value = createStringObject(val, sdslen(val));
     } else {
         serverPanic("unexpected object type");
     }
@@ -11185,13 +11172,12 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         errno = EINVAL;
         return 0;
     }
-    dict *d = NULL;
     hashtable *ht = NULL;
     robj *o = key->value;
     if (o->type == OBJ_SET) {
         if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_HASH) {
-        if (o->encoding == OBJ_ENCODING_HT) d = o->ptr;
+        if (o->encoding == OBJ_ENCODING_HASHTABLE) ht = o->ptr;
     } else if (o->type == OBJ_ZSET) {
         if (o->encoding == OBJ_ENCODING_SKIPLIST) ht = ((zset *)o->ptr)->ht;
     } else {
@@ -11203,14 +11189,7 @@ int VM_ScanKey(ValkeyModuleKey *key, ValkeyModuleScanCursor *cursor, ValkeyModul
         return 0;
     }
     int ret = 1;
-    if (d) {
-        ScanKeyCBData data = {key, privdata, fn};
-        cursor->cursor = dictScan(d, cursor->cursor, moduleScanKeyDictCallback, &data);
-        if (cursor->cursor == 0) {
-            cursor->done = 1;
-            ret = 0;
-        }
-    } else if (ht) {
+    if (ht) {
         ScanKeyCBData data = {key, privdata, fn};
         cursor->cursor = hashtableScan(ht, cursor->cursor, moduleScanKeyHashtableCallback, &data);
         if (cursor->cursor == 0) {
@@ -12185,7 +12164,7 @@ int moduleFreeCommand(struct ValkeyModule *module, struct serverCommand *cmd) {
     if (cmd->subcommands_ht) {
         hashtableIterator iter;
         void *next;
-        hashtableInitSafeIterator(&iter, cmd->subcommands_ht);
+        hashtableInitIterator(&iter, cmd->subcommands_ht, HASHTABLE_ITER_SAFE);
         while (hashtableNext(&iter, &next)) {
             struct serverCommand *sub = next;
             if (moduleFreeCommand(module, sub) != C_OK) continue;
@@ -12208,7 +12187,7 @@ void moduleUnregisterCommands(struct ValkeyModule *module) {
     /* Unregister all the commands registered by this module. */
     hashtableIterator iter;
     void *next;
-    hashtableInitSafeIterator(&iter, server.commands);
+    hashtableInitIterator(&iter, server.commands, HASHTABLE_ITER_SAFE);
     while (hashtableNext(&iter, &next)) {
         struct serverCommand *cmd = next;
         if (moduleFreeCommand(module, cmd) != C_OK) continue;
@@ -13188,10 +13167,10 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
         return VALKEYMODULE_ERR;
     }
 
-    if (functionsRegisterEngine(engine_name,
-                                module_ctx->module,
-                                engine_ctx,
-                                engine_methods) != C_OK) {
+    if (scriptingEngineManagerRegister(engine_name,
+                                       module_ctx->module,
+                                       engine_ctx,
+                                       engine_methods) != C_OK) {
         return VALKEYMODULE_ERR;
     }
 
@@ -13207,7 +13186,9 @@ int VM_RegisterScriptingEngine(ValkeyModuleCtx *module_ctx,
  */
 int VM_UnregisterScriptingEngine(ValkeyModuleCtx *ctx, const char *engine_name) {
     UNUSED(ctx);
-    functionsUnregisterEngine(engine_name);
+    if (scriptingEngineManagerUnregister(engine_name) != C_OK) {
+        return VALKEYMODULE_ERR;
+    }
     return VALKEYMODULE_OK;
 }
 

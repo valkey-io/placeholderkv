@@ -230,7 +230,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CMD_LOADING (1ULL << 9)
 #define CMD_STALE (1ULL << 10)
 #define CMD_SKIP_MONITOR (1ULL << 11)
-#define CMD_SKIP_SLOWLOG (1ULL << 12)
+#define CMD_SKIP_COMMANDLOG (1ULL << 12)
 #define CMD_ASKING (1ULL << 13)
 #define CMD_FAST (1ULL << 14)
 #define CMD_NO_AUTH (1ULL << 15)
@@ -381,6 +381,22 @@ typedef enum blocking_type {
 #define CLIENT_TYPE_OBUF_COUNT 3 /* Number of clients to expose to output \
                                     buffer configuration. Just the first  \
                                     three: normal, replica, pubsub. */
+
+/* Type of commandlog */
+typedef enum {
+    COMMANDLOG_TYPE_SLOW = 0,
+    COMMANDLOG_TYPE_LARGE_REQUEST,
+    COMMANDLOG_TYPE_LARGE_REPLY,
+    COMMANDLOG_TYPE_NUM
+} commandlog_type;
+
+/* Configuration and entry list of different types of command logs */
+typedef struct commandlog {
+    list *entries;
+    long long entry_id;
+    long long threshold;
+    unsigned long max_len;
+} commandlog;
 
 /* Replica replication state. Used in server.repl_state for replicas to remember
  * what to do next. */
@@ -588,6 +604,9 @@ typedef enum { LOG_TIMESTAMP_LEGACY = 0,
                LOG_TIMESTAMP_ISO8601,
                LOG_TIMESTAMP_MILLISECONDS } log_timestamp_type;
 
+typedef enum { RDB_VERSION_CHECK_STRICT = 0,
+               RDB_VERSION_CHECK_RELAXED } rdb_version_check_type;
+
 /* common sets of actions to pause/unpause */
 #define PAUSE_ACTIONS_CLIENT_WRITE_SET \
     (PAUSE_ACTION_CLIENT_WRITE | PAUSE_ACTION_EXPIRE | PAUSE_ACTION_EVICT | PAUSE_ACTION_REPLICA)
@@ -715,7 +734,7 @@ typedef struct ValkeyModuleType moduleType;
  * is set to one of this fields for this object. */
 #define OBJ_ENCODING_RAW 0        /* Raw representation */
 #define OBJ_ENCODING_INT 1        /* Encoded as integer */
-#define OBJ_ENCODING_HT 2         /* Encoded as hash table */
+#define OBJ_ENCODING_HASHTABLE 2  /* Encoded as a hashtable */
 #define OBJ_ENCODING_ZIPMAP 3     /* No longer used: old hash encoding. */
 #define OBJ_ENCODING_LINKEDLIST 4 /* No longer used: old list encoding. */
 #define OBJ_ENCODING_ZIPLIST 5    /* No longer used: old list/hash/zset encoding. */
@@ -725,7 +744,6 @@ typedef struct ValkeyModuleType moduleType;
 #define OBJ_ENCODING_QUICKLIST 9  /* Encoded as linked list of listpacks */
 #define OBJ_ENCODING_STREAM 10    /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11  /* Encoded as a listpack */
-#define OBJ_ENCODING_HASHTABLE 12 /* Encoded as a hashtable */
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1 << LRU_BITS) - 1) /* Max value of obj->lru */
@@ -1693,10 +1711,7 @@ struct valkeyServer {
     long long stat_sync_full;                      /* Number of full resyncs with replicas. */
     long long stat_sync_partial_ok;                /* Number of accepted PSYNC requests. */
     long long stat_sync_partial_err;               /* Number of unaccepted PSYNC requests. */
-    list *slowlog;                                 /* SLOWLOG list of commands */
-    long long slowlog_entry_id;                    /* SLOWLOG current entry ID */
-    long long slowlog_log_slower_than;             /* SLOWLOG time limit (to get logged) */
-    unsigned long slowlog_max_len;                 /* SLOWLOG max number of items logged */
+    commandlog commandlog[COMMANDLOG_TYPE_NUM];    /* Logs of commands. */
     struct malloc_stats cron_malloc_stats;         /* sampled in serverCron(). */
     long long stat_net_input_bytes;                /* Bytes read from network. */
     long long stat_net_output_bytes;               /* Bytes written to network. */
@@ -1760,6 +1775,7 @@ struct valkeyServer {
     int active_defrag_enabled;
     int sanitize_dump_payload;                   /* Enables deep sanitization for ziplist and listpack in RDB and RESTORE. */
     int skip_checksum_validation;                /* Disable checksum validation for RDB and RESTORE payload. */
+    int rdb_version_check;                       /* Try to load RDB produced by a future version. */
     int jemalloc_bg_thread;                      /* Enable jemalloc background thread */
     int active_defrag_configuration_changed;     /* Config changed; need to recompute active_defrag_cpu_percent. */
     size_t active_defrag_ignore_bytes;           /* minimum amount of fragmentation waste to start active defrag */
@@ -2345,7 +2361,7 @@ typedef int serverGetKeysProc(struct serverCommand *cmd, robj **argv, int argc, 
  *
  * CMD_SKIP_MONITOR:  Do not automatically propagate the command on MONITOR.
  *
- * CMD_SKIP_SLOWLOG:  Do not automatically propagate the command to the slowlog.
+ * CMD_SKIP_COMMANDLOG:  Do not automatically propagate the command to the commandlog.
  *
  * CMD_ASKING:      Perform an implicit ASKING for this command, so the
  *                  command will be accepted in cluster mode if the slot is marked
@@ -2524,13 +2540,13 @@ typedef struct {
 
     unsigned char *fptr, *vptr;
 
-    dictIterator di;
-    dictEntry *de;
+    hashtableIterator iter;
+    void *next;
 } hashTypeIterator;
 
 #include "stream.h" /* Stream data type header file. */
 
-#define OBJ_HASH_KEY 1
+#define OBJ_HASH_FIELD 1
 #define OBJ_HASH_VALUE 2
 
 /*-----------------------------------------------------------------------------
@@ -2548,6 +2564,7 @@ extern hashtableType kvstoreKeysHashtableType;
 extern hashtableType kvstoreExpiresHashtableType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
+extern hashtableType hashHashtableType;
 extern dictType stringSetDictType;
 extern dictType externalStringType;
 extern dictType sdsHashDictType;
@@ -2719,6 +2736,7 @@ void pauseActions(pause_purpose purpose, mstime_t end, uint32_t actions);
 void unpauseActions(pause_purpose purpose);
 uint32_t isPausedActions(uint32_t action_bitmask);
 uint32_t isPausedActionsWithUpdate(uint32_t action_bitmask);
+mstime_t getPausedActionTimeout(uint32_t action);
 void updatePausedActions(void);
 void unblockPostponedClients(void);
 void processEventsWhileBlocked(void);
@@ -3155,7 +3173,7 @@ void forceCommandPropagation(client *c, int flags);
 void preventCommandPropagation(client *c);
 void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
-void slowlogPushCurrentCommand(client *c, struct serverCommand *cmd, ustime_t duration);
+void commandlogPushCurrentCommand(client *c, struct serverCommand *cmd);
 void updateCommandLatencyHistogram(struct hdr_histogram **latency_histogram, int64_t duration_hist);
 int prepareForShutdown(client *c, int flags);
 void replyToClientsBlockedOnShutdown(void);
@@ -3237,6 +3255,15 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1 << 1)
 #define HASH_SET_COPY 0
 
+typedef struct hashTypeEntry hashTypeEntry;
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value);
+sds hashTypeEntryGetField(const hashTypeEntry *entry);
+sds hashTypeEntryGetValue(const hashTypeEntry *entry);
+size_t hashTypeEntryAllocSize(hashTypeEntry *entry);
+hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds));
+void dismissHashTypeEntry(hashTypeEntry *entry);
+void freeHashTypeEntry(hashTypeEntry *entry);
+
 void hashTypeConvert(robj *o, int enc);
 void hashTypeTryConversion(robj *subject, robj **argv, int start, int end);
 int hashTypeExists(robj *o, sds key);
@@ -3251,7 +3278,6 @@ void hashTypeCurrentFromListpack(hashTypeIterator *hi,
                                  unsigned int *vlen,
                                  long long *vll);
 sds hashTypeCurrentFromHashTable(hashTypeIterator *hi, int what);
-void hashTypeCurrentObject(hashTypeIterator *hi, int what, unsigned char **vstr, unsigned int *vlen, long long *vll);
 sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
 robj *hashTypeGetValueObject(robj *o, sds field);
@@ -3628,6 +3654,7 @@ void bgsaveCommand(client *c);
 void bgrewriteaofCommand(client *c);
 void shutdownCommand(client *c);
 void slowlogCommand(client *c);
+void commandlogCommand(client *c);
 void moveCommand(client *c);
 void copyCommand(client *c);
 void renameCommand(client *c);
@@ -3778,6 +3805,25 @@ void dumpCommand(client *c);
 void objectCommand(client *c);
 void memoryCommand(client *c);
 void clientCommand(client *c);
+void clientHelpCommand(client *c);
+void clientIDCommand(client *c);
+void clientInfoCommand(client *c);
+void clientListCommand(client *c);
+void clientReplyCommand(client *c);
+void clientNoEvictCommand(client *c);
+void clientKillCommand(client *c);
+void clientUnblockCommand(client *c);
+void clientSetNameCommand(client *c);
+void clientGetNameCommand(client *c);
+void clientUnpauseCommand(client *c);
+void clientPauseCommand(client *c);
+void clientTrackingCommand(client *c);
+void clientCachingCommand(client *c);
+void clientGetredirCommand(client *c);
+void clientTrackingInfoCommand(client *c);
+void clientNoTouchCommand(client *c);
+void clientCapaCommand(client *c);
+void clientImportSourceCommand(client *c);
 void helloCommand(client *c);
 void clientSetinfoCommand(client *c);
 void evalCommand(client *c);
@@ -3892,7 +3938,7 @@ void debugPauseProcess(void);
 /* dualChannelServerLog - Log messages related to dual-channel operations
  * This macro wraps the serverLog function, prepending "<Dual Channel>"
  * to the log message. */
-#define dualChannelServerLog(level, ...) serverLog(level, "<Dual Channel> " __VA_ARGS__)
+#define dualChannelServerLog(level, ...) serverLog(level, "Dual channel replication: " __VA_ARGS__)
 
 #define serverDebug(fmt, ...) printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define serverDebugMark() printf("-- MARK %s:%d --\n", __FILE__, __LINE__)
