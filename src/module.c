@@ -3721,6 +3721,8 @@ ValkeyModuleString *VM_GetClientUserNameById(ValkeyModuleCtx *ctx, uint64_t id) 
 
 /* Returns 1 if commands are arriving from the primary client or AOF client
  * and should never be rejected.
+ * This check can be used in places such as skipping validation of commands
+ * on replicas (to not diverge from primary) or from AOF files.
  * Returns 0 otherwise (and also if ctx or if the client is NULL). */
 int VM_MustObeyClient(ValkeyModuleCtx *ctx) {
     if (!ctx || !ctx->client) return 0;
