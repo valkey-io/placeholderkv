@@ -423,7 +423,7 @@ start_server {tags {"introspection"}} {
         set rd [valkey_deferring_client]
         $rd monitor
         $rd read ;# Discard the OK
-        r eval {redis.call('set',KEYS[1],ARGV[1])} 1 foo bar
+        r eval {server.call('set',KEYS[1],ARGV[1])} 1 foo bar
         assert_match {*eval*} [$rd read]
         assert_match {*lua*"set"*"foo"*"bar"*} [$rd read]
         $rd close
@@ -431,7 +431,7 @@ start_server {tags {"introspection"}} {
 
     test {MONITOR can log commands issued by functions} {
         r function load replace {#!lua name=test
-            server.register_function('test', function() return redis.call('set', 'foo', 'bar') end)
+            server.register_function('test', function() return server.call('set', 'foo', 'bar') end)
         }
         set rd [valkey_deferring_client]
         $rd monitor
