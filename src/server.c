@@ -5638,6 +5638,10 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
                                           "slave_repl_offset:%lld\r\n", replica_repl_offset,
                                           "replica_announced:%d\r\n", server.replica_announced));
         }
+        if (server.repl_state != REPL_STATE_CONNECTED) {
+            info = sdscatprintf(info, "master_link_down_since_seconds:%jd\r\n",
+                                server.repl_down_since ? (intmax_t)(server.unixtime - server.repl_down_since) : -1);
+        }
     }
 
     /* Server */
