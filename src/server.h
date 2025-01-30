@@ -2465,6 +2465,7 @@ struct serverCommand {
                      the user associated to the connection has this command
                      bit set in the bitmap of allowed commands. */
     sds fullname; /* A SDS string representing the command fullname. */
+    sds current_name; /* Same as fullname, becomes a separate string if command is renamed. */
     struct hdr_histogram
         *latency_histogram;        /* Points to the command latency command histogram (unit of time nanosecond). */
     keySpec legacy_range_key_spec; /* The legacy (first,last,step) key spec is

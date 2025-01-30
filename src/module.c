@@ -1403,6 +1403,7 @@ ValkeyModuleCommand *moduleCreateCommandProxy(struct ValkeyModule *module,
     cp->serverCmd = zcalloc(sizeof(*serverCmd));
     cp->serverCmd->declared_name = declared_name; /* SDS for module commands */
     cp->serverCmd->fullname = fullname;
+    cp->serverCmd->current_name = fullname;
     cp->serverCmd->group = COMMAND_GROUP_MODULE;
     cp->serverCmd->proc = ValkeyModuleCommandDispatcher;
     cp->serverCmd->flags = flags | CMD_MODULE;
