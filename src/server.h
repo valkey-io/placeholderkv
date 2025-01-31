@@ -2459,12 +2459,12 @@ struct serverCommand {
 
     /* Runtime populated data */
     long long microseconds, calls, rejected_calls, failed_calls;
-    int id;       /* Command ID. This is a progressive ID starting from 0 that
-                     is assigned at runtime, and is used in order to check
-                     ACLs. A connection is able to execute a given command if
-                     the user associated to the connection has this command
-                     bit set in the bitmap of allowed commands. */
-    sds fullname; /* A SDS string representing the command fullname. */
+    int id;           /* Command ID. This is a progressive ID starting from 0 that
+                         is assigned at runtime, and is used in order to check
+                         ACLs. A connection is able to execute a given command if
+                         the user associated to the connection has this command
+                         bit set in the bitmap of allowed commands. */
+    sds fullname;     /* A SDS string representing the command fullname. */
     sds current_name; /* Same as fullname, becomes a separate string if command is renamed. */
     struct hdr_histogram
         *latency_histogram;        /* Points to the command latency command histogram (unit of time nanosecond). */

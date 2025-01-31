@@ -637,9 +637,9 @@ hashtableType commandSetType = {.entryGetKey = hashtableCommandGetCurrentName,
 
 /* Command set, hashed by original command name, stores serverCommand structs. */
 hashtableType originalCommandSetType = {.entryGetKey = hashtableCommandGetOriginalName,
-                                .hashFunction = dictSdsCaseHash,
-                                .keyCompare = hashtableStringKeyCaseCompare,
-                                .instant_rehashing = 1};
+                                        .hashFunction = dictSdsCaseHash,
+                                        .keyCompare = hashtableStringKeyCaseCompare,
+                                        .instant_rehashing = 1};
 
 /* Sub-command set, hashed by char* string, stores serverCommand structs. */
 hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
