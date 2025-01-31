@@ -3214,17 +3214,20 @@ int clusterProcessPacket(clusterLink *link) {
         sender_claimed_config_epoch = ntohu64(hdr->configEpoch);
         if (sender_claimed_current_epoch > server.cluster->currentEpoch)
             server.cluster->currentEpoch = sender_claimed_current_epoch;
-        /* Update the sender configEpoch if it is a primary publishing a newer one. */
-        if (sender_claims_to_be_primary && sender_claimed_config_epoch > sender->configEpoch) {
-            sender->configEpoch = sender_claimed_config_epoch;
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
 
+        if (sender_claims_to_be_primary) {
+            /* Update the sender configEpoch if it is a primary publishing a newer one. */
+            if (sender_claimed_config_epoch > sender->configEpoch) {
+                sender->configEpoch = sender_claimed_config_epoch;
+                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG | CLUSTER_TODO_FSYNC_CONFIG);
+            }
+
+            /* Another node has claimed an epoch greater than or equal to ours.
+             * If we have an ongoing election, reset it because we cannot win
+             * with an epoch smaller than or equal to the incoming claim. This
+             * allows us to start a new election as soon as possible. */
             if (server.cluster->failover_auth_time && server.cluster->failover_auth_sent &&
                 sender->configEpoch >= server.cluster->failover_auth_epoch) {
-                /* Another node has claimed an epoch greater than or equal to ours.
-                 * If we have an ongoing election, reset it because we cannot win
-                 * with an epoch smaller than or equal to the incoming claim. This
-                 * allows us to start a new election as soon as possible. */
                 server.cluster->failover_auth_time = 0;
                 serverLog(LL_WARNING,
                           "Failover election in progress for epoch %llu, but received a claim from "
