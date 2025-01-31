@@ -1991,6 +1991,7 @@ struct valkeyServer {
     /* Limits */
     unsigned int maxclients;                    /* Max number of simultaneous clients */
     unsigned long long maxmemory;               /* Max number of memory bytes to use */
+    unsigned long long key_eviction_memory;     /* Memory bytes to begin the key eviction process */
     ssize_t maxmemory_clients;                  /* Memory limit for total client buffers */
     int maxmemory_policy;                       /* Policy for key eviction */
     int maxmemory_samples;                      /* Precision of random sampling */
@@ -3138,7 +3139,7 @@ int zslLexValueGteMin(sds value, zlexrangespec *spec);
 int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
 /* Core functions */
-int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *level);
+int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *level, unsigned long long maxmemory);
 size_t freeMemoryGetNotCountedMemory(void);
 int overMaxmemoryAfterAlloc(size_t moremem);
 uint64_t getCommandFlags(client *c);
