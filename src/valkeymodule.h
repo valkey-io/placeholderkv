@@ -1317,7 +1317,7 @@ VALKEYMODULE_API void (*ValkeyModule_ChannelAtPosWithFlags)(ValkeyModuleCtx *ctx
 VALKEYMODULE_API unsigned long long (*ValkeyModule_GetClientId)(ValkeyModuleCtx *ctx) VALKEYMODULE_ATTR;
 VALKEYMODULE_API ValkeyModuleString *(*ValkeyModule_GetClientUserNameById)(ValkeyModuleCtx *ctx,
                                                                            uint64_t id)VALKEYMODULE_ATTR;
-VALKEYMODULE_API int *(*ValkeyModule_MustObeyClient)(ValkeyModuleCtx *ctx)VALKEYMODULE_ATTR;
+VALKEYMODULE_API int (*ValkeyModule_MustObeyClient)(ValkeyModuleCtx *ctx)VALKEYMODULE_ATTR;
 VALKEYMODULE_API int (*ValkeyModule_GetClientInfoById)(void *ci, uint64_t id) VALKEYMODULE_ATTR;
 VALKEYMODULE_API ValkeyModuleString *(*ValkeyModule_GetClientNameById)(ValkeyModuleCtx *ctx,
                                                                        uint64_t id)VALKEYMODULE_ATTR;
@@ -1943,6 +1943,7 @@ static int ValkeyModule_Init(ValkeyModuleCtx *ctx, const char *name, int ver, in
     VALKEYMODULE_GET_API(ChannelAtPosWithFlags);
     VALKEYMODULE_GET_API(GetClientId);
     VALKEYMODULE_GET_API(GetClientUserNameById);
+    VALKEYMODULE_GET_API(MustObeyClient);
     VALKEYMODULE_GET_API(GetContextFlags);
     VALKEYMODULE_GET_API(AvoidReplicaTraffic);
     VALKEYMODULE_GET_API(PoolAlloc);
