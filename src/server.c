@@ -389,10 +389,6 @@ int hashtableSdsKeyCompare(const void *key1, const void *key2) {
     return sdslen(sds1) != sdslen(sds2) || sdscmp(sds1, sds2);
 }
 
-size_t dictSdsEmbedKey(unsigned char *buf, size_t buf_len, const void *key, uint8_t *key_offset) {
-    return sdscopytobuffer(buf, buf_len, (sds)key, key_offset);
-}
-
 /* A case insensitive version used for the command lookup table and other
  * places where case insensitive non binary-safe comparison is needed. */
 int dictSdsKeyCaseCompare(const void *key1, const void *key2) {
