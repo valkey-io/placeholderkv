@@ -1846,6 +1846,9 @@ static ConnectionType CT_RDMA = {
     .process_pending_data = rdmaProcessPendingData,
     .postpone_update_state = postPoneUpdateRdmaState,
     .update_state = updateRdmaState,
+
+    /* Miscellaneous */
+    .connIntegrityChecked = NULL,
 };
 
 ConnectionType *connectionTypeRdma(void) {
