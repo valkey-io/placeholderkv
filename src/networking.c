@@ -66,6 +66,26 @@ typedef struct {
     int skipme;
 } clientFilter;
 
+typedef enum {
+    CLIENT_REPLY_PLAIN = 0,
+    CLIENT_REPLY_BULK_COPY_AVOID,
+} clientReplyType;
+
+/* Reply payload header */
+typedef struct __attribute__((__packed__)) payloadHeader {
+    size_t len;        /* payload length in a reply buffer */
+    size_t actual_len; /* actual reply length for bulk offloads */
+    uint8_t type;      /* one of clientReplyType */
+    int16_t slot;      /* to report network-bytes-out for offloads */
+} payloadHeader;
+
+/* To avoid copy of whole string object object in reply buffer
+ * we store store pointers to object and string itself */
+typedef struct __attribute__((__packed__)) bulkCopyAvoid {
+    robj *obj; /* pointer to object used for reference count management */
+    void *str; /* pointer to string to optimize memory access by I/O thread */
+} bulkCopyAvoid;
+
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
 int postponeClientRead(client *c);
@@ -149,6 +169,32 @@ static inline int isReplicaReadyForReplData(client *replica) {
            !(replica->flag.close_asap);
 }
 
+static int isCopyAvoidIndicatedBySize(robj *obj) {
+    if (!obj) return 0;
+    size_t len = sdslen(obj->ptr);
+
+    if (server.io_threads_num == 1) {
+        return server.min_string_size_copy_avoid && len >= (size_t)server.min_string_size_copy_avoid;
+    }
+    return server.min_string_size_copy_avoid_threaded && len >= (size_t)server.min_string_size_copy_avoid_threaded;
+}
+
+static int isCopyAvoidAllowed(client *c, robj *obj) {
+    if (c->flag.fake) return 0;
+
+    /* Copy avoidance can be allowed only for regular Valkey clients
+     * that use _writeToClient handler to write replies to client connection */
+    int type = getClientType(c);
+    if (type != CLIENT_TYPE_NORMAL && type != CLIENT_TYPE_PUBSUB) return 0;
+
+    if (obj) {
+        if (obj->encoding != OBJ_ENCODING_RAW) return 0;
+        if (obj->refcount == OBJ_STATIC_REFCOUNT) return 0;
+    }
+
+    return isCopyAvoidIndicatedByIOThreads() || isCopyAvoidIndicatedBySize(obj);
+}
+
 client *createClient(connection *conn) {
     client *c = zmalloc(sizeof(client));
 
@@ -178,6 +224,7 @@ client *createClient(connection *conn) {
     c->lib_name = NULL;
     c->lib_ver = NULL;
     c->bufpos = 0;
+    c->last_header = NULL;
     c->buf_peak = c->buf_usable_size;
     c->buf_peak_last_reset_time = server.unixtime;
     c->qb_pos = 0;
@@ -197,7 +244,6 @@ client *createClient(connection *conn) {
     c->cur_script = NULL;
     c->multibulklen = 0;
     c->bulklen = -1;
-    c->sentlen = 0;
     c->raw_flag = 0;
     c->capa = 0;
     c->slot = -1;
@@ -236,6 +282,9 @@ client *createClient(connection *conn) {
     c->commands_processed = 0;
     c->io_last_reply_block = NULL;
     c->io_last_bufpos = 0;
+    c->io_last_written_buf = NULL;
+    c->io_last_written_bufpos = 0;
+    c->io_last_written_data_len = 0;
     return c;
 }
 
@@ -378,6 +427,50 @@ void deleteCachedResponseClient(client *recording_client) {
 /* -----------------------------------------------------------------------------
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
+static inline void insertPayloadHeader(char *buf, size_t *bufpos, uint8_t type, size_t len, int slot, payloadHeader **new_header) {
+    *new_header = (payloadHeader *)(buf + *bufpos);
+
+    (*new_header)->type = type;
+    (*new_header)->len = len;
+    (*new_header)->slot = slot;
+    (*new_header)->actual_len = 0;
+
+    *bufpos += sizeof(payloadHeader);
+}
+
+static inline int updatePayloadHeader(payloadHeader *last_header, uint8_t type, size_t len, int slot) {
+    if (last_header->type == type && last_header->slot == slot) {
+        last_header->len += len;
+        return C_OK;
+    }
+    return C_ERR;
+}
+
+/* Update an existing header, if possible; otherwise insert a new one
+ * Returns the length of data that can be added to the reply buffer (i.e. min(available, requested)) */
+static size_t upsertPayloadHeader(char *buf, size_t *bufpos, payloadHeader **last_header, uint8_t type, size_t len, int slot, size_t available) {
+    /* Enforce min len for offloads as whole pointers must be written to the buffer */
+    size_t min_len = (type == CLIENT_REPLY_BULK_COPY_AVOID ? len : 1);
+    if (min_len > available) return 0;
+    size_t reply_len = min(available, len);
+
+    // If cluster slots stats disabled set slot to -1 to prevent excessive per slot headers
+    if (!clusterSlotStatsEnabled(slot)) slot = -1;
+
+    /* Try to add payload to last chunk if possible */
+    if (*last_header != NULL) {
+        if (updatePayloadHeader(*last_header, type, reply_len, slot) == C_OK) return reply_len;
+    }
+
+    /* Recheck min len condition and recalculate allowed len with a new header to be added */
+    if (sizeof(payloadHeader) + min_len > available) return 0;
+    available -= sizeof(payloadHeader);
+    if (len > available) reply_len = available;
+
+    /* Start a new payload chunk */
+    insertPayloadHeader(buf, bufpos, type, reply_len, slot, last_header);
+    return reply_len;
+}
 
 /* Attempts to add the reply to the static buffer in the client struct.
  * Returns the length of data that is added to the reply buffer.
@@ -386,26 +479,49 @@ void deleteCachedResponseClient(client *recording_client) {
  * zmalloc_usable_size() call. Writing beyond client->buf boundaries confuses
  * sanitizer and generates a false positive out-of-bounds error */
 VALKEY_NO_SANITIZE("bounds")
-size_t _addReplyToBuffer(client *c, const char *s, size_t len) {
-    size_t available = c->buf_usable_size - c->bufpos;
-
+static size_t _addReplyPayloadToBuffer(client *c, const void *payload, size_t len, uint8_t payload_type) {
     /* If there already are entries in the reply list, we cannot
      * add anything more to the static buffer. */
     if (listLength(c->reply) > 0) return 0;
 
-    size_t reply_len = len > available ? available : len;
-    memcpy(c->buf + c->bufpos, s, reply_len);
+    size_t available = c->buf_usable_size - c->bufpos;
+    size_t reply_len = min(available, len);
+    if (c->flag.buf_encoded) {
+        reply_len = upsertPayloadHeader(c->buf, &c->bufpos, &c->last_header, payload_type, len, c->slot, available);
+    }
+    if (!reply_len) return 0;
+
+    memcpy(c->buf + c->bufpos, payload, reply_len);
     c->bufpos += reply_len;
     /* We update the buffer peak after appending the reply to the buffer */
     if (c->buf_peak < (size_t)c->bufpos) c->buf_peak = (size_t)c->bufpos;
     return reply_len;
 }
 
+static size_t _addReplyToBuffer(client *c, const char *s, size_t len) {
+    if (!len) return 0;
+    if (!c->bufpos) {
+        c->flag.buf_encoded = isCopyAvoidAllowed(c, NULL);
+    }
+    return _addReplyPayloadToBuffer(c, s, len, CLIENT_REPLY_PLAIN);
+}
+
+static size_t _addBulkOffloadToBuffer(client *c, const void *payload, size_t len) {
+    if (!c->flag.buf_encoded) {
+        /* If buffer is plain and not empty then can't add bulk offload to it */
+        if (c->bufpos) return 0;
+        c->flag.buf_encoded = 1;
+    }
+    return _addReplyPayloadToBuffer(c, payload, len, CLIENT_REPLY_BULK_COPY_AVOID);
+}
+
 /* Adds the reply to the reply linked list.
  * Note: some edits to this function need to be relayed to AddReplyFromClient. */
-void _addReplyProtoToList(client *c, list *reply_list, const char *s, size_t len) {
+static void _addReplyPayloadToList(client *c, list *reply_list, const char *payload, size_t len, uint8_t payload_type) {
     listNode *ln = listLast(reply_list);
     clientReplyBlock *tail = ln ? listNodeValue(ln) : NULL;
+    /* Determine if buffer content should be encoded with header */
+    int encoded = payload_type == CLIENT_REPLY_BULK_COPY_AVOID || isCopyAvoidAllowed(c, NULL);
 
     /* Note that 'tail' may be NULL even if we have a tail node, because when
      * addReplyDeferredLen() is used, it sets a dummy node to NULL just
@@ -417,26 +533,47 @@ void _addReplyProtoToList(client *c, list *reply_list, const char *s, size_t len
          * new node */
         size_t avail = tail->size - tail->used;
         size_t copy = avail >= len ? len : avail;
-        memcpy(tail->buf + tail->used, s, copy);
-        tail->used += copy;
-        s += copy;
-        len -= copy;
+
+        if (tail->flag.buf_encoded) {
+            copy = upsertPayloadHeader(tail->buf, &tail->used, &tail->last_header, payload_type, len, c->slot, avail);
+        } else if (encoded) {
+            copy = 0;
+        }
+
+        if (copy) {
+            memcpy(tail->buf + tail->used, payload, copy);
+            tail->used += copy;
+            payload += copy;
+            len -= copy;
+        }
     }
     if (len) {
         /* Create a new node, make sure it is allocated to at
          * least PROTO_REPLY_CHUNK_BYTES */
         size_t usable_size;
-        size_t size = len < PROTO_REPLY_CHUNK_BYTES ? PROTO_REPLY_CHUNK_BYTES : len;
+        size_t required_size = encoded ? len + sizeof(payloadHeader) : len;
+        size_t size = required_size < PROTO_REPLY_CHUNK_BYTES ? PROTO_REPLY_CHUNK_BYTES : required_size;
         tail = zmalloc_usable(size + sizeof(clientReplyBlock), &usable_size);
         /* take over the allocation's internal fragmentation */
         tail->size = usable_size - sizeof(clientReplyBlock);
-        tail->used = len;
-        memcpy(tail->buf, s, len);
+        tail->used = 0;
+        tail->flag.buf_encoded = encoded;
+        tail->last_header = NULL;
+        if (tail->flag.buf_encoded) {
+            upsertPayloadHeader(tail->buf, &tail->used, &tail->last_header, payload_type, len, c->slot, tail->size);
+        }
+        memcpy(tail->buf + tail->used, payload, len);
+        tail->used += len;
         listAddNodeTail(reply_list, tail);
         c->reply_bytes += tail->size;
 
         closeClientOnOutputBufferLimitReached(c, 1);
     }
+}
+
+void _addReplyProtoToList(client *c, list *reply_list, const char *s, size_t len) {
+    if (!len) return;
+    _addReplyPayloadToList(c, reply_list, s, len, CLIENT_REPLY_PLAIN);
 }
 
 /* The subscribe / unsubscribe command family has a push as a reply,
@@ -482,6 +619,18 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
 
     size_t reply_len = _addReplyToBuffer(c, s, len);
     if (len > reply_len) _addReplyProtoToList(c, c->reply, s + reply_len, len - reply_len);
+}
+
+void _addBulkOffloadToBufferOrList(client *c, robj *obj) {
+    if (c->flag.close_after_reply) return;
+
+    /* Refcount will be decremented in write completion handler by the main thread */
+    incrRefCount(obj);
+
+    bulkCopyAvoid copyAvoid = {.obj = obj, .str = obj->ptr};
+    if (!_addBulkOffloadToBuffer(c, (void *)&copyAvoid, sizeof(copyAvoid))) {
+        _addReplyPayloadToList(c, c->reply, (char *)&copyAvoid, sizeof(copyAvoid), CLIENT_REPLY_BULK_COPY_AVOID);
+    }
 }
 
 /* -----------------------------------------------------------------------------
@@ -776,7 +925,7 @@ void trimReplyUnusedTailSpace(client *c) {
      * Also, to avoid large memmove which happens as part of realloc, we only do
      * that if the used part is small.  */
     if (tail->size - tail->used > tail->size / 4 && tail->used < PROTO_REPLY_CHUNK_BYTES &&
-        c->io_write_state != CLIENT_PENDING_IO) {
+        c->io_write_state != CLIENT_PENDING_IO && !tail->flag.buf_encoded) {
         size_t usable_size;
         size_t old_size = tail->size;
         tail = zrealloc_usable(tail, tail->used + sizeof(clientReplyBlock), &usable_size);
@@ -837,8 +986,8 @@ void setDeferredReply(client *c, void *node, const char *s, size_t length) {
      * - It has enough room already allocated
      * - And not too large (avoid large memmove)
      * - And the client is not in a pending I/O state */
-    if (ln->prev != NULL && (prev = listNodeValue(ln->prev)) && prev->size - prev->used > 0 &&
-        c->io_write_state != CLIENT_PENDING_IO) {
+    if (ln->prev != NULL && (prev = listNodeValue(ln->prev)) && prev->size > prev->used &&
+        c->io_write_state != CLIENT_PENDING_IO && !prev->flag.buf_encoded) {
         size_t len_to_copy = prev->size - prev->used;
         if (len_to_copy > length) len_to_copy = length;
         memcpy(prev->buf + prev->used, s, len_to_copy);
@@ -852,7 +1001,7 @@ void setDeferredReply(client *c, void *node, const char *s, size_t length) {
     }
 
     if (ln->next != NULL && (next = listNodeValue(ln->next)) && next->size - next->used >= length &&
-        next->used < PROTO_REPLY_CHUNK_BYTES * 4 && c->io_write_state != CLIENT_PENDING_IO) {
+        next->used < PROTO_REPLY_CHUNK_BYTES * 4 && c->io_write_state != CLIENT_PENDING_IO && !next->flag.buf_encoded) {
         memmove(next->buf + length, next->buf, next->used);
         memcpy(next->buf, s, length);
         next->used += length;
@@ -864,6 +1013,7 @@ void setDeferredReply(client *c, void *node, const char *s, size_t length) {
         /* Take over the allocation's internal fragmentation */
         buf->size = usable_size - sizeof(clientReplyBlock);
         buf->used = length;
+        buf->flag.buf_encoded = 0;
         memcpy(buf->buf, s, length);
         listNodeValue(ln) = buf;
         c->reply_bytes += buf->size;
@@ -1127,8 +1277,18 @@ void addReplyBulkLen(client *c, robj *obj) {
     _addReplyLongLongWithPrefix(c, len, '$');
 }
 
+int tryOffloadBulkReply(client *c, robj *obj) {
+    if (!isCopyAvoidAllowed(c, obj)) return C_ERR;
+    if (prepareClientToWrite(c) != C_OK) return C_ERR;
+
+    _addBulkOffloadToBufferOrList(c, obj);
+
+    return C_OK;
+}
+
 /* Add an Object as a bulk reply */
 void addReplyBulk(client *c, robj *obj) {
+    if (tryOffloadBulkReply(c, obj) == C_OK) return;
     addReplyBulkLen(c, obj);
     addReply(c, obj);
     addReplyProto(c, "\r\n", 2);
@@ -1299,6 +1459,7 @@ void AddReplyFromClient(client *dst, client *src) {
     }
 
     /* First add the static buffer (either into the static buffer or reply list) */
+    serverAssert(src->flag.buf_encoded == 0);
     addReplyProto(dst, src->buf, src->bufpos);
 
     /* We need to check with prepareClientToWrite again (after addReplyProto)
@@ -1729,6 +1890,7 @@ void freeClient(client *c) {
     freeClientPubSubData(c);
 
     /* Free data structures. */
+    releaseReplyOffloads(c);
     listRelease(c->reply);
     c->reply = NULL;
     zfree_with_size(c->buf, c->buf_usable_size);
@@ -1966,19 +2128,203 @@ void writeToReplica(client *c) {
     }
 }
 
+/*
+ *  The replyIOV struct is used by writevToClient to prepare iovec array
+ *  for submitting to connWritev
+ */
+typedef struct replyIOV {
+    int cnt;
+    int max;
+    struct iovec *iov;
+    ssize_t iov_len_total;               /* Total length of data pointed by iov array */
+    size_t last_written_len;             /* Length of data in the last written buffer
+                                          * partially written in previous writevToClient invocation */
+    int limit_reached;                   /* Non zero if either max iov count or NET_MAX_WRITES_PER_EVENT limit
+                                          * reached during iov prepearation */
+    int prfxcnt;                         /* prfxcnt, prefixes and clrf are auxiliary fields
+                                          * for expanding bulk offloads */
+    char (*prefixes)[LONG_STR_SIZE + 3]; /* bulk string prefixes */
+    char *crlf;                          /* bulk string suffix */
+} replyIOV;
+
+/*
+ *  The bufWriteMetadata struct is used by writevToClient to record metadata
+ *  about client reply buffers submitted to connWritev
+ */
+typedef struct bufWriteMetadata {
+    char *buf;
+    size_t bufpos;
+    uint64_t data_len; /* Actual bytes out, differ from bufpos in case of copy avoidance */
+    int complete;      /* Was the buffer completely scattered to iov or
+                          process stopped due encountered limit */
+} bufWriteMetadata;
+
+static void initReplyIOV(client *c, int iovmax, struct iovec *iov_arr, char (*prefixes)[], char *crlf, replyIOV *reply) {
+    reply->cnt = 0;
+    reply->max = iovmax;
+    reply->limit_reached = 0;
+    reply->iov = iov_arr;
+    reply->iov_len_total = 0;
+    reply->last_written_len = c->io_last_written_data_len;
+    reply->prfxcnt = 0;
+    reply->prefixes = prefixes;
+    reply->crlf = crlf;
+}
+
+static void addPlainBufferToReplyIOV(char *buf, size_t buf_len, replyIOV *reply, bufWriteMetadata *metadata) {
+    if (reply->limit_reached) return;
+
+    if (reply->cnt == reply->max) {
+        reply->limit_reached = 1;
+        return;
+    }
+
+    /* Aggregate data length from the beginning of the buffer even though
+     * part of the data can be skipped in this writevToClient invocation due to last_written_len */
+    metadata->data_len += buf_len;
+
+    /* Skip data written in the previous writevToClient invocation(s) */
+    if (reply->last_written_len >= buf_len) {
+        reply->last_written_len -= buf_len;
+        return;
+    }
+
+    reply->iov[reply->cnt].iov_base = buf + reply->last_written_len;
+    reply->iov[reply->cnt].iov_len = buf_len - reply->last_written_len;
+    reply->last_written_len = 0;
+
+    reply->iov_len_total += reply->iov[reply->cnt++].iov_len;
+}
+
+static void addBulkStringToReplyIOV(char *buf, size_t buf_len, replyIOV *reply, bufWriteMetadata *metadata) {
+    bulkCopyAvoid *copyAvoid = (bulkCopyAvoid *)buf;
+    while (buf_len > 0 && !reply->limit_reached) {
+        size_t str_len = sdslen(copyAvoid->str);
+
+        /* RESP encodes bulk strings as $<length>\r\n<data>\r\n */
+        char *prefix = reply->prefixes[reply->prfxcnt];
+        prefix[0] = '$';
+        size_t num_len = ll2string(prefix + 1, sizeof(reply->prefixes[0]) - 3, str_len);
+        prefix[num_len + 1] = '\r';
+        prefix[num_len + 2] = '\n';
+
+        int cnt = reply->cnt;
+        addPlainBufferToReplyIOV(reply->prefixes[reply->prfxcnt], num_len + 3, reply, metadata);
+        /* Increment prfxcnt only if prefix was added to reply in this writevToClient invocation */
+        if (reply->cnt > cnt) reply->prfxcnt++;
+        addPlainBufferToReplyIOV(copyAvoid->str, str_len, reply, metadata);
+        addPlainBufferToReplyIOV(reply->crlf, 2, reply, metadata);
+
+        copyAvoid++;
+        buf_len -= sizeof(bulkCopyAvoid);
+    }
+}
+
+static void addEncodedBufferToReplyIOV(char *buf, size_t bufpos, replyIOV *reply, bufWriteMetadata *metadata) {
+    char *ptr = buf;
+    while (ptr < buf + bufpos && !reply->limit_reached) {
+        payloadHeader *header = (payloadHeader *)ptr;
+        ptr += sizeof(payloadHeader);
+        if (header->type == CLIENT_REPLY_PLAIN) {
+            addPlainBufferToReplyIOV(ptr, header->len, reply, metadata);
+        } else {
+            uint64_t data_len = metadata->data_len;
+            addBulkStringToReplyIOV(ptr, header->len, reply, metadata);
+            /* Store actual reply len for cluster slot stats */
+            header->actual_len = metadata->data_len - data_len;
+        }
+        ptr += header->len;
+    }
+}
+
+static void addBufferToReplyIOV(int encoded, char *buf, size_t bufpos, replyIOV *reply, bufWriteMetadata *metadata) {
+    metadata->data_len = 0;
+
+    if (encoded) {
+        addEncodedBufferToReplyIOV(buf, bufpos, reply, metadata);
+        metadata->complete = !reply->limit_reached;
+    } else {
+        addPlainBufferToReplyIOV(buf, bufpos, reply, metadata);
+        metadata->complete = 1;
+    }
+
+    if (reply->iov_len_total > NET_MAX_WRITES_PER_EVENT) {
+        reply->limit_reached = 1;
+    }
+
+    metadata->buf = buf;
+    metadata->bufpos = bufpos;
+}
+
+/*
+ * This function calculates and stores on the client next:
+ *    io_last_written_buf - Last buffer that has been written to the client connection
+ *    io_last_written_bufpos - The buffer has been written until this position
+ *    io_last_written_data_len - The actual length of the data written from this buffer
+ *                               This length differs from written bufpos in case of copy avoidance
+ *
+ * The io_last_written_buf and io_last_written_bufpos are used by _postWriteToClient
+ * to detect last client reply buffer that can be released
+ *
+ * The io_last_written_data_len is used by writevToClient for resuming write from the point
+ * where previous writevToClient invocation stopped
+ **/
+static void saveLastWrittenBuf(client *c, bufWriteMetadata *metadata, int bufcnt, size_t totlen, size_t totwritten) {
+    int last = bufcnt - 1;
+    if (totwritten == totlen) {
+        c->io_last_written_buf = metadata[last].buf;
+        /* Zero io_last_written_bufpos indicates buffer written incompletely */
+        c->io_last_written_bufpos = (metadata[last].complete ? metadata[last].bufpos : 0);
+        c->io_last_written_data_len = metadata[last].data_len;
+        return;
+    }
+
+    last = -1;
+    int64_t remaining = totwritten + c->io_last_written_data_len;
+    while (remaining > 0) remaining -= metadata[++last].data_len;
+    serverAssert(last < bufcnt);
+
+    c->io_last_written_buf = metadata[last].buf;
+    /* Zero io_last_written_bufpos indicates buffer written incompletely */
+    c->io_last_written_bufpos = (metadata[last].complete && remaining == 0 ? metadata[last].bufpos : 0);
+    c->io_last_written_data_len = (size_t)(metadata[last].data_len + remaining);
+}
+
+void proceedToUnwritten(replyIOV *reply, int nwritten) {
+    while (nwritten > 0) {
+        if ((size_t)nwritten < reply->iov[0].iov_len) {
+            reply->iov[0].iov_base = (char *)reply->iov[0].iov_base + nwritten;
+            reply->iov[0].iov_len -= nwritten;
+            break;
+        }
+        nwritten -= reply->iov[0].iov_len;
+        reply->iov++;
+        reply->cnt--;
+    }
+}
+
+/* Bulk string prefix max size */
+#define BULK_STRING_LEN_PREFIX_MAX_SIZE (LONG_STR_SIZE + 3)
+/* Bulk string offload requires 3 iov entries -
+ * length prefix ($<length>\r\n), string (<data>) and suffix (\r\n) */
+#define NUM_OF_IOV_PER_BULK_OFFLOAD 3
+
 /* This function should be called from _writeToClient when the reply list is not empty,
  * it gathers the scattered buffers from reply list and sends them away with connWritev.
  * If we write successfully, it returns C_OK, otherwise, C_ERR is returned.
  * Sets the c->nwritten to the number of bytes the server wrote to the client.
  * Can be called from the main thread or an I/O thread */
 static int writevToClient(client *c) {
-    int iovcnt = 0;
     int iovmax = min(IOV_MAX, c->conn->iovcnt);
     struct iovec iov_arr[iovmax];
-    struct iovec *iov = iov_arr;
-    ssize_t bufpos, iov_bytes_len = 0;
-    listNode *lastblock;
+    /* iov_arr can accommodate iovmax / NUM_OF_IOV_PER_BULK_OFFLOAD full bulk offloads
+     * and one partial bulk offload */
+    char prefixes[iovmax / NUM_OF_IOV_PER_BULK_OFFLOAD + 1][BULK_STRING_LEN_PREFIX_MAX_SIZE];
+    char crlf[2] = {'\r', '\n'};
+    int bufcnt = 0;
 
+    size_t bufpos = 0;
+    listNode *lastblock;
     if (inMainThread()) {
         lastblock = listLast(c->reply);
         bufpos = c->bufpos;
@@ -1987,50 +2333,49 @@ static int writevToClient(client *c) {
         bufpos = lastblock ? (size_t)c->bufpos : c->io_last_bufpos;
     }
 
+    int reply_blocks = (lastblock ? listLength(c->reply) : 0);
+    /* +1 is for c->buf */
+    bufWriteMetadata metadata[reply_blocks + 1];
+
+    replyIOV reply;
+    initReplyIOV(c, iovmax, iov_arr, prefixes, crlf, &reply);
+
     /* If the static reply buffer is not empty,
      * add it to the iov array for writev() as well. */
     if (bufpos > 0) {
-        iov[iovcnt].iov_base = c->buf + c->sentlen;
-        iov[iovcnt].iov_len = bufpos - c->sentlen;
-        iov_bytes_len += iov[iovcnt++].iov_len;
+        addBufferToReplyIOV(c->flag.buf_encoded, c->buf, bufpos, &reply, &metadata[bufcnt++]);
     }
-    /* The first node of reply list might be incomplete from the last call,
-     * thus it needs to be calibrated to get the actual data address and length. */
-    size_t sentlen = bufpos > 0 ? 0 : c->sentlen;
-    listIter iter;
-    listNode *next;
-    clientReplyBlock *o;
-    size_t used;
-    listRewind(c->reply, &iter);
-    while ((next = listNext(&iter)) && iovcnt < iovmax && iov_bytes_len < NET_MAX_WRITES_PER_EVENT) {
-        o = listNodeValue(next);
 
-        used = o->used;
-        /* Use c->io_last_bufpos as the currently used portion of the block.
-         *  We use io_last_bufpos instead of o->used to ensure that we only access data guaranteed to be visible to the
-         * current thread. Using o->used, which may have been updated by the main thread, could lead to accessing data
-         * that may not yet be visible to the current thread*/
-        if (!inMainThread() && next == lastblock) used = c->io_last_bufpos;
+    if (lastblock) {
+        listIter iter;
+        listNode *next;
+        listRewind(c->reply, &iter);
+        while ((next = listNext(&iter)) && !reply.limit_reached) {
+            clientReplyBlock *o = listNodeValue(next);
 
-        if (used == 0) { /* empty node, skip over it. */
+            size_t used = o->used;
+            /* Use c->io_last_bufpos as the currently used portion of the block.
+             *  We use io_last_bufpos instead of o->used to ensure that we only access data guaranteed to be visible to the
+             * current thread. Using o->used, which may have been updated by the main thread, could lead to accessing data
+             * that may not yet be visible to the current thread*/
+            if (!inMainThread() && next == lastblock) used = c->io_last_bufpos;
+
+            if (used == 0) { /* empty node, skip over it. */
+                if (next == lastblock) break;
+                continue;
+            }
+
+            addBufferToReplyIOV(o->flag.buf_encoded, o->buf, used, &reply, &metadata[bufcnt]);
+            if (!metadata[bufcnt].data_len) break;
+            bufcnt++;
+
             if (next == lastblock) break;
-            sentlen = 0;
-            continue;
         }
-
-        iov[iovcnt].iov_base = o->buf + sentlen;
-        iov[iovcnt].iov_len = used - sentlen;
-        iov_bytes_len += iov[iovcnt++].iov_len;
-
-        sentlen = 0;
-        if (next == lastblock) break;
     }
-
-    serverAssert(iovcnt != 0);
 
     ssize_t totwritten = 0;
     while (1) {
-        int nwritten = connWritev(c->conn, iov, iovcnt);
+        int nwritten = connWritev(c->conn, reply.iov, reply.cnt);
         if (nwritten <= 0) {
             c->write_flags |= WRITE_FLAGS_WRITE_ERROR;
             totwritten = totwritten > 0 ? totwritten : nwritten;
@@ -2038,7 +2383,7 @@ static int writevToClient(client *c) {
         }
         totwritten += nwritten;
 
-        if (totwritten == iov_bytes_len) break;
+        if (totwritten == reply.iov_len_total) break;
 
         if (totwritten > NET_MAX_WRITES_PER_EVENT) {
             /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
@@ -2055,20 +2400,13 @@ static int writevToClient(client *c) {
             }
         }
 
-        /* proceed to the unwritten blocks */
-        while (nwritten > 0) {
-            if ((size_t)nwritten < iov[0].iov_len) {
-                iov[0].iov_base = (char *)iov[0].iov_base + nwritten;
-                iov[0].iov_len -= nwritten;
-                break;
-            }
-            nwritten -= iov[0].iov_len;
-            iov++;
-            iovcnt--;
-        }
+        proceedToUnwritten(&reply, nwritten);
     }
 
     c->nwritten = totwritten;
+    if (totwritten > 0) {
+        saveLastWrittenBuf(c, metadata, bufcnt, reply.iov_len_total, totwritten);
+    }
     return totwritten > 0 ? C_OK : C_ERR;
 }
 
@@ -2090,13 +2428,14 @@ int _writeToClient(client *c) {
     }
 
     /* If the reply list is not empty, use writev to save system calls and TCP packets */
-    if (lastblock) return writevToClient(c);
+    if (lastblock || c->flag.buf_encoded) return writevToClient(c);
 
-    ssize_t bytes_to_write = bufpos - c->sentlen;
+    serverAssert(c->io_last_written_data_len == 0 || c->io_last_written_buf == c->buf);
+    ssize_t bytes_to_write = bufpos - c->io_last_written_data_len;
     ssize_t tot_written = 0;
 
     while (tot_written < bytes_to_write) {
-        int nwritten = connWrite(c->conn, c->buf + c->sentlen + tot_written, bytes_to_write - tot_written);
+        int nwritten = connWrite(c->conn, c->buf + c->io_last_written_data_len + tot_written, bytes_to_write - tot_written);
         if (nwritten <= 0) {
             c->write_flags |= WRITE_FLAGS_WRITE_ERROR;
             tot_written = tot_written > 0 ? tot_written : nwritten;
@@ -2106,44 +2445,91 @@ int _writeToClient(client *c) {
     }
 
     c->nwritten = tot_written;
+    if (tot_written > 0) {
+        c->io_last_written_buf = c->buf;
+        c->io_last_written_bufpos = (tot_written == bytes_to_write ? bufpos : 0);
+        c->io_last_written_data_len = c->io_last_written_data_len + tot_written;
+    }
     return tot_written > 0 ? C_OK : C_ERR;
+}
+
+void resetLastWrittenBuf(client *c) {
+    c->io_last_written_buf = NULL;
+    c->io_last_written_bufpos = 0;
+    c->io_last_written_data_len = 0;
+}
+
+static void releaseBufOffloads(char *buf, size_t bufpos) {
+    char *ptr = buf;
+    while (ptr < buf + bufpos) {
+        payloadHeader *header = (payloadHeader *)ptr;
+        ptr += sizeof(payloadHeader);
+
+        if (header->type == CLIENT_REPLY_BULK_COPY_AVOID) {
+            clusterSlotStatsAddNetworkBytesOutForSlot(header->slot, header->actual_len);
+
+            bulkCopyAvoid *copyAvoid = (bulkCopyAvoid *)ptr;
+            size_t len = header->len;
+            while (len > 0) {
+                decrRefCount(copyAvoid->obj);
+                copyAvoid++;
+                len -= sizeof(bulkCopyAvoid);
+            }
+        } else {
+            serverAssert(header->type == CLIENT_REPLY_PLAIN);
+        }
+
+        ptr += header->len;
+    }
+    serverAssert(ptr == buf + bufpos);
+}
+
+void releaseReplyOffloads(client *c) {
+    if (c->bufpos > 0 && c->flag.buf_encoded) {
+        releaseBufOffloads(c->buf, c->bufpos);
+    }
+
+    listIter iter;
+    listNode *next;
+    listRewind(c->reply, &iter);
+    while ((next = listNext(&iter))) {
+        clientReplyBlock *o = (clientReplyBlock *)listNodeValue(next);
+        if (o->flag.buf_encoded) {
+            releaseBufOffloads(o->buf, o->used);
+        }
+    }
 }
 
 static void _postWriteToClient(client *c) {
     if (c->nwritten <= 0) return;
+    server.stat_net_output_bytes += c->nwritten;
+
+    int last_written = 0;
+    if (c->bufpos > 0) {
+        last_written = (c->buf == c->io_last_written_buf);
+        if (!last_written || c->bufpos == c->io_last_written_bufpos) {
+            if (c->flag.buf_encoded) releaseBufOffloads(c->buf, c->bufpos);
+            c->bufpos = 0;
+            c->flag.buf_encoded = 0;
+            c->last_header = 0;
+            if (last_written) resetLastWrittenBuf(c);
+        }
+        if (last_written) return;
+    }
 
     listIter iter;
     listNode *next;
-    clientReplyBlock *o;
-
-    server.stat_net_output_bytes += c->nwritten;
-
-    /* Locate the new node which has leftover data and
-     * release all nodes in front of it. */
-    ssize_t remaining = c->nwritten;
-    if (c->bufpos > 0) { /* Deal with static reply buffer first. */
-        int buf_len = c->bufpos - c->sentlen;
-        c->sentlen += c->nwritten;
-        /* If the buffer was sent, set bufpos to zero to continue with
-         * the remainder of the reply. */
-        if (c->nwritten >= buf_len) {
-            c->bufpos = 0;
-            c->sentlen = 0;
-        }
-        remaining -= buf_len;
-    }
     listRewind(c->reply, &iter);
-    while (remaining > 0) {
-        next = listNext(&iter);
-        o = listNodeValue(next);
-        if (remaining < (ssize_t)(o->used - c->sentlen)) {
-            c->sentlen += remaining;
-            break;
+    while ((next = listNext(&iter))) {
+        clientReplyBlock *o = listNodeValue(next);
+        last_written = (o->buf == c->io_last_written_buf);
+        if (!last_written || o->used == c->io_last_written_bufpos) {
+            c->reply_bytes -= o->size;
+            if (o->flag.buf_encoded) releaseBufOffloads(o->buf, o->used);
+            listDelNode(c->reply, next);
+            if (last_written) resetLastWrittenBuf(c);
         }
-        remaining -= (ssize_t)(o->used - c->sentlen);
-        c->reply_bytes -= o->size;
-        listDelNode(c->reply, next);
-        c->sentlen = 0;
+        if (last_written) return;
     }
 }
 
@@ -2177,7 +2563,7 @@ int postWriteToClient(client *c) {
         if (!c->flag.primary) c->last_interaction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
-        c->sentlen = 0;
+        resetLastWrittenBuf(c);
         if (connHasWriteHandler(c->conn)) {
             connSetWriteHandler(c->conn, NULL);
         }

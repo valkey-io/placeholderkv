@@ -398,9 +398,13 @@ int trySendWriteToIOThreads(client *c) {
      * threads from reading data that might be invalid in their local CPU cache. */
     c->io_last_reply_block = listLast(c->reply);
     if (c->io_last_reply_block) {
-        c->io_last_bufpos = ((clientReplyBlock *)listNodeValue(c->io_last_reply_block))->used;
+        clientReplyBlock *block = (clientReplyBlock *)listNodeValue(c->io_last_reply_block);
+        c->io_last_bufpos = block->used;
+        /* If reply offload enabled force new header */
+        block->last_header = NULL;
     } else {
         c->io_last_bufpos = (size_t)c->bufpos;
+        c->last_header = NULL;
     }
     serverAssert(c->bufpos > 0 || c->io_last_bufpos > 0);
 
@@ -613,4 +617,14 @@ int trySendAcceptToIOThreads(connection *conn) {
     IOJobQueue_push(job_queue, ioThreadAccept, c);
 
     return C_OK;
+}
+
+int isCopyAvoidIndicatedByIOThreads(void) {
+    /* Starting min_io_threads_for_copy_avoid I/O threads copy avoidance should be beneficial for any string size */
+    return server.min_io_threads_copy_avoid && server.io_threads_num >= server.min_io_threads_copy_avoid;
+}
+
+int isValuePrefetchIndicatedByIOThreads(void) {
+    /* Starting min_io_threads_value_prefetch_off I/O threads copy avoidance should be more efficient without value prefetch */
+    return server.io_threads_num < server.min_io_threads_value_prefetch_off;
 }
