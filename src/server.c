@@ -519,7 +519,12 @@ int hashtableResizeAllowed(size_t moreMem, double usedRatio) {
     return !overMaxmemoryAfterAlloc(moreMem);
 }
 
-const void *hashtableCommandGetKey(const void *element) {
+const void *hashtableCommandGetCurrentName(const void *element) {
+    struct serverCommand *command = (struct serverCommand *)element;
+    return command->current_name;
+}
+
+const void *hashtableCommandGetOriginalName(const void *element) {
     struct serverCommand *command = (struct serverCommand *)element;
     return command->fullname;
 }
@@ -624,11 +629,17 @@ hashtableType kvstoreExpiresHashtableType = {
     .getMetadataSize = kvstoreHashtableMetadataSize,
 };
 
-/* Command set, hashed by sds string, stores serverCommand structs. */
-hashtableType commandSetType = {.entryGetKey = hashtableCommandGetKey,
+/* Command set, hashed by current command name, stores serverCommand structs. */
+hashtableType commandSetType = {.entryGetKey = hashtableCommandGetCurrentName,
                                 .hashFunction = dictSdsCaseHash,
                                 .keyCompare = hashtableStringKeyCaseCompare,
                                 .instant_rehashing = 1};
+
+/* Command set, hashed by original command name, stores serverCommand structs. */
+hashtableType originalCommandSetType = {.entryGetKey = hashtableCommandGetOriginalName,
+                                        .hashFunction = dictSdsCaseHash,
+                                        .keyCompare = hashtableStringKeyCaseCompare,
+                                        .instant_rehashing = 1};
 
 /* Sub-command set, hashed by char* string, stores serverCommand structs. */
 hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
@@ -2280,7 +2291,7 @@ void initServerConfig(void) {
      * initial configuration, since command names may be changed via
      * valkey.conf using the rename-command directive. */
     server.commands = hashtableCreate(&commandSetType);
-    server.orig_commands = hashtableCreate(&commandSetType);
+    server.orig_commands = hashtableCreate(&originalCommandSetType);
     populateCommandTable();
 
     /* Debugging */
@@ -3203,6 +3214,7 @@ void populateCommandTable(void) {
         int retval1, retval2;
 
         c->fullname = sdsnew(c->declared_name);
+        c->current_name = c->fullname;
         if (populateCommandStructure(c) == C_ERR) continue;
 
         retval1 = hashtableAdd(server.commands, c);

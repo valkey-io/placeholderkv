@@ -2459,12 +2459,13 @@ struct serverCommand {
 
     /* Runtime populated data */
     long long microseconds, calls, rejected_calls, failed_calls;
-    int id;       /* Command ID. This is a progressive ID starting from 0 that
-                     is assigned at runtime, and is used in order to check
-                     ACLs. A connection is able to execute a given command if
-                     the user associated to the connection has this command
-                     bit set in the bitmap of allowed commands. */
-    sds fullname; /* A SDS string representing the command fullname. */
+    int id;           /* Command ID. This is a progressive ID starting from 0 that
+                         is assigned at runtime, and is used in order to check
+                         ACLs. A connection is able to execute a given command if
+                         the user associated to the connection has this command
+                         bit set in the bitmap of allowed commands. */
+    sds fullname;     /* A SDS string representing the command fullname. */
+    sds current_name; /* Same as fullname, becomes a separate string if command is renamed. */
     struct hdr_histogram
         *latency_histogram;        /* Points to the command latency command histogram (unit of time nanosecond). */
     keySpec legacy_range_key_spec; /* The legacy (first,last,step) key spec is
@@ -3041,7 +3042,6 @@ int ACLAuthenticateUser(client *c, robj *username, robj *password, robj **err);
 int checkModuleAuthentication(client *c, robj *username, robj *password, robj **err);
 void addAuthErrReply(client *c, robj *err);
 unsigned long ACLGetCommandID(sds cmdname);
-void ACLClearCommandID(void);
 user *ACLGetUserByName(const char *name, size_t namelen);
 int ACLUserCheckKeyPerm(user *u, const char *key, int keylen, int flags);
 int ACLUserCheckChannelPerm(user *u, sds channel, int literal);
@@ -3055,7 +3055,6 @@ int ACLAddCommandCategory(const char *name, uint64_t flag);
 void ACLCleanupCategoriesOnFailure(size_t num_acl_categories_added);
 int ACLAppendUserForLoading(sds *argv, int argc, int *argc_err);
 const char *ACLSetUserStringError(void);
-int ACLLoadConfiguredUsers(void);
 robj *ACLDescribeUser(user *u);
 void ACLLoadUsersAtStartup(void);
 void addReplyCommandCategories(client *c, struct serverCommand *cmd);
